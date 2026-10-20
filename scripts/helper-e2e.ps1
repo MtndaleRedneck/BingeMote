@@ -7,8 +7,9 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
 # --- Part 1: the one-time elevated setup, run as-is (CI runners are already admin) ---
 Write-Host "== install-firewall =="
-& $exe --install-firewall
-$fwExit = $LASTEXITCODE
+# The helper is a WinExe, so `&` returns immediately and $LASTEXITCODE stays empty.
+$fw = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+$fwExit = $fw.ExitCode
 Write-Host "install-firewall exit code: $fwExit"
 netsh advfirewall firewall show rule name="BingeMote Helper"
 $aclOut = netsh http show urlacl
