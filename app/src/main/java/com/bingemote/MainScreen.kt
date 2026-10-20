@@ -268,7 +268,7 @@ private fun VolumeRow(remote: RemoteState) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        if (muted) "0%" else "${s?.volumePct ?: 0}%",
+                        if (muted) "0%" else "${remote.winVolume ?: (s?.volumePct ?: 0)}%",
                         color = if (muted) Dimmed else TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                     )
                     Text(

@@ -9,4 +9,7 @@
     <Version>1.0.0.0</Version>
     <Description>BingeMote PC helper: mouse and keyboard control for the BingeMote Android app.</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
 </Project>
