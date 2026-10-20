@@ -83,6 +83,14 @@ fun MainScreen(
             SeekBlock(remote)
             Spacer(Modifier.height(18.dp))
             VolumeRow(remote)
+            if (remote.helperDown) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Helper isn't running on the PC - using VLC's volume. Mouse mode needs the helper.",
+                    color = Muted, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
             Spacer(Modifier.height(18.dp))
             SkipRow(remote)
             Spacer(Modifier.height(12.dp))
