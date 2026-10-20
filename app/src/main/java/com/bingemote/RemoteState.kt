@@ -126,7 +126,7 @@ class RemoteState(
     fun volumeStep(up: Boolean) {
         val win = winVolume
         if (win != null) {
-            // Windows system volume via the helper (Ezzy asked us to pick; we picked this, not him).
+            // Windows system volume via the helper (Ezzy confirmed this pick).
             val base = win
             if (muted) muted = false
             val next = (base + if (up) 5 else -5).coerceIn(0, 100)
