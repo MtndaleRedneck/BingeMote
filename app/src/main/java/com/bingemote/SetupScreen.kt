@@ -82,6 +82,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
 
     fun finish() {
         if (vlcPassword.isBlank()) { say("Enter the password you set in VLC's web interface.", true); return }
+        if (store.helperToken.isBlank()) { say("Pair with your PC first.", true); return }
         store.vlcPassword = vlcPassword
         store.moviesPath = moviesPath.trim().ifBlank { store.moviesPath }
         testing = true
@@ -111,17 +112,13 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
         Text("Set up BingeMote", color = TextC, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            when (step) {
-                1 -> "Step 1 of 3 - the PC helper"
-                2 -> "Step 2 of 3 - pair with your PC"
-                else -> "Step 3 of 3 - VLC"
-            },
+            "Step 1 of 3 - the PC helper",
             color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(18.dp))
 
-        when (step) {
-            1 -> {
+        Column {
+            Column {
                 SetupCard {
                     Text("1. On your PC, download BingeMoteHelper.exe from the BingeMote release page and run it.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
@@ -134,7 +131,10 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                 Spacer(Modifier.height(18.dp))
                 OrangeButton("The helper is running", onClick = { step = 2 })
             }
-            2 -> {
+            Spacer(Modifier.height(24.dp))
+            Text("Step 2 of 3 - pair with your PC", color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Column {
                 SetupCard {
                     Text("Find your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -188,7 +188,10 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                     OrangeButton(if (pairing) "Pairing..." else "Pair", enabled = !pairing, onClick = { pair() })
                 }
             }
-            else -> {
+            Spacer(Modifier.height(24.dp))
+            Text("Step 3 of 3 - VLC", color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Column {
                 SetupCard {
                     Text("Turn on VLC's web remote", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -213,6 +216,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                         singleLine = true,
                         placeholder = { Text("The password from step 4", color = Dimmed) },
                         colors = fieldColors(),
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     )
                     Spacer(Modifier.height(14.dp))
                     Text("Movies folder (optional)", color = TextC, fontSize = 15.sp, fontWeight = FontWeight.Bold)

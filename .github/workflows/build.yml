@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish only after review and verification
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -45,28 +50,8 @@ jobs:
           name: BingeMote-apk
           path: BingeMote-v*.apk
 
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG=v$VERSION
-          # Releases publish only for a new version number at 1.0.0 or above.
-          # Pre-release development versions (0.x) build artifacts only and are never published.
-          if [[ "$VERSION" == 0.* ]]; then
-            echo "Development version $VERSION: build only, no release."
-            exit 0
-          fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists. Bump versionName to publish a new release."
-            exit 0
-          fi
-          gh release create "$TAG" "BingeMote-v$VERSION.apk" \
-            --target "$(git rev-parse HEAD)" \
-            --title "BingeMote $TAG" \
-            --notes-file release-notes.md
 
   helper:
-    needs: android
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,22 +74,6 @@ jobs:
           name: BingeMoteHelper-exe
           path: BingeMoteHelper-v*.exe
 
-      - name: Attach exe to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          TAG=v$VERSION
-          if [[ "$VERSION" == 0.* ]]; then
-            echo "Development version $VERSION: no release to attach to."
-            exit 0
-          fi
-          # The android job owns the release; wait briefly for it to exist.
-          for i in $(seq 1 30); do
-            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
-            sleep 10
-          done
-          gh release upload "$TAG" "BingeMoteHelper-v$VERSION.exe" --clobber
 
   screenshots:
     runs-on: ubuntu-latest
@@ -133,3 +102,22 @@ jobs:
         with:
           name: BingeMote-screenshots
           path: screenshots/*.png
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    needs: [android, helper, screenshots]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: BingeMote*-*
+          merge-multiple: true
+          path: artifacts
+      - name: Publish reviewed build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          [[ "$V" != 0.* ]]
+          gh release create "v$V" "artifacts/BingeMote-v$V.apk" "artifacts/BingeMoteHelper-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote v$V" --notes-file release-notes.md
