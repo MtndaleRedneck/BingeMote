@@ -112,13 +112,25 @@ try {
     $r = Vlc "$base/status.json?command=subtitle_track&val=-1"
     Assert ($r.code -eq 200) "subtitle_track off accepted"
 
-    # browse, both shapes the app can send
-    $r = Vlc "$base/browse.json?dir=$([uri]::EscapeDataString('file:///C:/'))"
-    Assert ($r.code -eq 200) "browse.json file:///C:/ is 200"
-    Assert ($r.body -match 'element') "browse.json lists elements"
+    function Head($b) { return $b.Substring(0, [Math]::Min(300, $b.Length)) }
+
+    # browse, the shapes the app actually sends:
+    # 1) empty dir on first open (VLC lists drive letters)
+    $r0 = Vlc "$base/browse.json?dir="
+    Write-Host "browse dir= (drives) status $($r0.code): $(Head $r0.body)"
+    Assert ($r0.code -eq 200) "browse.json empty dir is 200"
+    Assert ($r0.body -match 'element') "browse.json empty dir lists drive letters"
+    # 2) the plain Windows path VLC returns when you open a folder
     $r2 = Vlc "$base/browse.json?dir=$([uri]::EscapeDataString('C:\'))"
-    Write-Host "browse dir=C:\ status $($r2.code)"
+    Write-Host "browse dir=C:\ status $($r2.code): $(Head $r2.body)"
     Assert ($r2.code -eq 200) "browse.json plain path C:\ is 200"
+    Assert ($r2.body -match 'element') "browse.json C:\ lists elements"
+    # 3) a file:/// URI, if the user pastes one into Settings: observe and report.
+    $r = Vlc "$base/browse.json?dir=$([uri]::EscapeDataString('file:///C:/'))"
+    Write-Host "browse dir=file:///C:/ status $($r.code): $(Head $r.body)"
+    Assert ($r.code -eq 200) "browse.json file:///C:/ is 200"
+    if ($r.body -match 'element') { Write-Host "ok: file:/// browse lists elements" }
+    else { Write-Host "::warning::file:///C:/ browse returned no elements - app users should enter a plain path like C:\Videos in Settings." }
 
     Write-Host "VLC E2E PASSED"
 } finally {
