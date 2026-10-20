@@ -301,7 +301,7 @@ private fun MouseButton(
     }
 }
 
-private suspend fun androidx.compose.foundation.gestures.AwaitPointerEventScope.waitForUpOrCancel() {
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.waitForUpOrCancel() {
     while (true) {
         val event = awaitPointerEvent()
         if (event.changes.none { it.pressed }) return
