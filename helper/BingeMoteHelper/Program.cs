@@ -49,7 +49,10 @@ internal static class Program
             FirewallSetup.ExplainAndRelaunch();
         }
 
-        PairCode = NewPairCode();
+        // Test hook: CI sets BINGEMOTE_PAIR_CODE so it can drive the pairing flow.
+        // Anyone who can set this machine's environment variables already owns the PC.
+        var overrideCode = Environment.GetEnvironmentVariable("BINGEMOTE_PAIR_CODE");
+        PairCode = overrideCode is { Length: 6 } && overrideCode.All(char.IsDigit) ? overrideCode : NewPairCode();
         PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
 
         using var http = new HttpServer();

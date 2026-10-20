@@ -74,6 +74,23 @@ jobs:
           name: BingeMoteHelper-exe
           path: BingeMoteHelper-v*.exe
 
+  helper-e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish helper exe
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+
+      - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
+        run: pwsh -File scripts/helper-e2e.ps1
+
+      - name: VLC control tests (real VLC, app request shapes)
+        run: pwsh -File scripts/vlc-e2e.ps1
+
 
   screenshots:
     runs-on: ubuntu-latest
@@ -105,7 +122,7 @@ jobs:
 
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
-    needs: [android, helper, screenshots]
+    needs: [android, helper, helper-e2e, screenshots]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -131,15 +131,21 @@ internal sealed class HttpServer : IDisposable
                 break;
             case "/volume/get":
             {
-                var (volume, mute) = VolumeControl.Get();
-                Reply(res, 200, JsonSerializer.Serialize(new { volume, mute }));
+                try
+                {
+                    var (volume, mute) = VolumeControl.Get();
+                    Reply(res, 200, JsonSerializer.Serialize(new { volume, mute }));
+                }
+                catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); }
                 return;
             }
             case "/volume/set":
-                VolumeControl.Set(r.GetProperty("volume").GetInt32());
+                try { VolumeControl.Set(r.GetProperty("volume").GetInt32()); }
+                catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
                 break;
             case "/volume/mute":
-                VolumeControl.SetMute(r.GetProperty("mute").GetBoolean());
+                try { VolumeControl.SetMute(r.GetProperty("mute").GetBoolean()); }
+                catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
                 break;
             case "/key":
                 InputSender.NamedKey(r.GetProperty("key").GetString() ?? "");
@@ -152,6 +158,12 @@ internal sealed class HttpServer : IDisposable
                 return;
         }
         Reply(res, 200, "{\"ok\":true}");
+    }
+
+    /// <summary>503 with a reason the phone can show, instead of a bare "internal" error.</summary>
+    private static void NoAudio(HttpListenerResponse res, VolumeControl.NoAudioDeviceException ex)
+    {
+        Reply(res, 503, JsonSerializer.Serialize(new { error = "no audio device", detail = ex.Message }));
     }
 
     private static string ReadBody(HttpListenerRequest req)
