@@ -45,7 +45,9 @@ class MainActivity : ComponentActivity() {
         store = Store(this)
         remote = RemoteState(this, store, lifecycleScope)
         setContent {
-            val current = remember { mutableStateOf(if (store.setupDone) "main" else "setup") }
+            val current = remember { mutableStateOf(
+                if (BuildConfig.DEBUG && intent.hasExtra("screen")) intent.getStringExtra("screen") ?: "setup"
+                else if (store.setupDone) "main" else "setup") }
             screen = current
             BingeMoteTheme {
                 when (current.value) {

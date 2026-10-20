@@ -9,7 +9,8 @@ Android app  --(UDP broadcast, port 8489)       -->  Helper discovery
 ```
 
 Both HTTP APIs are plain HTTP on the LAN. VLC's interface is HTTP-only; the helper follows
-suit, with the pairing token as the secret that never leaves the house.
+suit. The pairing token and typed input are visible to a device able to observe LAN traffic.
+Use only on a trusted private network, and never forward these ports to the internet.
 
 ## The Android app
 
