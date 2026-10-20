@@ -54,8 +54,12 @@ internal static class Program
 
         using var http = new HttpServer();
         using var discovery = new DiscoveryResponder();
-        http.Start();
-        discovery.Start();
+        try { http.Start(); discovery.Start(); }
+        catch (Exception ex) {
+            MessageBox.Show("Could not start the helper. Check the firewall setup completed and no other copy is running.\n\n" + ex.Message,
+                "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
 
         ApplicationConfiguration.Initialize();
         Application.Run(new HelperWindow());

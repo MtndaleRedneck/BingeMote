@@ -71,7 +71,7 @@ class RemoteState(
             failures++
             if (failures >= 2) {
                 unreachable = true
-                rediscover()
+                if (store.autoReconnect) rediscover()
             }
         }
     }
@@ -83,7 +83,7 @@ class RemoteState(
         scope.launch(Dispatchers.IO) {
             try {
                 val found = HelperClient.discover()
-                val match = found.firstOrNull { it.name == store.pcName } ?: found.firstOrNull()
+                val match = found.firstOrNull { it.name == store.pcName && HelperClient.ping(it.host, it.port, store.helperToken) }
                 if (match != null) {
                     store.host = match.host
                     store.helperPort = match.port

@@ -63,7 +63,8 @@ internal static class FirewallSetup
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
             var p = Process.Start(psi);
-            p?.WaitForExit(60_000);
+            if (p == null || !p.WaitForExit(60_000) || p.ExitCode != 0 || !RuleExists())
+                throw new InvalidOperationException("Setup could not be verified.");
         }
         catch
         {

@@ -25,6 +25,10 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit) {
     val store = remote.store
+    var mainSkip by remember { mutableStateOf(store.skipMainSec) }
+    var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
+    var haptics by remember { mutableStateOf(store.haptics) }
+    var reconnect by remember { mutableStateOf(store.autoReconnect) }
     Column(
         Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(16.dp),
     ) {
@@ -49,15 +53,15 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s", 60 to "60s"),
-                selected = store.skipMainSec,
-            ) { store.skipMainSec = it }
+                selected = mainSkip,
+            ) { mainSkip = it; store.skipMainSec = it }
             Spacer(Modifier.height(12.dp))
             Text("Smaller buttons", color = Muted, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m", 300 to "5m"),
-                selected = store.skipSecondarySec,
-            ) { store.skipSecondarySec = it }
+                selected = secondarySkip,
+            ) { secondarySkip = it; store.skipSecondarySec = it }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -77,8 +81,8 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Feel") {
-            ToggleRow("Vibrate on press", store.haptics) { store.haptics = it }
-            ToggleRow("Reconnect on its own", store.autoReconnect) { store.autoReconnect = it }
+            ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
+            ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
         }
         Spacer(Modifier.height(14.dp))
 

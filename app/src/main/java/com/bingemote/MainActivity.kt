@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
             screen = current
             BingeMoteTheme {
                 when (current.value) {
-                    "setup" -> SetupScreen(remote) { current.value = "main" }
+                    "setup" -> SetupScreen(remote) { remote.start(); current.value = "main" }
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
                     "movies" -> MoviesScreen(remote) { current.value = "main" }
                     "settings" -> SettingsScreen(

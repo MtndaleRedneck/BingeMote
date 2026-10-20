@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace BingeMoteHelper;
 
 /// <summary>
-/// LAN HTTP API for the paired phone. Every endpoint except /ping and /pair needs the
+/// LAN HTTP API for the paired phone. Every endpoint except /pair needs the
 /// pairing token in X-BingeMote-Token, and only private (home network) addresses are served.
 /// </summary>
 internal sealed class HttpServer : IDisposable
@@ -76,7 +76,7 @@ internal sealed class HttpServer : IDisposable
     private static bool Authorized(HttpListenerRequest req)
     {
         var token = req.Headers["X-BingeMote-Token"];
-        return Program.Token != null && token == Program.Token;
+        return Program.Token != null && token != null && ConstantTimeEq(token, Program.Token);
     }
 
     private void HandlePair(HttpListenerRequest req, HttpListenerResponse res)
@@ -140,8 +140,15 @@ internal sealed class HttpServer : IDisposable
     private static string ReadBody(HttpListenerRequest req)
     {
         using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
-        var body = reader.ReadToEnd();
-        return body.Length > 64 * 1024 ? body[..(64 * 1024)] : body;
+        var buffer = new char[64 * 1024 + 1];
+        var total = 0;
+        while (total < buffer.Length) {
+            var count = reader.Read(buffer, total, buffer.Length - total);
+            if (count == 0) break;
+            total += count;
+        }
+        if (total > 64 * 1024) throw new InvalidDataException("Request too large");
+        return new string(buffer, 0, total);
     }
 
     private static void Reply(HttpListenerResponse res, int code, string json)
@@ -204,6 +211,7 @@ internal sealed class DiscoveryResponder : IDisposable
             try
             {
                 var data = _udp!.Receive(ref any);
+                if (!HttpServer.IsPrivateAddress(any.Address)) continue;
                 if (Encoding.UTF8.GetString(data).Trim() != Program.DiscoverMagic) continue;
                 var payload = $"{Program.ReplyMagic}|{Program.MachineLabel()}|{Program.HttpPort}";
                 var reply = Encoding.UTF8.GetBytes(payload);

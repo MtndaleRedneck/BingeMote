@@ -15,8 +15,8 @@ data class DiscoveredHelper(val host: String, val port: Int, val name: String)
 /**
  * Client for the BingeMote Windows helper: mouse, scroll, zoom and keyboard over LAN HTTP.
  * Every request carries the pairing token. Pairing trades a one-time 6-digit code
- * (shown on the PC) for the token. Plain HTTP is fine here because the token is the secret
- * and it never leaves the house.
+ * (shown on the PC) for the token. HTTP is not encrypted. Use only on a trusted private network;
+ * a device on that network could observe the token and input.
  */
 object HelperClient {
     const val DEFAULT_PORT = 8488
@@ -28,6 +28,7 @@ object HelperClient {
     class BadToken(val msg: String) : Exception(msg)
     class BadPairCode(val msg: String) : Exception(msg)
 
+    @Synchronized
     private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 3000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
