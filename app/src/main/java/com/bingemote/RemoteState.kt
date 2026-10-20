@@ -36,6 +36,10 @@ class RemoteState(
     /** Windows system volume 0-100 from the helper; null when the helper is unreachable, and VLC volume is used instead. */
     var winVolume by mutableStateOf<Int?>(null)
         private set
+
+    /** True when the helper is paired but not answering, so the volume row fell back to VLC volume. */
+    var helperDown by mutableStateOf(false)
+        private set
     private var preMuteRaw = 0
 
     /** Last subtitle track picked in the app, per media title. VLC's status doesn't report the current track on all versions. */
@@ -69,8 +73,9 @@ class RemoteState(
                 try {
                     val (v, m) = withContext(Dispatchers.IO) { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) }
                     muted = m
+                    helperDown = false
                     v
-                } catch (e: Exception) { null }
+                } catch (e: Exception) { helperDown = true; null }
             } else null
             failures = 0
             unreachable = false
