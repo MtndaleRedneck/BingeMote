@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build APKs
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "No signing secrets set"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          ./gradlew --no-daemon assembleRelease assembleDebug
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - name: Name the APK
+        run: |
+          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "VERSION=$V" >> $GITHUB_ENV
+          cp app/build/outputs/apk/release/app-release.apk BingeMote-v$V.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-apk
+          path: BingeMote-v*.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=v$VERSION
+          # Releases publish only for a new version number at 1.0.0 or above.
+          # Pre-release development versions (0.x) build artifacts only and are never published.
+          if [[ "$VERSION" == 0.* ]]; then
+            echo "Development version $VERSION: build only, no release."
+            exit 0
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Bump versionName to publish a new release."
+            exit 0
+          fi
+          gh release create "$TAG" "BingeMote-v$VERSION.apk" \
+            --target "$(git rev-parse HEAD)" \
+            --title "BingeMote $TAG" \
+            --notes-file release-notes.md
+
+  helper:
+    needs: android
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish helper exe
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+
+      - name: Name the exe
+        run: |
+          $v = Select-String -Path app/build.gradle.kts -Pattern 'versionName = "([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
+          echo "VERSION=$v" >> $env:GITHUB_ENV
+          Copy-Item helper/out/BingeMoteHelper.exe "BingeMoteHelper-v$v.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BingeMoteHelper-exe
+          path: BingeMoteHelper-v*.exe
+
+      - name: Attach exe to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG=v$VERSION
+          if [[ "$VERSION" == 0.* ]]; then
+            echo "Development version $VERSION: no release to attach to."
+            exit 0
+          fi
+          # The android job owns the release; wait briefly for it to exist.
+          for i in $(seq 1 30); do
+            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            sleep 10
+          done
+          gh release upload "$TAG" "BingeMoteHelper-v$VERSION.exe" --clobber
