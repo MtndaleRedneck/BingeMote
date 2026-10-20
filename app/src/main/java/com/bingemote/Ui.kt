@@ -86,24 +86,18 @@ fun PressTile(
     ) { content(pressed) }
 }
 
-/** Header: placeholder logo slot (until the real logo lands) + app name + trailing buttons. */
+/** Header: the BingeMote logo + app name + trailing buttons. */
 @Composable
 fun TopBar(trailing: @Composable RowScope.() -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Placeholder logo slot: dashed rounded square until the final logo is picked.
-        androidx.compose.foundation.Canvas(Modifier.size(34.dp)) {
-            drawRoundRect(
-                color = Color(0xFF55555E),
-                style = Stroke(
-                    width = 1.5.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx())),
-                ),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(9.dp.toPx()),
-            )
-        }
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
+            contentDescription = null,
+            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
+        )
         Spacer(Modifier.width(11.dp))
         Text("BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
