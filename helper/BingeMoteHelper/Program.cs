@@ -113,7 +113,7 @@ internal sealed class HelperWindow : Form
     public HelperWindow()
     {
         Text = "BingeMote Helper";
-        Width = 380; Height = 240;
+        Width = 500; Height = 270;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -136,7 +136,7 @@ internal sealed class HelperWindow : Form
             Text = "Enter this code in the BingeMote app to pair. It works once, for 10 minutes.",
             Font = new Font("Segoe UI", 9),
             ForeColor = Color.DimGray,
-            AutoSize = true, Left = 20, Top = 108,
+            AutoSize = false, Width = 450, Height = 40, Left = 20, Top = 108,
         };
         _status = new Label
         {

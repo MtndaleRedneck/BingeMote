@@ -79,7 +79,12 @@ internal sealed class HttpServer : IDisposable
         return Program.Token != null && token != null && ConstantTimeEq(token, Program.Token);
     }
 
+    private static readonly object PairLock = new();
     private void HandlePair(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        lock (PairLock) { HandlePairLocked(req, res); }
+    }
+    private void HandlePairLocked(HttpListenerRequest req, HttpListenerResponse res)
     {
         if (Program.PairFailures >= Program.MaxPairFailures)
         {

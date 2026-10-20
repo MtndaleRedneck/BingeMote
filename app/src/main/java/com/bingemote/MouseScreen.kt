@@ -50,11 +50,22 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
     val port = remote.store.helperPort
     val token = remote.store.helperToken
 
-    fun fire(block: () -> Unit) {
-        scope.launch(Dispatchers.IO) {
-            try { block(); helperOk = true } catch (e: Exception) { helperOk = false }
+    val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(256) }
+    LaunchedEffect(commands) {
+        for (command in commands) {
+            try { kotlinx.coroutines.withContext(Dispatchers.IO) { command() }; helperOk = true }
+            catch (e: Exception) { helperOk = false }
         }
     }
+    DisposableEffect(commands) { onDispose {
+        commands.close()
+        // Always release a held mouse button when leaving this screen.
+        java.util.concurrent.Executors.newSingleThreadExecutor().also { executor ->
+            executor.execute { try { HelperClient.button(host, port, token, "left", false) } catch (_: Exception) {} }
+            executor.shutdown()
+        }
+    } }
+    fun fire(block: () -> Unit) { if (!commands.trySend(block).isSuccess) helperOk = false }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         // Touchpad
@@ -64,6 +75,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                 .padding(bottom = 190.dp, end = 40.dp)
                 .pointerInput(host, port, token) {
                     var accX = 0f; var accY = 0f
+                    var dragLatched = false
                     var sender: Job? = null
                     fun startSender() {
                         if (sender?.isActive == true) return
@@ -84,7 +96,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         val downTime = System.currentTimeMillis()
                         var twoFinger = false
                         var moved = false
-                        var dragging = false // long-press drag mode
+                        var dragging = dragLatched // hold the button until the next tap
                         var pinchDist = 0f
                         var scrollAcc = 0f
                         var longPressFired = false
@@ -93,15 +105,12 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         // Long-press timer: 450ms stationary -> mouse button down (drag mode).
                         val lpJob = scope.launch {
                             delay(450)
-                            if (!moved && !twoFinger) {
+                            if (!moved && !twoFinger && !dragLatched) {
                                 longPressFired = true
                                 dragging = true
+                                dragLatched = true
                                 tapHaptic(view, remote.store.haptics)
-                                try {
-                                    kotlinx.coroutines.withContext(Dispatchers.IO) {
-                                        HelperClient.button(host, port, token, "left", true)
-                                    }
-                                } catch (e: Exception) { helperOk = false }
+                                fire { HelperClient.button(host, port, token, "left", true) }
                             }
                         }
 
@@ -111,7 +120,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                             val pressed = event.changes.filter { it.pressed }
                             if (pressed.size >= 2) {
                                 sawSecond = true
-                                if (!twoFinger && System.currentTimeMillis() - downTime > 60) {
+                                if (!twoFinger) {
                                     twoFinger = true
                                     lpJob.cancel()
                                     val a = pressed[0].position; val b = pressed[1].position
@@ -152,13 +161,18 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                             if (pressed.isEmpty()) break
                         }
                         lpJob.cancel()
+                        sender?.cancel()
+                        val lastX = accX; val lastY = accY
+                        accX = 0f; accY = 0f
+                        if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * 2.2f, lastY * 2.2f) }
 
                         val duration = System.currentTimeMillis() - downTime
                         when {
-                            dragging -> {
-                                // Tap ends the drag: button up.
+                            dragging && !longPressFired && !moved && duration < 400 -> {
+                                dragLatched = false
                                 fire { HelperClient.button(host, port, token, "left", false) }
                             }
+                            dragging -> { /* stays held until a later tap */ }
                             !moved && duration < 400 -> {
                                 tapHaptic(view, remote.store.haptics)
                                 if (sawSecond && System.currentTimeMillis() - secondDownAt < 350) {
@@ -291,8 +305,7 @@ private fun MouseButton(
                     awaitFirstDown()
                     tapHaptic(view, hapticsOn)
                     send(button, true)
-                    waitForUpOrCancel()
-                    send(button, false)
+                    try { waitForUpOrCancel() } finally { send(button, false) }
                 }
             },
         contentAlignment = Alignment.Center,
