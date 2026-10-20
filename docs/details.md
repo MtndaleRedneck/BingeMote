@@ -18,7 +18,7 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
 
 - `Vlc.kt` - VLC's built-in HTTP interface client. Polls `status.json` once a second while
   open; commands are the standard `command=...&val=...` requests. Volume uses VLC's raw
-  scale (256 = 100%) and the app caps at 100%.
+  scale (256 = 100%). The volume buttons control Windows system volume and mute through the helper; VLC volume is the fallback when the helper is unreachable, capped at 100%.
 - `HelperClient.kt` - the helper's HTTP API plus UDP broadcast discovery
   (`BINGEMOTE_DISCOVER_V1` / `BINGEMOTE_HERE_V1`).
 - `RemoteState.kt` - holds the latest VLC status, fan-out of commands, mute bookkeeping

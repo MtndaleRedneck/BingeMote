@@ -129,6 +129,18 @@ internal sealed class HttpServer : IDisposable
             case "/mouse/zoom":
                 InputSender.Zoom((float)r.GetProperty("delta").GetDouble());
                 break;
+            case "/volume/get":
+            {
+                var (volume, mute) = VolumeControl.Get();
+                Reply(res, 200, JsonSerializer.Serialize(new { volume, mute }));
+                return;
+            }
+            case "/volume/set":
+                VolumeControl.Set(r.GetProperty("volume").GetInt32());
+                break;
+            case "/volume/mute":
+                VolumeControl.SetMute(r.GetProperty("mute").GetBoolean());
+                break;
             case "/key":
                 InputSender.NamedKey(r.GetProperty("key").GetString() ?? "");
                 break;

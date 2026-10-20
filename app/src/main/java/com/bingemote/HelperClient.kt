@@ -132,6 +132,30 @@ object HelperClient {
     fun zoom(host: String, port: Int, token: String, delta: Float) =
         post(host, port, "/mouse/zoom", JSONObject().put("delta", delta.toDouble()), token, 1500)
 
+    /** Windows system volume, 0-100, and mute. Throws Unreachable when the helper does not answer. */
+    fun volumeGet(host: String, port: Int, token: String): Pair<Int, Boolean> {
+        val c = URL("http://$host:$port/volume/get").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 2500; c.readTimeout = 2500
+            c.requestMethod = "POST"; c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("X-BingeMote-Token", token)
+            c.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
+            if (c.responseCode !in 200..299) throw Unreachable("volume get failed (${c.responseCode})")
+            val text = c.inputStream.use { s: InputStream -> s.readBytes().toString(Charsets.UTF_8) }
+            val o = JSONObject(text)
+            return o.getInt("volume") to o.getBoolean("mute")
+        } catch (e: Unreachable) { throw e }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        finally { c.disconnect() }
+    }
+
+    fun volumeSet(host: String, port: Int, token: String, percent: Int) =
+        post(host, port, "/volume/set", JSONObject().put("volume", percent), token)
+
+    fun volumeMute(host: String, port: Int, token: String, mute: Boolean) =
+        post(host, port, "/volume/mute", JSONObject().put("mute", mute), token)
+
     /** A named key: "enter", "backspace", "escape", "space", "tab", "up", "down", "left", "right". */
     fun key(host: String, port: Int, token: String, key: String) =
         post(host, port, "/key", JSONObject().put("key", key), token)
