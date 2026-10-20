@@ -1,5 +1,7 @@
 # BingeMote
 
+<img src="docs/logo.png" width="128" alt="BingeMote logo">
+
 A couch remote for VLC on your Windows PC, with a movie browser and a mouse-and-keyboard mode.
 
 ## Install
