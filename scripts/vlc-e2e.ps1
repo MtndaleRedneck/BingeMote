@@ -125,12 +125,12 @@ try {
     Write-Host "browse dir=C:\ status $($r2.code): $(Head $r2.body)"
     Assert ($r2.code -eq 200) "browse.json plain path C:\ is 200"
     Assert ($r2.body -match 'element') "browse.json C:\ lists elements"
-    # 3) a file:/// URI, if the user pastes one into Settings: observe and report.
-    $r = Vlc "$base/browse.json?dir=$([uri]::EscapeDataString('file:///C:/'))"
-    Write-Host "browse dir=file:///C:/ status $($r.code): $(Head $r.body)"
-    Assert ($r.code -eq 200) "browse.json file:///C:/ is 200"
-    if ($r.body -match 'element') { Write-Host "ok: file:/// browse lists elements" }
-    else { Write-Host "::warning::file:///C:/ browse returned no elements - app users should enter a plain path like C:\Videos in Settings." }
+    # 3) a file:/// URI, if the user pastes one into Settings: the app sends it as uri=
+    #    (VLC's dir= is paths only and answers HTML for URIs).
+    $r = Vlc "$base/browse.json?uri=$([uri]::EscapeDataString('file:///C:/'))"
+    Write-Host "browse uri=file:///C:/ status $($r.code): $(Head $r.body)"
+    Assert ($r.code -eq 200) "browse.json uri=file:///C:/ is 200"
+    Assert ($r.body -match 'element') "browse.json uri=file:///C:/ lists elements" 
 
     Write-Host "VLC E2E PASSED"
 } finally {
