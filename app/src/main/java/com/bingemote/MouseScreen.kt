@@ -19,8 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
-import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
@@ -31,7 +29,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -110,11 +107,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
 
                         var secondDownAt = 0L
                         while (true) {
-                            val event = try {
-                                withTimeout(10000) { awaitPointerEvent() }
-                            } catch (e: PointerEventTimeoutCancellationException) {
-                                break
-                            }
+                            val event = awaitPointerEvent()
                             val pressed = event.changes.filter { it.pressed }
                             if (pressed.size >= 2) {
                                 sawSecond = true
@@ -308,7 +301,7 @@ private fun MouseButton(
     }
 }
 
-private suspend fun androidx.compose.foundation.gestures.PointerEventScope.waitForUpOrCancel() {
+private suspend fun androidx.compose.foundation.gestures.AwaitPointerEventScope.waitForUpOrCancel() {
     while (true) {
         val event = awaitPointerEvent()
         if (event.changes.none { it.pressed }) return

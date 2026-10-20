@@ -3,6 +3,10 @@ package com.bingemote
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,7 +46,7 @@ fun MainScreen(
                 HeaderIconButton(onMouse, remote.store.haptics) { CursorIcon(Orange) }
                 HeaderIconButton(onSettings, remote.store.haptics) {
                     androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.Default.Settings,
+                        Icons.Default.Settings,
                         contentDescription = "Settings", tint = Orange,
                     )
                 }
@@ -232,7 +236,7 @@ private fun Modifier.graphicsLayoutX(fraction: Float, thumbSize: androidx.compos
             val x = (fraction.coerceIn(0f, 1f) * w - placeable.width / 2).toInt().coerceIn(0, (w - placeable.width).coerceAtLeast(0))
             placeable.placeRelative(x, 0)
         }
-    }))
+    })
 
 @Composable
 private fun VolumeRow(remote: RemoteState) {
@@ -492,7 +496,7 @@ private fun SubtitleRow(name: String, checked: Boolean, onClick: () -> Unit) {
     ) {
         if (checked) {
             androidx.compose.material3.Icon(
-                androidx.compose.material.icons.Icons.Default.Check,
+                Icons.Default.Check,
                 contentDescription = null, tint = Orange, modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(8.dp))

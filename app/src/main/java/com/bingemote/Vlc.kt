@@ -109,7 +109,7 @@ object Vlc {
 
     /** List one folder on the PC. Throws Unreachable when VLC can't read it. */
     fun browse(host: String, port: Int, password: String, dir: String): List<BrowseItem> {
-        val raw = get("$browseUrl(host, port)?dir=${encode(dir)}", password)
+        val raw = get("${browseUrl(host, port)}?dir=${encode(dir)}", password)
         val root = JSONObject(raw)
         val el = root.opt("element")
         val arr: JSONArray = when (el) {
