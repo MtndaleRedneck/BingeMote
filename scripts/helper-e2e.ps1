@@ -35,17 +35,8 @@ try {
     function Invoke-Helper($path, $body, $token) {
         $headers = @{}
         if ($token) { $headers['X-BingeMote-Token'] = $token }
-        try {
-            $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10
-            return @{ code = [int]$r.StatusCode; body = $r.Content }
-        } catch {
-            $resp = $_.Exception.Response
-            if ($resp) {
-                $sr = New-Object IO.StreamReader($resp.GetResponseStream())
-                return @{ code = [int]$resp.StatusCode.value__; body = $sr.ReadToEnd() }
-            }
-            throw
-        }
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+        return @{ code = [int]$r.StatusCode; body = $r.Content }
     }
     function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
 
