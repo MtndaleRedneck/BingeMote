@@ -29,6 +29,15 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var reconnect by remember { mutableStateOf(store.autoReconnect) }
+    var pickingMovies by remember { mutableStateOf(false) }
+    if (pickingMovies) {
+        FolderPickerScreen(
+            remote,
+            onPick = { store.moviesPath = it; pickingMovies = false },
+            onCancel = { pickingMovies = false },
+        )
+        return
+    }
     Column(
         Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(16.dp),
     ) {
@@ -66,7 +75,7 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Movies folder") {
-            var path by remember { mutableStateOf(store.moviesPath) }
+            var path by remember(store.moviesPath) { mutableStateOf(store.moviesPath) }
             OutlinedTextField(
                 value = path,
                 onValueChange = { path = it; store.moviesPath = it },
@@ -75,8 +84,21 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
                 placeholder = { Text("C:\\Users\\you\\Videos", color = Dimmed) },
                 colors = fieldColors(),
             )
+            Spacer(Modifier.height(10.dp))
+            PressTile(
+                onTap = { pickingMovies = true },
+                background = OrangeGradient,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                corner = 14.dp,
+            ) {
+                Text(
+                    "Browse PC folders...",
+                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                )
+            }
             Spacer(Modifier.height(6.dp))
-            Text("The folder on your PC that the Movies screen opens.", color = Muted, fontSize = 12.sp)
+            Text("The folder on your PC that the Movies screen opens. Browse to pick it, or type it above.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(14.dp))
 
