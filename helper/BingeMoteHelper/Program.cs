@@ -857,7 +857,7 @@ internal static class ConfirmDialog
             Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
-            StartPosition = FormStartPosition.CenterOwner,
+            StartPosition = FormStartPosition.CenterParent,
             BackColor = bg, ForeColor = fg,
         };
         var body = new Label
@@ -906,7 +906,7 @@ internal static class NoteDialog
             Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
-            StartPosition = FormStartPosition.CenterOwner,
+            StartPosition = FormStartPosition.CenterParent,
             BackColor = bg, ForeColor = fg,
         };
         var body = new Label
