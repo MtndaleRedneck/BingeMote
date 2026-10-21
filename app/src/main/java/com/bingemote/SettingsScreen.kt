@@ -121,6 +121,14 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        SettingsSection("Phone blocked?") {
+            Text(
+                "Windows may have marked the PC's Wi-Fi as Public. Open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
+                color = TextC, fontSize = 14.sp,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+
         SettingsSection("Feedback & bugs") {
             Row(
                 Modifier.fillMaxWidth().pointerInput(Unit) {
