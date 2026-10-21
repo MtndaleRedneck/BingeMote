@@ -1,10 +1,11 @@
 package com.bingemote
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -24,16 +25,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Movies folder on the PC: highlight a file with the D-pad (or volume keys), OK plays it. */
+/**
+ * The movies folder picked in Settings, on the TV-couch model: it opens there and never
+ * climbs above it. Rows open on touch, the D-pad (or volume keys) moves the highlight
+ * and the list scrolls to follow it, OK plays.
+ */
 @Composable
 fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var path by remember { mutableStateOf(remote.store.moviesPath) }
+    val root = remote.store.moviesPath.trim()
+    var path by remember { mutableStateOf(root) }
     var items by remember { mutableStateOf<List<BrowseItem>>(emptyList()) }
     var selected by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    val scroll = rememberScrollState()
+    val listState = rememberLazyListState()
+
+    fun atRoot(p: String) = root.isNotEmpty() &&
+        p.trimEnd('\\', '/').equals(root.trimEnd('\\', '/'), ignoreCase = true)
 
     fun load(dir: String) {
         loading = true
@@ -43,19 +52,28 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
-                val up = raw.filter { it.name == ".." }
+                // Locked to the assigned folder: no "up" once we are standing on it.
+                val up = if (atRoot(dir)) emptyList() else raw.filter { it.name == ".." }
                 val dirs = raw.filter { it.isDir && it.name != ".." }
                 val files = raw.filter { !it.isDir && isVideoFile(it.name) }
                 items = up + dirs + files
                 selected = if (up.isNotEmpty()) 1.coerceAtMost(items.size - 1) else 0
                 path = dir
                 loading = false
-                scroll.scrollTo(0)
+                listState.scrollToItem(0)
             } catch (e: Exception) {
                 loading = false
-                error = "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
+                error = if (root.isEmpty())
+                    "Couldn't open that folder. Pick a Movies folder in Settings, and check the PC is on."
+                else
+                    "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
             }
         }
+    }
+
+    fun upOne() {
+        val parent = path.trimEnd('\\', '/').substringBeforeLast('\\', "")
+        if (parent.isNotBlank()) load(parent)
     }
 
     fun open(item: BrowseItem) {
@@ -70,7 +88,10 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(Unit) { load(path) }
+    LaunchedEffect(Unit) { load(if (root.isNotEmpty()) root else path) }
+
+    // Inside a folder, Back goes up one level first (never above the assigned folder).
+    BackHandler(enabled = root.isNotEmpty() && !atRoot(path)) { upOne() }
 
     // Volume keys steer the highlight too (wired from MainActivity).
     MoviesKeyHandler.register { key ->
@@ -80,6 +101,11 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         }
     }
     DisposableEffect(Unit) { onDispose { MoviesKeyHandler.register(null) } }
+
+    // The list scrolls to follow the highlight, so D-pad down never walks off-screen.
+    LaunchedEffect(selected, items.size) {
+        if (items.isNotEmpty()) listState.animateScrollToItem(selected)
+    }
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(
@@ -97,27 +123,30 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         )
         Spacer(Modifier.height(10.dp))
 
-        Column(
-            Modifier
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(scroll),
+                .padding(horizontal = 16.dp),
         ) {
             when {
-                loading -> Text("Loading...", color = Muted, modifier = Modifier.padding(8.dp))
-                error != null -> Text(error!!, color = ErrorRed, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
-                items.isEmpty() -> Text("No videos in this folder.", color = Muted, modifier = Modifier.padding(8.dp))
-                else -> items.forEachIndexed { i, item ->
+                loading -> item { Text("Loading...", color = Muted, modifier = Modifier.padding(8.dp)) }
+                error != null -> item { Text(error!!, color = ErrorRed, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
+                items.isEmpty() -> item { Text("No videos in this folder.", color = Muted, modifier = Modifier.padding(8.dp)) }
+                else -> items(items.size, key = { it }) { i ->
+                    val item = items[i]
                     val isSel = i == selected
-                    Box(
-                        Modifier
+                    PressTile(
+                        onTap = { selected = i; open(item) },
+                        background = if (isSel) OrangeGradient else CardGradient,
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 5.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSel) OrangeGradient else CardGradient)
-                            .padding(horizontal = 16.dp, vertical = 13.dp),
+                            .padding(vertical = 5.dp),
+                        corner = 16.dp,
                     ) {
-                        Column {
+                        Column(
+                            Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                        ) {
                             Text(
                                 if (item.name == "..") "Up one folder" else item.name,
                                 color = if (isSel) androidx.compose.ui.graphics.Color(0xFF1B1B1E) else TextC,
@@ -163,7 +192,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
             }
         }
         Text(
-            "Arrows move the highlight, OK plays. Volume keys work as arrows too.",
+            "Tap a row, or use the arrows and OK. Volume keys work as arrows too.",
             color = Muted, fontSize = 12.sp,
             modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp),
         )
