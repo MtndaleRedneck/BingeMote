@@ -1,3 +1,11 @@
+## v1.3.0
+
+- See at a glance whether your PC is connected: a small pill in the top bar, and the now-playing card says when it's trying to reconnect
+- Pointer speed is now a - / + stepper right on the mouse screen (gear button), and the gesture guide sits right on the touchpad
+- Settings can check for updates when you tap, and a new Feedback screen sends a bug or idea as a GitHub issue or a private form
+- Movies: Back goes up one folder first
+- New launcher and in-app icon
+
 ## v1.2.0
 
 - Movies now play even when VLC is closed: the PC program finds the movie and starts it for you (needs the BingeMote PC 1.2.0 download)
