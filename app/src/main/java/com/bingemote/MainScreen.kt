@@ -424,7 +424,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(62.dp),
             desc = "Back $label",
         ) { pressed ->
-            SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 28.dp)
+            SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 40.dp, labelScale = 0.18f)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(
@@ -434,7 +434,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(62.dp),
             desc = "Forward $label",
         ) { pressed ->
-            SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 28.dp)
+            SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 40.dp, labelScale = 0.18f)
         }
     }
 }
@@ -444,19 +444,19 @@ private fun BottomRow(remote: RemoteState, onSubtitles: () -> Unit, onMovies: ()
     // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Movies") {
-            FolderIcon(TextC, size = 26.dp)
+            FolderIcon(TextC, size = 36.dp)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Subtitles") {
-            SubtitleIcon(TextC, size = 26.dp)
+            SubtitleIcon(TextC, size = 36.dp)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Fullscreen") {
-            FullscreenIcon(TextC, size = 26.dp)
+            FullscreenIcon(TextC, size = 36.dp)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Mouse") {
-            CursorIcon(TextC, size = 24.dp)
+            CursorIcon(TextC, size = 34.dp)
         }
     }
 }

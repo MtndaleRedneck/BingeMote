@@ -58,6 +58,8 @@ internal static class Program
     /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
     internal static string? MoviesFolder;
     internal static string? PairCode;
+    /// <summary>The version that last ran; a change means an upgrade just landed.</summary>
+    internal static string? LastRunVersion;
     /// <summary>A newer published helper version, found by the background update check.</summary>
     internal static (string Version, string ExeUrl, string? Sha256)? AvailableUpdate;
     internal static DateTime PairCodeExpires = DateTime.MinValue;
@@ -152,6 +154,15 @@ internal static class Program
 
         Directory.CreateDirectory(DataDir);
         LoadConfig();
+        if (LastRunVersion != VersionText)
+        {
+            // An upgrade just landed. Windows caches icons aggressively; tell the shell
+            // associations changed so the desktop shortcut and taskbar pin pick up the
+            // new icon now instead of after a sign-out.
+            try { SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0x3000 /* SHCNF_IDLIST|SHCNF_FLUSH */, IntPtr.Zero, IntPtr.Zero); } catch { }
+            LastRunVersion = VersionText;
+            SaveConfig();
+        }
         Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
 
@@ -315,6 +326,7 @@ internal static class Program
                     if (!string.IsNullOrWhiteSpace(v)) HomeNetworks.Add(v);
                 }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
+            LastRunVersion = doc.RootElement.TryGetProperty("lastRunVersion", out var lv) ? lv.GetString() : null;
             }
         }
         catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
@@ -328,6 +340,7 @@ internal static class Program
             moviesFolder = MoviesFolder,
             declinedNetworks = DeclinedNetworks.ToArray(),
             homeNetworks = HomeNetworks.ToArray(),
+            lastRunVersion = LastRunVersion,
         });
         File.WriteAllText(ConfigPath, json);
     }
@@ -335,6 +348,9 @@ internal static class Program
     internal static string MachineLabel() => Environment.MachineName;
 
     /// <summary>"1.3.1" - the running build, for the Updates card and feedback reports.</summary>
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);
+
     internal static string VersionText
     {
         get
@@ -393,7 +409,6 @@ internal sealed class HelperWindow : Form
 
     private bool _allowShow;
     private bool _updateAnnounced;
-    private bool _hideHintShown;
     private bool _manualDownload;
     private readonly Label _pairHeader;
     private readonly TextBox _nameBox;
@@ -409,6 +424,7 @@ internal sealed class HelperWindow : Form
     private readonly Button _feedbackBtn;
     private readonly Panel _updatesCard;
     private readonly Label _updatesCaption;
+    private readonly Label _updatesResult;
     private readonly Button _checkUpdates;
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
@@ -482,7 +498,7 @@ internal sealed class HelperWindow : Form
             Text = Program.PairCode ?? "------",
             Font = new Font("Consolas", 15, FontStyle.Bold),
             ForeColor = Orange,
-            AutoSize = true, Left = margin + 118, Top = y,
+            AutoSize = true, Left = margin + 98, Top = y,
         };
         y += 28 + 6;
         _codeNote = new Label
@@ -514,7 +530,7 @@ internal sealed class HelperWindow : Form
         {
             Text = "Feedback & bugs",
             Font = new Font("Segoe UI", 10.5f),
-            AutoSize = true, Left = 14, Top = 14,
+            AutoSize = true, Left = 14, Top = 15,
             UseMnemonic = false,
         };
         _feedbackBtn = MakeButton("Send feedback", contentW - 130 - 10, 9, 130);
@@ -529,13 +545,19 @@ internal sealed class HelperWindow : Form
         {
             Text = "Updates",
             Font = new Font("Segoe UI", 10.5f),
-            AutoSize = true, Left = 14, Top = 6,
+            AutoSize = true, Left = 14, Top = 14,
         };
         _updatesCaption = new Label
         {
-            Text = "Version " + Program.VersionText,
-            Font = new Font("Segoe UI", 8),
-            AutoSize = false, Left = 14, Top = 26, Width = contentW - 140 - 10 - 14 - 8, Height = 16,
+            Text = "v" + Program.VersionText,
+            Font = new Font("Segoe UI", 9.5f),
+            AutoSize = true, Left = 14 + 68, Top = 16,
+        };
+        _updatesResult = new Label
+        {
+            Text = "",
+            Font = new Font("Segoe UI", 9.5f),
+            AutoSize = false, Left = 14 + 68 + 46, Top = 16, Width = contentW - 140 - 10 - 14 - 68 - 46 - 10 - 8, Height = 18,
             AutoEllipsis = true,
         };
         _checkUpdates = MakeButton("Check for updates", contentW - 140 - 10, 9, 140);
@@ -543,6 +565,7 @@ internal sealed class HelperWindow : Form
         _checkUpdates.Click += (_, _) => ManualUpdateCheck();
         _updatesCard.Controls.Add(updatesLabel);
         _updatesCard.Controls.Add(_updatesCaption);
+        _updatesCard.Controls.Add(_updatesResult);
         _updatesCard.Controls.Add(_checkUpdates);
         y += 48 + margin;
 
@@ -1111,14 +1134,17 @@ internal sealed class HelperWindow : Form
     /// goes back to showing the running version - like the phone app.</summary>
     private void ShowCaptionBriefly(string s)
     {
-        _updatesCaption.Text = s;
-        _captionTimer?.Stop();
-        _captionTimer = new System.Windows.Forms.Timer { Interval = 6000 };
-        _captionTimer.Tick += (_, _) =>
+        _updatesResult.Text = s;
+        if (_captionTimer == null)
         {
-            _captionTimer!.Stop();
-            if (!_manualDownload && !_downloading) _updatesCaption.Text = "Version " + Program.VersionText;
-        };
+            _captionTimer = new System.Windows.Forms.Timer { Interval = 20000 };
+            _captionTimer.Tick += (_, _) =>
+            {
+                _captionTimer.Stop();
+                if (!_downloading && !_manualDownload) _updatesResult.Text = "";
+            };
+        }
+        _captionTimer.Stop();
         _captionTimer.Start();
     }
 
@@ -1127,7 +1153,7 @@ internal sealed class HelperWindow : Form
     {
         if (_manualDownload) { StartUpdateDownload(); return; }
         _checkUpdates.Enabled = false;
-        _updatesCaption.Text = "Checking...";
+        _updatesResult.Text = "Checking...";
         Task.Run(() =>
         {
             (string Version, string ExeUrl, string? Sha256)? newer;
@@ -1146,7 +1172,7 @@ internal sealed class HelperWindow : Form
                 if (newer != null)
                 {
                     Program.AvailableUpdate = newer.Value;
-                    _updatesCaption.Text = "Version " + newer.Value.Version + " is available.";
+                    _updatesResult.Text = "Version " + newer.Value.Version + " is available.";
                     _manualDownload = true;
                     _checkUpdates.Text = "Download";
                     _checkUpdates.Enabled = true;
@@ -1154,7 +1180,7 @@ internal sealed class HelperWindow : Form
                 }
                 else
                 {
-                    ShowCaptionBriefly("You're up to date.");
+                    ShowCaptionBriefly("Up to date");
                     _checkUpdates.Enabled = true;
                 }
             })); } catch { }
@@ -1179,14 +1205,15 @@ internal sealed class HelperWindow : Form
     }
 
     /// <summary>Download the update's installer, check it against the release's SHA-256, and
-    /// open it. Nothing installs on its own: the installer still shows and Windows asks once.</summary>
+    /// run it. He always taps Update first; after one Windows permission prompt it installs
+    /// itself and reopens BingeMote.</summary>
     private void StartUpdateDownload()
     {
         var u = Program.AvailableUpdate;
         if (u == null || _downloading) return;
         _downloading = true;
         _checkUpdates.Enabled = false;
-        _updatesCaption.Text = "Downloading version " + u.Value.Version + "...";
+        _updatesResult.Text = "Downloading version " + u.Value.Version + "...";
         var upd = u.Value;
         Task.Run(async () =>
         {
@@ -1196,7 +1223,7 @@ internal sealed class HelperWindow : Form
                 Program.Log("Update " + upd.Version + " downloaded and verified; opening the installer.");
                 try { BeginInvoke(new Action(() =>
                 {
-                    _updatesCaption.Text = "Checked. Opening the installer - Windows will ask for permission.";
+                    _updatesResult.Text = "Checked. Windows will ask for permission once, then the update installs itself.";
                     LaunchUpdate(path);
                 })); } catch { }
             }
@@ -1205,7 +1232,7 @@ internal sealed class HelperWindow : Form
                 Program.Log("Update download failed or failed its check.");
                 try { BeginInvoke(new Action(() =>
                 {
-                    _updatesCaption.Text = "The download didn't check out. Try again.";
+                    _updatesResult.Text = "The download didn't check out. Try again.";
                     _checkUpdates.Enabled = true;
                     _downloading = false;
                 })); } catch { }
@@ -1287,15 +1314,8 @@ internal sealed class HelperWindow : Form
     {
         if (e.CloseReason == CloseReason.UserClosing)
         {
-            e.Cancel = true; // closing tucks it into the tray; the tray menu's Quit exits for real
+            e.Cancel = true; // closing tucks it into the tray, silently; the tray menu's Quit exits for real
             Hide();
-            if (!_hideHintShown)
-            {
-                _hideHintShown = true;
-                _tray.BalloonTipTitle = "BingeMote";
-                _tray.BalloonTipText = "Still running down here by the clock. Right-click the icon to show the window or quit.";
-                _tray.ShowBalloonTip(6000);
-            }
             return;
         }
         _tray.Visible = false;

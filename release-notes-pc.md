@@ -1,3 +1,10 @@
+## v1.5.0
+
+- New squircle program icon, and Windows picks it up right after an update - no sign-out needed
+- Updates install themselves now: one click, one Windows permission prompt, and BingeMote reopens on its own
+- Update results get their own line in the window, and the window reads better at larger text sizes
+- Closing the window just tucks it into the tray - no more balloon tip
+
 ## v1.4.0
 
 - The Public Wi-Fi warning now sits in the window until fixed, re-checks every 30 seconds, and a home network is never buried by Not now

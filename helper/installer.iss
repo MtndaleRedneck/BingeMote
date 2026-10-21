@@ -19,9 +19,6 @@ CloseApplications=yes
 RestartApplications=no
 WizardStyle=modern
 
-[Tasks]
-Name: "desktopicon"; Description: "Add a desktop shortcut"; GroupDescription: "Shortcuts:"
-
 [Files]
 Source: "out\BingeMote.exe"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -32,8 +29,8 @@ Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "BingeMoteHelper"; Flags: deletevalue
 
 [Icons]
-Name: "{userprograms}\BingeMote"; Filename: "{app}\BingeMote.exe"
-Name: "{userdesktop}\BingeMote"; Filename: "{app}\BingeMote.exe"; Tasks: desktopicon
+Name: "{userprograms}\BingeMote"; Filename: "{app}\BingeMote.exe"; IconFilename: "{app}\BingeMote.exe"
+Name: "{userdesktop}\BingeMote"; Filename: "{app}\BingeMote.exe"; IconFilename: "{app}\BingeMote.exe"
 
 [InstallDelete]
 Type: files; Name: "{app}\BingeMoteHelper.exe"
@@ -50,6 +47,8 @@ Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote""
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;WD)"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
+; After a silent update, reopen the app for him as the signed-in user (not elevated).
+Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"

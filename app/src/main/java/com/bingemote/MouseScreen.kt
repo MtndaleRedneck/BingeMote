@@ -405,10 +405,12 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
     // Tapping anywhere outside dismisses, so there is no Done button.
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
         androidx.compose.material3.Surface(
+            // 66% of the screen width (Ezzy's pick over 58%): roomier, not wide.
+            modifier = Modifier.fillMaxWidth(0.66f),
             shape = RoundedCornerShape(28.dp),
             color = Card2,
         ) {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 30.dp)) {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 24.dp)) {
                 Text("Keyboard", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
@@ -428,21 +430,24 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     listOf("enter" to "Enter", "backspace" to "Backspace", "escape" to "Esc", "space" to "Space").forEach { (k, label) ->
-                        TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 13.sp) }
+                        TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                // Cross arrow cluster: up over down, left and right flanking.
+                Spacer(Modifier.height(12.dp))
+                // Cross arrow cluster: chunky vector arrows (Ezzy's pick), same
+                // size and positions as before - only the artwork changed.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("up") }) { Text("↑", color = Orange, fontSize = 16.sp) }
+                    TextButton(onClick = { onKey("up") }) { ArrowIcon(ArrowDir.Up, Orange) }
                 }
+                Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("left") }) { Text("←", color = Orange, fontSize = 16.sp) }
-                    Spacer(Modifier.width(48.dp))
-                    TextButton(onClick = { onKey("right") }) { Text("→", color = Orange, fontSize = 16.sp) }
+                    TextButton(onClick = { onKey("left") }) { ArrowIcon(ArrowDir.Left, Orange) }
+                    Spacer(Modifier.width(40.dp))
+                    TextButton(onClick = { onKey("right") }) { ArrowIcon(ArrowDir.Right, Orange) }
                 }
+                Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("down") }) { Text("↓", color = Orange, fontSize = 16.sp) }
+                    TextButton(onClick = { onKey("down") }) { ArrowIcon(ArrowDir.Down, Orange) }
                 }
             }
         }

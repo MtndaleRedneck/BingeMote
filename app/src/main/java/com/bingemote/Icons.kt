@@ -120,6 +120,45 @@ fun FullscreenIcon(color: Color, size: Dp = 22.dp) {
     }
 }
 
+/** Chunky cross arrows for the Keyboard sheet (Ezzy's pick over the thin text
+ * glyphs): one filled polygon per direction, sharp clean tips. */
+enum class ArrowDir { Up, Down, Left, Right }
+
+@Composable
+fun ArrowIcon(dir: ArrowDir, color: Color, size: Dp = 24.dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val sh = w * 0.08f   // shaft half-width
+        val hw = w * 0.27f   // head half-width
+        val hh = w * 0.29f   // head length
+        val cx = w / 2
+        val pts = when (dir) {
+            ArrowDir.Up -> listOf(
+                cx - sh to w, cx + sh to w, cx + sh to hh, cx + hw to hh,
+                cx to 0f, cx - hw to hh, cx - sh to hh,
+            )
+            ArrowDir.Down -> listOf(
+                cx - sh to 0f, cx + sh to 0f, cx + sh to w - hh, cx + hw to w - hh,
+                cx to w, cx - hw to w - hh, cx - sh to w - hh,
+            )
+            ArrowDir.Left -> listOf(
+                w to cx - sh, w to cx + sh, hh to cx + sh, hh to cx + hw,
+                0f to cx, hh to cx - hw, hh to cx - sh,
+            )
+            ArrowDir.Right -> listOf(
+                0f to cx - sh, 0f to cx + sh, w - hh to cx + sh, w - hh to cx + hw,
+                w to cx, w - hh to cx - hw, w - hh to cx - sh,
+            )
+        }
+        val path = Path().apply {
+            moveTo(pts[0].first, pts[0].second)
+            for (i in 1 until pts.size) lineTo(pts[i].first, pts[i].second)
+            close()
+        }
+        drawPath(path, color)
+    }
+}
+
 /** Subtitles (approved 1.5.0 vector): hollow chat bubble, sharp hollow tail,
  * three staggered rows of dashed text lines. */
 @Composable
@@ -127,17 +166,39 @@ fun SubtitleIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         val st = w * 0.0357f
-        drawRoundRect(color, topLeft = Offset(w * 0.143f, h * 0.179f), size = Size(w * 0.714f, h * 0.500f), cornerRadius = CornerRadius(w * 0.093f), style = Stroke(width = st))
-        val tail = Path().apply {
-            moveTo(w * 0.339f, h * 0.675f)
-            lineTo(w * 0.275f, h * 0.829f)
-            lineTo(w * 0.518f, h * 0.675f)
+        // One continuous outline: the bubble's bottom edge opens where the tail
+        // joins, running straight down into the tail and back up (Ezzy's pick).
+        val x0 = w * 0.143f; val y0 = h * 0.179f; val x1 = w * 0.857f; val y1 = h * 0.679f
+        val r = w * 0.093f
+        val tailL = w * 0.339f; val tailR = w * 0.518f
+        val tipX = w * 0.265f; val tipY = h * 0.885f
+        val bubble = Path().apply {
+            moveTo(tipX, tipY)
+            lineTo(tailR, y1)
+            lineTo(x1 - r, y1)
+            arcTo(androidx.compose.ui.geometry.Rect(x1 - 2 * r, y1 - 2 * r, x1, y1), 90f, -90f, false)
+            lineTo(x1, y0 + r)
+            arcTo(androidx.compose.ui.geometry.Rect(x1 - 2 * r, y0, x1, y0 + 2 * r), 0f, -90f, false)
+            lineTo(x0 + r, y0)
+            arcTo(androidx.compose.ui.geometry.Rect(x0, y0, x0 + 2 * r, y0 + 2 * r), 270f, -90f, false)
+            lineTo(x0, y1 - r)
+            arcTo(androidx.compose.ui.geometry.Rect(x0, y1 - 2 * r, x0 + 2 * r, y1), 180f, -90f, false)
+            lineTo(tailL, y1)
+            close()
         }
-        drawPath(tail, color, style = Stroke(width = st, join = androidx.compose.ui.graphics.StrokeJoin.Miter, miter = 4f))
-        val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(w * 0.0643f, w * 0.0536f))
-        drawLine(color, Offset(w * 0.257f, h * 0.321f), Offset(w * 0.743f, h * 0.321f), st, cap = StrokeCap.Round, pathEffect = dash)
-        drawLine(color, Offset(w * 0.329f, h * 0.429f), Offset(w * 0.714f, h * 0.429f), st, cap = StrokeCap.Round, pathEffect = dash)
-        drawLine(color, Offset(w * 0.257f, h * 0.536f), Offset(w * 0.636f, h * 0.536f), st, cap = StrokeCap.Round, pathEffect = dash)
+        drawPath(bubble, color, style = Stroke(width = st, join = androidx.compose.ui.graphics.StrokeJoin.Round, cap = StrokeCap.Round))
+        // Interior A1 (Ezzy's pick): three rows, each a long line plus
+        // staggered shorter dashes, like real text.
+        val rows = listOf(
+            0.321f to listOf(0.257f to 0.475f, 0.525f to 0.632f, 0.682f to 0.743f),
+            0.429f to listOf(0.257f to 0.311f, 0.361f to 0.579f, 0.629f to 0.743f),
+            0.536f to listOf(0.257f to 0.421f, 0.471f to 0.539f, 0.589f to 0.743f),
+        )
+        for ((ry, segs) in rows) {
+            for ((xa, xb) in segs) {
+                drawLine(color, Offset(w * xa, h * ry), Offset(w * xb, h * ry), st, cap = StrokeCap.Round)
+            }
+        }
     }
 }
 
@@ -204,7 +265,7 @@ fun PauseIcon(color: Color, size: Dp = 40.dp) {
  * does one full turn (Ezzy's ask: "I want it to fully rotate"); the number stays put.
  */
 @Composable
-fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, size: Dp = 34.dp) {
+fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, size: Dp = 34.dp, labelScale: Float = 0.30f) {
     val spin = remember { Animatable(0f) }
     LaunchedEffect(pressed) {
         if (pressed) {
@@ -248,6 +309,6 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             }
             drawPath(head, ringColor)
         }
-        Text(label, color = tint, fontSize = (size.value * 0.30f).sp, fontWeight = FontWeight.Bold)
+        Text(label, color = tint, fontSize = (size.value * labelScale).sp, fontWeight = FontWeight.Bold)
     }
 }
