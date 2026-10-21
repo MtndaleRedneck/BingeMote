@@ -87,9 +87,11 @@ fun VolumeUpIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
-        drawWave(color, w, h, radius = w * 0.25f, stroke = w * 0.12f)
-        drawWave(color, w, h, radius = w * 0.385f, stroke = w * 0.12f)
-        drawWave(color, w, h, radius = w * 0.52f, stroke = w * 0.12f)
+        // Approved 1.3.1 render: slimmer waves, wider spacing; outer edge ends exactly
+        // at the icon's right edge (0.48 + 0.48 + 0.04 = 1.0), nothing clipped.
+        drawWave(color, w, h, radius = w * 0.24f, stroke = w * 0.08f)
+        drawWave(color, w, h, radius = w * 0.36f, stroke = w * 0.08f)
+        drawWave(color, w, h, radius = w * 0.48f, stroke = w * 0.08f)
     }
 }
 
@@ -220,10 +222,11 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
                 style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
             )
-            // Arrowhead at the arc's end: flat base square across the end of the ring,
-            // the ring's centerline hitting the exact middle of the base, tip pointing
-            // along the spin. The base sits one cap-radius back so the ring's round end
-            // is swallowed smoothly. (1.3.0's head sat crooked off the shaft.)
+            // Arrowhead matching the approved target: base square across the ring's end
+            // with the ring's centerline hitting the exact middle of the base (Ezzy's
+            // nudge: the reference had it sitting slightly outside the centerline), tip
+            // pointing along the spin. Base a touch behind the ring end so the ring's
+            // round end is fully swallowed - no stray cap poking out.
             val cx = w / 2; val r = (w - inset * 2) / 2
             val strokeW = w * 0.09f
             val endAngle = Math.toRadians((120.0 + 285.0))
@@ -231,12 +234,12 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             val ey = cx + r * Math.sin(endAngle).toFloat()
             val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
             val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
-            val tipLen = w * 0.15f; val halfW = strokeW * 1.25f; val bury = strokeW / 2
-            val bx = ex - tx * bury; val by = ey - ty * bury
+            val tip = Offset(ex + tx * strokeW * 2.1f, ey + ty * strokeW * 2.1f)
+            val bx = ex - tx * strokeW * 0.5f; val by = ey - ty * strokeW * 0.5f
             val head = Path().apply {
-                moveTo(ex + tx * tipLen, ey + ty * tipLen)
-                lineTo(bx + nx * halfW, by + ny * halfW)
-                lineTo(bx - nx * halfW, by - ny * halfW)
+                moveTo(tip.x, tip.y)
+                lineTo(bx + nx * strokeW * 0.75f, by + ny * strokeW * 0.75f)
+                lineTo(bx - nx * strokeW * 0.75f, by - ny * strokeW * 0.75f)
                 close()
             }
             drawPath(head, ringColor)
