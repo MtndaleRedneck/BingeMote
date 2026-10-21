@@ -59,9 +59,9 @@ internal static class Program
                 Log("Launched while already running - asked the running copy to show its window.");
                 return 0;
             }
-            EventWaitHandle? quitEvent = null;
-            try { quitEvent = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
-            if (quitEvent == null)
+            EventWaitHandle? oldQuit = null;
+            try { oldQuit = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
+            if (oldQuit == null)
             {
                 Log("An older helper (before 1.0.2) is running - asked him to quit it by hand.");
                 MessageBox.Show(
@@ -70,7 +70,7 @@ internal static class Program
                 return 0;
             }
             Log("Update launched while an older copy ran - asked it to quit, taking over.");
-            quitEvent.Set();
+            oldQuit.Set();
             // The old copy exits and releases the mutex; take it over (give it a few seconds).
             var tookOver = false;
             for (var i = 0; i < 40 && !tookOver; i++)
