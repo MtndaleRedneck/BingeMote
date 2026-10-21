@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BingeMote - Download</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0c0c0e; color:#e8e8ec; font-family:"Segoe UI",system-ui,-apple-system,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:56px 20px 40px; }
+  .logo { width:88px; height:88px; border-radius:20px; margin-bottom:18px; }
+  h1 { font-size:30px; font-weight:600; letter-spacing:.2px; }
+  .tag { color:#9a9aa4; font-size:15px; margin-top:8px; text-align:center; max-width:440px; line-height:1.5; }
+  .cards { display:flex; gap:18px; margin-top:40px; flex-wrap:wrap; justify-content:center; }
+  .card { background:#17171c; border:1px solid #26262e; border-radius:16px; padding:26px 28px 22px; width:290px; text-align:center; }
+  .card .plat { font-size:13px; color:#9a9aa4; text-transform:uppercase; letter-spacing:1.2px; }
+  .card h2 { font-size:19px; font-weight:600; margin:8px 0 4px; }
+  .card .what { font-size:13.5px; color:#9a9aa4; line-height:1.45; min-height:40px; }
+  .btn { display:block; background:#e87e1e; color:#141414; font-size:16px; font-weight:700; text-decoration:none; border-radius:10px; padding:13px 0; margin-top:18px; }
+  .btn:hover { background:#f28c33; }
+  .ver { font-size:12.5px; color:#6d6d78; margin-top:10px; min-height:16px; }
+  .fine { color:#6d6d78; font-size:13px; margin-top:44px; text-align:center; line-height:1.7; max-width:520px; }
+  .fine a { color:#e87e1e; text-decoration:none; }
+  .fine a:hover { text-decoration:underline; }
+</style>
+</head>
+<body>
+  <img class="logo" src="logo.png" alt="BingeMote logo">
+  <h1>BingeMote</h1>
+  <p class="tag">A couch remote for VLC on your Windows PC, with a movie browser and a mouse-and-keyboard mode.</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="plat">Windows</div>
+      <h2>BingeMote PC</h2>
+      <p class="what">The program that runs on the PC your TV is plugged into.</p>
+      <a class="btn" id="dl-win" href="https://github.com/MtndaleRedneck/BingeMote/releases/latest">Download for Windows</a>
+      <div class="ver" id="ver-win"></div>
+    </div>
+    <div class="card">
+      <div class="plat">Android</div>
+      <h2>BingeMote app</h2>
+      <p class="what">The remote on your phone. Pairs with the PC over your home Wi-Fi.</p>
+      <a class="btn" id="dl-and" href="https://github.com/MtndaleRedneck/BingeMote/releases/latest">Download for Android</a>
+      <div class="ver" id="ver-and"></div>
+    </div>
+  </div>
+
+  <p class="fine">
+    Install the PC program first, then open the app on your phone and follow setup - it finds the PC and asks for its pairing code.<br>
+    Free and open source - <a href="https://github.com/MtndaleRedneck/BingeMote">source code and releases on GitHub</a>.
+  </p>
+
+<script>
+function setBtn(id, verId, asset){
+  if (asset) { document.getElementById(id).href = asset.browser_download_url;
+               document.getElementById(verId).textContent = asset.name; }
+}
+// Android: the release marked Latest always carries the newest app (project rule).
+fetch("https://api.github.com/repos/MtndaleRedneck/BingeMote/releases/latest")
+  .then(function(r){ return r.json(); })
+  .then(function(rel){
+    setBtn("dl-and", "ver-and", rel.assets.find(function(a){ return /\.apk$/i.test(a.name); }));
+  })
+  .catch(function(){});
+// Windows: PC releases are never marked Latest, so scan recent releases for the newest PC installer.
+fetch("https://api.github.com/repos/MtndaleRedneck/BingeMote/releases?per_page=20")
+  .then(function(r){ return r.json(); })
+  .then(function(rels){
+    for (var i = 0; i < rels.length; i++) {
+      var hit = rels[i].assets.find(function(a){ return /PC.*\.exe$/i.test(a.name); });
+      if (hit) { setBtn("dl-win", "ver-win", hit); break; }
+    }
+  })
+  .catch(function(){ /* buttons fall back to the releases page */ });
+</script>
+</body>
+</html>
