@@ -47,50 +47,49 @@ fun CursorIcon(color: Color, size: Dp = 21.dp) {
     }
 }
 
-/** Speaker body, shared by the volume icons. */
+/** Speaker body, shared by the volume icons: small base rect + full-height horn. */
 private fun DrawScope.drawSpeaker(color: Color, w: Float, h: Float) {
     val p = Path().apply {
-        moveTo(w * 0.08f, h * 0.38f)
-        lineTo(w * 0.26f, h * 0.38f)
-        lineTo(w * 0.50f, h * 0.18f)
-        lineTo(w * 0.50f, h * 0.82f)
-        lineTo(w * 0.26f, h * 0.62f)
-        lineTo(w * 0.08f, h * 0.62f)
+        moveTo(w * 0.02f, h * 0.34f)
+        lineTo(w * 0.20f, h * 0.34f)
+        lineTo(w * 0.48f, h * 0.04f)
+        lineTo(w * 0.48f, h * 0.96f)
+        lineTo(w * 0.20f, h * 0.66f)
+        lineTo(w * 0.02f, h * 0.66f)
         close()
     }
     drawPath(p, color)
 }
 
-/** Volume down: speaker with a minus. */
+/** One sound wave: a bold arc right of the speaker's mouth, round caps. */
+private fun DrawScope.drawWave(color: Color, w: Float, h: Float, radius: Float, stroke: Float) {
+    val cx = w * 0.48f; val cy = h * 0.5f
+    drawArc(
+        color, startAngle = -45f, sweepAngle = 90f, useCenter = false,
+        topLeft = Offset(cx - radius, cy - radius), size = Size(radius * 2, radius * 2),
+        style = Stroke(width = stroke, cap = StrokeCap.Round),
+    )
+}
+
+/** Volume down: speaker with one sound wave (the approved render's look). */
 @Composable
 fun VolumeDownIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
-        drawRoundRect(
-            color,
-            topLeft = Offset(w * 0.58f, h * 0.455f), size = Size(w * 0.34f, h * 0.09f),
-            cornerRadius = CornerRadius(w * 0.045f),
-        )
+        drawWave(color, w, h, radius = w * 0.44f, stroke = w * 0.16f)
     }
 }
 
-/** Volume up: speaker with a plus. */
+/** Volume up: speaker with three sound waves (the approved render's look). */
 @Composable
 fun VolumeUpIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
-        drawRoundRect(
-            color,
-            topLeft = Offset(w * 0.58f, h * 0.455f), size = Size(w * 0.34f, h * 0.09f),
-            cornerRadius = CornerRadius(w * 0.045f),
-        )
-        drawRoundRect(
-            color,
-            topLeft = Offset(w * 0.705f, h * 0.33f), size = Size(w * 0.09f, h * 0.34f),
-            cornerRadius = CornerRadius(w * 0.045f),
-        )
+        drawWave(color, w, h, radius = w * 0.25f, stroke = w * 0.12f)
+        drawWave(color, w, h, radius = w * 0.385f, stroke = w * 0.12f)
+        drawWave(color, w, h, radius = w * 0.52f, stroke = w * 0.12f)
     }
 }
 
