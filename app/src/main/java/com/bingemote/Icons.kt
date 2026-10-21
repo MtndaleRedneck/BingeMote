@@ -219,19 +219,19 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             val w = this.size.width
             val inset = w * 0.10f
             drawArc(
-                ringColor, startAngle = 120f, sweepAngle = 285f, useCenter = false,
+                ringColor, startAngle = 120f, sweepAngle = 270f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
                 style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
             )
-            // Arrowhead redrawn from the approved target image, positioned halfway
-            // between the target's head position and a base centered on the ring's
-            // centerline (Ezzy's ask). The ring's round end lands inside the head -
-            // no stray cap pokes out.
+            // Arrowhead copied pixel-measured from Ezzy's final target image
+            // (vertices at 0.2744/0.1504, 0.4554/0.3036, 0.2256/0.4046 of width).
+            // The ring ends at 30 deg so its round cap stays hidden behind the head,
+            // matching the target - no stray cap pokes out.
             val cx = w / 2
             val head = Path().apply {
-                moveTo(cx + w * 0.2346f, cx + w * 0.1590f)
-                lineTo(cx + w * 0.4509f, cx + w * 0.2812f)
-                lineTo(cx + w * 0.2206f, cx + w * 0.4034f)
+                moveTo(cx + w * 0.2744f, cx + w * 0.1504f)
+                lineTo(cx + w * 0.4554f, cx + w * 0.3036f)
+                lineTo(cx + w * 0.2256f, cx + w * 0.4046f)
                 close()
             }
             drawPath(head, ringColor)
