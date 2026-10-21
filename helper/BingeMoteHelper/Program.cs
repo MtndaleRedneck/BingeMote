@@ -427,6 +427,9 @@ internal sealed class HelperWindow : Form
 
     public HelperWindow(bool windowShot = false)
     {
+        // Scale every control, font and position with the screen's DPI, or fixed-pixel
+        // layouts clip text and buttons on scaled displays.
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "BingeMote";
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -453,12 +456,14 @@ internal sealed class HelperWindow : Form
         y += 18;
         _nameBox = new TextBox
         {
-            Left = margin, Top = y + 3, Width = contentW - 60 - 8,
+            Left = margin, Top = y + 3, Width = contentW - 60 - 12,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 10),
             PlaceholderText = "Phone name",
         };
         Round(_nameBox, 4);
+        // Textbox text otherwise hugs the left border; give it the same inner air as the buttons.
+        SendMessage(_nameBox.Handle, 0xD3 /* EM_SETMARGINS */, (IntPtr)0x3 /* left|right */, (IntPtr)(((16 << 16) | 8)));
         _pair = MakeButton("Pair", margin + contentW - 60, y, 60);
         _pair.Height = 32;
         _pair.Enabled = false;
@@ -484,9 +489,9 @@ internal sealed class HelperWindow : Form
         {
             Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = margin, Top = y,
+            AutoSize = false, Left = margin, Top = y, Width = contentW, Height = 30,
         };
-        y += 16 + 24;
+        y += 30 + 24;
 
         _phonesHeader = Header("Paired phones", margin, y); y += 20 + 12;
         _phoneList = new FlowLayoutPanel
@@ -512,7 +517,7 @@ internal sealed class HelperWindow : Form
             AutoSize = true, Left = 14, Top = 14,
             UseMnemonic = false,
         };
-        _feedbackBtn = MakeButton("Send feedback...", contentW - 130 - 10, 9, 130);
+        _feedbackBtn = MakeButton("Send feedback", contentW - 130 - 10, 9, 130);
         _feedbackBtn.Height = 30;
         _feedbackBtn.Click += (_, _) => { using var dlg = new FeedbackDialog(); dlg.ShowDialog(this); };
         _feedbackCard.Controls.Add(feedbackLabel);
@@ -530,7 +535,8 @@ internal sealed class HelperWindow : Form
         {
             Text = "Version " + Program.VersionText,
             Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = 14, Top = 26,
+            AutoSize = false, Left = 14, Top = 26, Width = contentW - 140 - 10 - 14 - 8, Height = 16,
+            AutoEllipsis = true,
         };
         _checkUpdates = MakeButton("Check for updates", contentW - 140 - 10, 9, 140);
         _checkUpdates.Height = 30;
@@ -939,7 +945,7 @@ internal sealed class HelperWindow : Form
         else _timer.Stop();
     }
 
-    private static Button MakeButton(string text, int left, int top, int width) => new()
+    private static Button MakeButton(string text, int left, int top, int width) => new ReadableButton
     {
         Text = text,
         Left = left, Top = top, Width = width, Height = 30,
@@ -976,10 +982,10 @@ internal sealed class HelperWindow : Form
         _nameBox.ForeColor = text;
         _codeCaption.ForeColor = text;
         _code.ForeColor = Orange;
-        _codeNote.ForeColor = muted;
+        _codeNote.ForeColor = text;
         _phoneList.BackColor = bg;
         _firstRun.BackColor = bg;
-        _firstRun.ForeColor = muted;
+        _firstRun.ForeColor = text;
         _firstRun.LinkColor = Orange;
         _firstRun.ActiveLinkColor = Orange;
         _firstRun.VisitedLinkColor = Orange;
@@ -992,21 +998,21 @@ internal sealed class HelperWindow : Form
             {
                 if (c is Button) continue;
                 c.BackColor = card;
-                c.ForeColor = c == _wifiNote ? muted : text;
+                c.ForeColor = text;
             }
         }
         Round(_wifiBorder, 8);
         _feedbackCard.BackColor = card;
         _updatesCard.BackColor = card;
         foreach (Control c in _feedbackCard.Controls) { c.BackColor = c is Button ? cardBtn : card; c.ForeColor = text; }
-        foreach (Control c in _updatesCard.Controls) { if (c is Button) continue; c.BackColor = card; c.ForeColor = c == _updatesCaption ? muted : text; }
+        foreach (Control c in _updatesCard.Controls) { if (c is Button) continue; c.BackColor = card; c.ForeColor = text; }
         _feedbackBtn.FlatAppearance.BorderSize = 0;
         _checkUpdates.FlatAppearance.BorderSize = 0;
         foreach (var b in new[] { _removeAll })
         {
-            b.BackColor = btnBg;
+            b.BackColor = cardBtn;
             b.ForeColor = text;
-            b.FlatAppearance.BorderColor = muted;
+            b.FlatAppearance.BorderSize = 0;
         }
         StylePrimary(_pair);
         if (_manualDownload) StylePrimary(_checkUpdates); else { _checkUpdates.BackColor = cardBtn; _checkUpdates.ForeColor = text; }
@@ -1033,6 +1039,9 @@ internal sealed class HelperWindow : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
     /// <summary>4px on buttons and boxes, 8px on cards - the Win11 corner radii.</summary>
     internal static void Round(Control c, int radius)
     {
@@ -1047,6 +1056,26 @@ internal sealed class HelperWindow : Form
         c.Region = new Region(path);
     }
 
+    /// <summary>A flat button whose disabled label stays readable: WinForms draws disabled
+    /// text in GrayText, which vanishes on dark cards and on orange. Redraw it in the
+    /// button's normal text color instead.</summary>
+    internal sealed class ReadableButton : Button
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (Enabled) { base.OnPaint(e); return; }
+            using var bg = new SolidBrush(BackColor);
+            e.Graphics.FillRectangle(bg, ClientRectangle);
+            if (FlatAppearance.BorderSize > 0)
+            {
+                using var pen = new Pen(FlatAppearance.BorderColor, FlatAppearance.BorderSize);
+                e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            }
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
+    }
+
     /// <summary>The one orange button: the window's primary action.</summary>
     internal static void StylePrimary(Button b)
     {
@@ -1056,12 +1085,42 @@ internal sealed class HelperWindow : Form
         Round(b, 4);
     }
 
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        Round(_nameBox, 4);
+        Round(_feedbackCard, 8);
+        Round(_updatesCard, 8);
+        Round(_wifiBorder, 8);
+        if (_wifiBorder.Controls.Count > 0) Round(_wifiBorder.Controls[0], 7);
+        Round(_pair, 4);
+        Round(_wifiBtn, 4);
+        RefreshPhones();
+    }
+
     private static Label Header(string text, int x, int y) => new()
     {
         Text = text,
         Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
         AutoSize = true, Left = x, Top = y,
     };
+
+    private System.Windows.Forms.Timer? _captionTimer;
+
+    /// <summary>Check results ("You're up to date.") show for a few seconds, then the row
+    /// goes back to showing the running version - like the phone app.</summary>
+    private void ShowCaptionBriefly(string s)
+    {
+        _updatesCaption.Text = s;
+        _captionTimer?.Stop();
+        _captionTimer = new System.Windows.Forms.Timer { Interval = 6000 };
+        _captionTimer.Tick += (_, _) =>
+        {
+            _captionTimer!.Stop();
+            if (!_manualDownload && !_downloading) _updatesCaption.Text = "Version " + Program.VersionText;
+        };
+        _captionTimer.Start();
+    }
 
     /// <summary>The Updates card's manual check: result shows inline, never a tray balloon.</summary>
     private void ManualUpdateCheck()
@@ -1077,7 +1136,7 @@ internal sealed class HelperWindow : Form
             {
                 try { BeginInvoke(new Action(() =>
                 {
-                    _updatesCaption.Text = "Couldn't check right now. Try again later.";
+                    ShowCaptionBriefly("Couldn't check right now. Try again later.");
                     _checkUpdates.Enabled = true;
                 })); } catch { }
                 return;
@@ -1095,7 +1154,7 @@ internal sealed class HelperWindow : Form
                 }
                 else
                 {
-                    _updatesCaption.Text = "You're up to date. Nothing installs on its own.";
+                    ShowCaptionBriefly("You're up to date.");
                     _checkUpdates.Enabled = true;
                 }
             })); } catch { }
@@ -1113,7 +1172,7 @@ internal sealed class HelperWindow : Form
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
             Program.Log("Update launch canceled at the Windows permission prompt.");
-            _updatesCaption.Text = "Update canceled.";
+            ShowCaptionBriefly("Update canceled.");
             _checkUpdates.Enabled = true;
             _downloading = false;
         }
@@ -1254,6 +1313,7 @@ internal sealed class WifiDialog : Form
 
     public WifiDialog(NetProfile profile)
     {
+        AutoScaleMode = AutoScaleMode.Dpi;
         var dark = HelperWindow.IsDarkMode();
         var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
         var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
@@ -1282,7 +1342,7 @@ internal sealed class WifiDialog : Form
         {
             Left = 20, Top = 186, Width = 460, Height = 34,
             Font = new Font("Segoe UI", 8f),
-            ForeColor = muted,
+            ForeColor = text,
             Text = "This only changes this one Wi-Fi. Windows will ask for permission once.",
         };
         Button Btn(string label, int left, int width, Result r)
@@ -1325,6 +1385,7 @@ internal static class ConfirmDialog
         var answer = false;
         using var dlg = new Form
         {
+            AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
             Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1374,6 +1435,7 @@ internal static class NoteDialog
         var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
         using var dlg = new Form
         {
+            AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
             Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -1415,6 +1477,7 @@ internal sealed class FeedbackDialog : Form
 
     public FeedbackDialog()
     {
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "BingeMote";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -1436,8 +1499,8 @@ internal sealed class FeedbackDialog : Form
             Left = 24, Top = 172, Width = 392, Height = 176,
             Font = new Font("Segoe UI", 8.5f), AutoEllipsis = false,
         };
-        _issue = new Button { Text = "Open GitHub issue", Width = 130, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
-        _form = new Button { Text = "Open private form", Width = 130, Height = 32, Left = 440 - 24 - 130, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _issue = new HelperWindow.ReadableButton { Text = "Open GitHub issue", Width = 130, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _form = new HelperWindow.ReadableButton { Text = "Open private form", Width = 130, Height = 32, Left = 440 - 24 - 130, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
 
         _message.TextChanged += (_, _) => RefreshPreview();
         _issue.Click += (_, _) => OpenUrl(IssueUrl());
@@ -1466,7 +1529,7 @@ internal sealed class FeedbackDialog : Form
         foreach (Control c in Controls) { c.ForeColor = text; }
         _message.BackColor = card;
         _message.ForeColor = text;
-        _preview.ForeColor = muted;
+        _preview.ForeColor = text;
         _issue.BackColor = cardBtn;
         _issue.ForeColor = text;
         _issue.FlatAppearance.BorderSize = 0;
@@ -1479,6 +1542,13 @@ internal sealed class FeedbackDialog : Form
     {
         base.OnHandleCreated(e);
         TitleBarTheme();
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        HelperWindow.Round(_issue, 4);
+        HelperWindow.Round(_form, 4);
     }
 
     private void TitleBarTheme()
