@@ -58,14 +58,14 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
         scope.launch {
             found = withContext(Dispatchers.IO) { HelperClient.discover() }
             scanning = false
-            if (found.isEmpty()) say("No PC answered. Check BingeMote PC is running, then try again - or type the PC's address below.", true)
+            if (found.isEmpty()) say("No PC answered. Check BingeMote is running on the PC, then try again - or type the PC's address below.", true)
         }
     }
 
     fun pair() {
         val target = chosen ?: DiscoveredHelper(manualHost.trim(), HelperClient.DEFAULT_PORT, "PC")
         if (target.host.isBlank()) { say("Enter your PC's address or pick it above.", true); return }
-        if (code.length != 6) { say("Enter the 6-digit code BingeMote PC is showing on your PC.", true); return }
+        if (code.length != 6) { say("Enter the 6-digit code BingeMote is showing on your PC.", true); return }
         pairing = true
         say("", false)
         scope.launch {
@@ -80,10 +80,10 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                 step = 3
             } catch (e: HelperClient.BadPairCode) {
                 pairing = false
-                say("That code didn't work. Get a fresh one: on your PC, right-click the BingeMote PC icon by the clock and pick \"New pairing code\".", true)
+                say("That code didn't work. Get a fresh one: on your PC, open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", true)
             } catch (e: Exception) {
                 pairing = false
-                say("Couldn't reach BingeMote PC on ${target.host}. Check the PC is awake and try again.", true)
+                say("Couldn't reach BingeMote on ${target.host}. Check the PC is awake and try again.", true)
             }
         }
     }
@@ -96,7 +96,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
         chosen = null
         manualHost = ""
         found = emptyList()
-        say("Pairing cleared. On your PC, right-click the BingeMote PC icon by the clock and pick \"New pairing code\", then pair here.", false)
+        say("Pairing cleared. On your PC, open BingeMote from the icon by the clock, type a name under Pair new phone, tap Pair, then enter the new code here.", false)
     }
 
     fun finish() {
@@ -117,8 +117,8 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
             testing = false
             when {
                 vlcOk && helperOk -> { store.setupDone = true; onDone() }
-                !vlcOk && helperOk -> say("BingeMote PC answers, but VLC didn't. Check the password and that VLC is open with the web interface on.", true)
-                vlcOk && !helperOk -> say("VLC answers, but BingeMote PC didn't. Mouse mode won't work until BingeMote PC is running.", true)
+                !vlcOk && helperOk -> say("BingeMote answers, but VLC didn't. Check the password and that VLC is open with the web interface on.", true)
+                vlcOk && !helperOk -> say("VLC answers, but BingeMote didn't. Mouse mode won't work until BingeMote is running on the PC.", true)
                 else -> say("Nothing answered. Check the PC is awake, VLC is open, and both are on the same Wi-Fi.", true)
             }
         }
@@ -143,12 +143,12 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Text("2. Windows may warn about an unrecognized app. Click \"More info\", then \"Run anyway\". BingeMote PC is built by the same project as this app.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("3. The first time, Windows asks for permission to add a firewall rule. Click Yes - this is the only admin prompt, and it only opens BingeMote PC to your home network.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("3. The installer asks for Windows permission once during install - that is the only admin prompt, and it only opens BingeMote to your home network.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("4. Leave BingeMote PC running (it sits in the tray, by the clock, and starts with Windows). It shows a 6-digit code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("4. Leave BingeMote running (it sits in the tray, by the clock, and starts with Windows). It shows a 6-digit code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                 }
                 Spacer(Modifier.height(18.dp))
-                OrangeButton("BingeMote PC is running", onClick = { say("", false); step = 2 })
+                OrangeButton("BingeMote is running", onClick = { say("", false); step = 2 })
             }
 
             2 -> Column {
@@ -203,7 +203,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Enter the 6-digit code BingeMote PC is showing on your PC. It only works once. No code on screen? Right-click the BingeMote PC icon by the clock and pick \"New pairing code\".", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text("Enter the 6-digit code BingeMote is showing on your PC. It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,

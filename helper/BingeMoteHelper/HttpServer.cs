@@ -106,7 +106,7 @@ internal sealed class HttpServer : IDisposable
     private static bool Authorized(HttpListenerRequest req)
     {
         var token = req.Headers["X-BingeMote-Token"];
-        return token != null && Program.Tokens.Any(t => ConstantTimeEq(token, t));
+        return token != null && Program.Phones.Any(p => ConstantTimeEq(token, p.Token));
     }
 
     private static readonly object PairLock = new();
@@ -134,19 +134,24 @@ internal sealed class HttpServer : IDisposable
             Reply(res, 403, "{\"error\":\"bad code\"}");
             return;
         }
-        if (Program.Tokens.Count >= Program.MaxPhones)
+        if (Program.Phones.Count >= Program.MaxPhones)
         {
             Program.Log("Pairing refused - already " + Program.MaxPhones + " phones paired.");
-            Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Reset pairing in BingeMote on the PC to start over.\"}");
+            Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Remove one in the BingeMote window on the PC to make room.\"}");
             return;
         }
         var token = Program.NewToken();
-        Program.Tokens.Add(token);
+        // The name typed in the window when Pair was tapped; a code from elsewhere pairs as "Phone N".
+        var phoneName = Program.PendingPhoneName;
+        Program.PendingPhoneName = null;
+        if (string.IsNullOrWhiteSpace(phoneName)) phoneName = "Phone " + (Program.Phones.Count + 1);
+        Program.Phones.Add(new Program.PairedPhone { Token = token, Name = phoneName.Trim() });
         Program.PairCode = null;
         Program.PairFailures = 0;
         Program.SaveConfig();
-        Program.Log("Phone paired (" + Program.Tokens.Count + " total).");
+        Program.Log("Phone paired as \"" + phoneName + "\" (" + Program.Phones.Count + " total).");
         Reply(res, 200, JsonSerializer.Serialize(new { token = token, name = Program.MachineLabel() }));
+        Program.PhonesChanged?.Invoke();
     }
 
     /// <summary>GET returns the shared settings; POST writes them. Only the movies folder so far.</summary>

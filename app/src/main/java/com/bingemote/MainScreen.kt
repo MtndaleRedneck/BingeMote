@@ -1,5 +1,6 @@
 package com.bingemote
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -43,6 +44,8 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar {
+                StatusPill(connected = !remote.unreachable)
+                Spacer(Modifier.width(10.dp))
                 HeaderIconButton(onMouse, remote.store.haptics) { CursorIcon(Orange) }
                 HeaderIconButton(onSettings, remote.store.haptics) {
                     androidx.compose.material3.Icon(
@@ -63,13 +66,16 @@ fun MainScreen(
                     .padding(horizontal = 18.dp, vertical = 16.dp),
             ) {
                 Column {
+                    // When the PC is unreachable the card itself says so; no overlay, no Retry.
+                    val lost = remote.unreachable && !remote.expectingVlc
                     Text(
-                        s?.title?.ifBlank { "Nothing playing" } ?: "Nothing playing",
+                        if (lost) "Can't reach your PC" else s?.title?.ifBlank { "Nothing playing" } ?: "Nothing playing",
                         color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
                         maxLines = 2,
                     )
                     Text(
-                        when (s?.state) {
+                        if (lost) "Trying to reconnect"
+                        else when (s?.state) {
                             "playing" -> "Playing"
                             "paused" -> "Paused"
                             else -> "Stopped"
@@ -86,7 +92,7 @@ fun MainScreen(
             if (remote.helperDown) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "BingeMote PC isn't running on the PC - using VLC's volume. Mouse mode needs BingeMote PC.",
+                    "BingeMote isn't running on the PC - using VLC's volume. Mouse mode needs BingeMote.",
                     color = Muted, fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -109,9 +115,32 @@ fun MainScreen(
         if (subtitlesOpen) {
             SubtitleSheet(remote, onClose = { subtitlesOpen = false })
         }
-        if (remote.unreachable && !remote.expectingVlc) {
-            ErrorCard(vlcClosed = remote.vlcClosed, onRetry = { remote.retry() })
-        }
+        // Back closes the subtitle sheet first, like every other sheet.
+        BackHandler(enabled = subtitlesOpen) { subtitlesOpen = false }
+    }
+}
+
+/** The connection state, top right: a quiet dot + word. An indicator only - not tappable. */
+@Composable
+private fun StatusPill(connected: Boolean) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(HeaderBtn)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(if (connected) Orange else ErrorRed),
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            if (connected) "Connected" else "Disconnected",
+            color = TextC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -515,49 +544,3 @@ private fun SubtitleRow(name: String, checked: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** The connection-lost card. */
-@Composable
-private fun ErrorCard(vlcClosed: Boolean, onRetry: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xB3101013)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier
-                .padding(32.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(22.dp))
-                .background(Card)
-                .padding(18.dp),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(ErrorRed)
-                    .padding(vertical = 13.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Can't reach your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(14.dp))
-            Text(
-                if (vlcClosed) "VLC isn't open on the PC. Open VLC and tap Retry."
-                else "The PC may be off, asleep, or BingeMote PC isn't running.",
-                color = TextC, fontSize = 14.sp,
-            )
-            Spacer(Modifier.height(14.dp))
-            PressTile(onTap = onRetry, background = OrangeGradient, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                Text("Retry", color = Color(0xFF1B1B1E), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "The app reconnects by itself when you open it.",
-                color = Muted, fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-        }
-    }
-}

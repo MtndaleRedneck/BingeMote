@@ -30,11 +30,24 @@ internal static class Program
     private const string ShowEventName = @"Local\BingeMoteHelper.ShowWindow";
     private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
 
-    /// <summary>One token per paired phone. Pairing adds one; reset forgets them all.</summary>
-    internal static readonly HashSet<string> Tokens = new();
+    /// <summary>A phone paired to this PC. The name is typed in the window when pairing starts.</summary>
+    internal sealed class PairedPhone
+    {
+        public string Token { get; set; } = "";
+        public string Name { get; set; } = "";
+    }
+
+    /// <summary>One entry per paired phone. Pairing adds one; Remove takes one out.</summary>
+    internal static readonly List<PairedPhone> Phones = new();
+    /// <summary>The name typed for the phone that is about to pair; consumed by a successful pairing.</summary>
+    internal static string? PendingPhoneName;
+    /// <summary>The window re-reads the phone list on the UI thread when this fires (any thread).</summary>
+    internal static Action? PhonesChanged;
+    /// <summary>Wi-Fi names where he chose "Not now" on the public-network prompt; not asked again.</summary>
+    internal static readonly List<string> DeclinedNetworks = new();
     /// <summary>More phones than this on one PC is a mistake, not a household.</summary>
     internal const int MaxPhones = 8;
-    internal static bool Paired => Tokens.Count > 0;
+    internal static bool Paired => Phones.Count > 0;
     /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
     internal static string? MoviesFolder;
     internal static string? PairCode;
@@ -116,7 +129,7 @@ internal static class Program
 
         Directory.CreateDirectory(DataDir);
         LoadConfig();
-        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + Tokens.Count + (Tokens.Count == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
+        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + Phones.Count + (Phones.Count == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
 
         if (!File.Exists(FirewallMarker))
@@ -134,7 +147,7 @@ internal static class Program
         }
 
         // A live pairing code is a way in, so one exists only when this PC still needs
-        // pairing. After pairing, a new code comes only from the tray menu.
+        // pairing. After pairing, a new code comes only from the window's Pair button.
         var overrideCode = Environment.GetEnvironmentVariable("BINGEMOTE_PAIR_CODE");
 #if !PAIR_CODE_HOOK
         // Shipped builds never honor a fixed code. CI defines PAIR_CODE_HOOK for its own copy.
@@ -147,14 +160,13 @@ internal static class Program
         }
         else if (!Paired)
         {
+            PendingPhoneName = null;
             PairCode = NewPairCode();
             PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
         }
 
         using var http = new HttpServer();
         using var discovery = new DiscoveryResponder();
-        // Public Wi-Fi silently blocks the phone; check on every launch, paired or not.
-        Task.Run(() => { try { NetworkCheck.WarnIfPublic(); } catch { /* never stop startup */ } });
         CheckForUpdate();
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
@@ -241,27 +253,48 @@ internal static class Program
         {
             if (!File.Exists(ConfigPath)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
-            Tokens.Clear();
-            if (doc.RootElement.TryGetProperty("tokens", out var ts))
+            Phones.Clear();
+            DeclinedNetworks.Clear();
+            if (doc.RootElement.TryGetProperty("phones", out var ps))
+                foreach (var p in ps.EnumerateArray())
+                {
+                    var t = p.TryGetProperty("token", out var pt) ? pt.GetString() : null;
+                    if (t == null) continue;
+                    var n = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
+                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n });
+                }
+            // 1.2 stored bare tokens without names; those phones show as "Phone 1" etc.
+            if (Phones.Count == 0 && doc.RootElement.TryGetProperty("tokens", out var ts))
                 foreach (var t in ts.EnumerateArray())
                 {
                     var v = t.GetString();
-                    if (v != null) Tokens.Add(v);
+                    if (v != null) Phones.Add(new PairedPhone { Token = v, Name = "Phone " + (Phones.Count + 1) });
                 }
             // 1.0/1.1 configs stored one token; keep that phone paired.
-            if (Tokens.Count == 0 && doc.RootElement.TryGetProperty("token", out var old))
+            if (Phones.Count == 0 && doc.RootElement.TryGetProperty("token", out var old))
             {
                 var v = old.GetString();
-                if (v != null) Tokens.Add(v);
+                if (v != null) Phones.Add(new PairedPhone { Token = v, Name = "Phone 1" });
             }
+            if (doc.RootElement.TryGetProperty("declinedNetworks", out var dn))
+                foreach (var n in dn.EnumerateArray())
+                {
+                    var v = n.GetString();
+                    if (!string.IsNullOrWhiteSpace(v)) DeclinedNetworks.Add(v);
+                }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
         }
-        catch { Tokens.Clear(); MoviesFolder = null; }
+        catch { Phones.Clear(); DeclinedNetworks.Clear(); MoviesFolder = null; }
     }
 
     internal static void SaveConfig()
     {
-        var json = JsonSerializer.Serialize(new { tokens = Tokens.ToArray(), moviesFolder = MoviesFolder });
+        var json = JsonSerializer.Serialize(new
+        {
+            phones = Phones.Select(p => new { token = p.Token, name = p.Name }).ToArray(),
+            moviesFolder = MoviesFolder,
+            declinedNetworks = DeclinedNetworks.ToArray(),
+        });
         File.WriteAllText(ConfigPath, json);
     }
 
@@ -297,41 +330,40 @@ internal static class Program
 }
 
 
-/// <summary>The helper window: status, the movies folder, and pairing controls. Sits in the tray;
-/// follows the Windows dark/light mode setting, repainting live when it changes.</summary>
+/// <summary>The helper window: the movies folder and pairing. Sits in the tray; closing it
+/// only hides it. Follows the Windows dark/light mode setting, repainting live when it changes.</summary>
 internal sealed class HelperWindow : Form
 {
     // The app's palette: dark mode uses the app's colors, light mode their light counterparts.
-    private static readonly Color Orange = Color.FromArgb(255, 149, 0);
-    private static readonly Color OnOrange = Color.FromArgb(27, 27, 30);
-    private static readonly Color DarkBg = Color.FromArgb(27, 27, 30);
-    private static readonly Color DarkCard = Color.FromArgb(38, 38, 44);
-    private static readonly Color DarkText = Color.FromArgb(235, 235, 240);
-    private static readonly Color DarkMuted = Color.FromArgb(150, 150, 160);
-    private static readonly Color LightBg = Color.FromArgb(243, 243, 243);
-    private static readonly Color LightCard = Color.White;
-    private static readonly Color LightText = Color.FromArgb(26, 26, 26);
-    private static readonly Color LightMuted = Color.FromArgb(110, 110, 110);
+    internal static readonly Color Orange = Color.FromArgb(255, 149, 0);
+    internal static readonly Color OnOrange = Color.FromArgb(27, 27, 30);
+    internal static readonly Color DarkBg = Color.FromArgb(27, 27, 30);
+    internal static readonly Color DarkCard = Color.FromArgb(38, 38, 44);
+    internal static readonly Color DarkText = Color.FromArgb(235, 235, 240);
+    internal static readonly Color DarkMuted = Color.FromArgb(150, 150, 160);
+    internal static readonly Color LightBg = Color.FromArgb(243, 243, 243);
+    internal static readonly Color LightCard = Color.White;
+    internal static readonly Color LightText = Color.FromArgb(26, 26, 26);
+    internal static readonly Color LightMuted = Color.FromArgb(110, 110, 110);
 
     private bool _allowShow;
     private bool _updateAnnounced;
     private bool _hideHintShown;
     private readonly Label _title;
-    private readonly Label _status;
     private readonly Label _moviesLabel;
     private readonly TextBox _folderBox;
     private readonly Button _browse;
-    private readonly Label _folderHint;
     private readonly Panel _sep1;
-    private readonly Label _pairingHeader;
+    private readonly Label _phonesHeader;
+    private readonly FlowLayoutPanel _phoneList;
+    private readonly Button _removeAll;
+    private readonly Panel _sep2;
+    private readonly Label _pairHeader;
+    private readonly TextBox _nameBox;
+    private readonly Button _pair;
     private readonly Label _codeCaption;
     private readonly Label _code;
     private readonly Label _codeNote;
-    private readonly Button _newCode;
-    private readonly Button _resetPairing;
-    private readonly Panel _sep2;
-    private readonly Label _footer;
-    private readonly Button _quit;
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly ContextMenuStrip _menu;
@@ -339,7 +371,7 @@ internal sealed class HelperWindow : Form
     public HelperWindow()
     {
         Text = "BingeMote";
-        Width = 620; Height = 460;
+        Width = 620; Height = 500;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -349,86 +381,85 @@ internal sealed class HelperWindow : Form
         {
             Text = "BingeMote",
             Font = new Font("Segoe UI", 14, FontStyle.Bold),
-            AutoSize = true, Left = 20, Top = 16,
-        };
-        _status = new Label
-        {
-            Text = "",
-            Font = new Font("Segoe UI", 9),
-            AutoSize = true, Left = 20, Top = 48,
+            AutoSize = true, Left = 20, Top = 14,
         };
         _moviesLabel = new Label
         {
             Text = "Movies folder (what the phone's Movies tab opens):",
             Font = new Font("Segoe UI", 9),
-            AutoSize = true, Left = 20, Top = 88,
+            AutoSize = true, Left = 20, Top = 52,
         };
         _folderBox = new TextBox
         {
             ReadOnly = true,
-            Left = 20, Top = 110, Width = 410,
+            Left = 20, Top = 74, Width = 410,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 9),
         };
-        _browse = MakeButton("Browse...", 440, 108, 110);
+        _browse = MakeButton("Browse...", 440, 72, 110);
         _browse.Click += (_, _) => PickFolder();
-        _folderHint = new Label
+        _sep1 = new Panel { Left = 20, Top = 110, Width = 545, Height = 1 };
+        _phonesHeader = new Label
         {
-            Text = "The normal Windows folder picker - no typing.",
-            Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = 20, Top = 140,
-        };
-        _sep1 = new Panel { Left = 20, Top = 168, Width = 545, Height = 1 };
-        _pairingHeader = new Label
-        {
-            Text = "Pairing",
+            Text = "Paired phones",
             Font = new Font("Segoe UI", 10, FontStyle.Bold),
-            AutoSize = true, Left = 20, Top = 182,
+            AutoSize = true, Left = 20, Top = 122,
         };
+        _phoneList = new FlowLayoutPanel
+        {
+            Left = 20, Top = 148, Width = 545, Height = 108,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+        };
+        _removeAll = MakeButton("Remove all phones...", 20, 264, 170);
+        _removeAll.Click += (_, _) => RemoveAllPhones();
+        _sep2 = new Panel { Left = 20, Top = 308, Width = 545, Height = 1 };
+        _pairHeader = new Label
+        {
+            Text = "Pair new phone",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            AutoSize = true, Left = 20, Top = 320,
+        };
+        _nameBox = new TextBox
+        {
+            Left = 20, Top = 346, Width = 280,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Segoe UI", 9),
+        };
+        _pair = MakeButton("Pair", 312, 344, 90);
+        _pair.Enabled = false;
+        _pair.Click += (_, _) => StartPairing();
+        _nameBox.TextChanged += (_, _) => _pair.Enabled = _nameBox.Text.Trim().Length > 0;
         _codeCaption = new Label
         {
             Text = "Pairing code:",
             Font = new Font("Segoe UI", 9),
-            AutoSize = true, Left = 20, Top = 214,
+            AutoSize = true, Left = 20, Top = 392,
         };
         _code = new Label
         {
             Text = Program.PairCode ?? "------",
             Font = new Font("Consolas", 24, FontStyle.Bold),
             ForeColor = Orange,
-            AutoSize = true, Left = 130, Top = 204,
+            AutoSize = true, Left = 130, Top = 382,
         };
         _codeNote = new Label
         {
-            Text = "A code only shows while no phone is paired, or after New/Reset. It works once, for 10 minutes.",
+            Text = "Type it on the phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = 20, Top = 248,
+            AutoSize = true, Left = 20, Top = 428,
         };
-        _newCode = MakeButton("New pairing code", 20, 274, 150);
-        _newCode.Click += (_, _) => NewPairingCode();
-        _resetPairing = MakeButton("Reset pairing...", 180, 274, 130);
-        _resetPairing.Click += (_, _) => ResetPairing();
-        _sep2 = new Panel { Left = 20, Top = 322, Width = 545, Height = 1 };
-        _footer = new Label
-        {
-            Text = "Runs in the tray by the clock and starts with Windows.",
-            Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = 20, Top = 336,
-        };
-        _quit = MakeButton("Quit", 475, 330, 90);
-        _quit.Click += (_, _) => { Program.Log("Quit from the window."); Application.Exit(); };
 
         Controls.AddRange(new Control[]
         {
-            _title, _status, _moviesLabel, _folderBox, _browse, _folderHint, _sep1,
-            _pairingHeader, _codeCaption, _code, _codeNote, _newCode, _resetPairing,
-            _sep2, _footer, _quit,
+            _title, _moviesLabel, _folderBox, _browse, _sep1,
+            _phonesHeader, _phoneList, _removeAll, _sep2,
+            _pairHeader, _nameBox, _pair, _codeCaption, _code, _codeNote,
         });
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Show BingeMote", null, (_, _) => ShowFromTray());
-        _menu.Items.Add("New pairing code", null, (_, _) => NewPairingCode());
-        _menu.Items.Add("Reset pairing...", null, (_, _) => ResetPairing());
         _menu.Items.Add("Quit BingeMote", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
         _tray = new NotifyIcon
         {
@@ -440,12 +471,31 @@ internal sealed class HelperWindow : Form
         _tray.DoubleClick += (_, _) => ShowFromTray();
         _tray.BalloonTipClicked += (_, _) => OpenUpdatePage();
 
+        // The server adds and drops phones off-thread; repaint the list when that happens.
+        Program.PhonesChanged = () =>
+        {
+            try { BeginInvoke(new Action(() => { RefreshPhones(); TickStatus(); })); } catch { }
+        };
+
+        // Public Wi-Fi silently blocks the phone: check at launch and whenever the network
+        // changes, asking at most once per Wi-Fi name.
+        Action<NetProfile> showWifi = p =>
+        {
+            try { BeginInvoke(new Action(() => ShowPublicWifiDialog(p))); } catch { }
+        };
+        Task.Run(() => { try { NetworkCheck.CheckNow(showWifi); } catch { /* never stop startup */ } });
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += (_, _) =>
+        {
+            try { NetworkCheck.QueueCheck(showWifi); } catch { }
+        };
+
         // Follow the Windows dark/light mode setting, live.
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
         {
             try { BeginInvoke(new Action(ApplyTheme)); } catch { }
         };
         ApplyTheme();
+        RefreshPhones();
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
@@ -458,27 +508,96 @@ internal sealed class HelperWindow : Form
             try { BeginInvoke(new Action(AnnounceUpdateIfNeeded)); } catch { }
         });
 
-        // The status line and pairing-code countdown only matter while the window is on
-        // screen, so this timer sleeps whenever the window is tucked in the tray: with the
-        // window hidden the helper wakes only for the phone or the daily update check.
+        // The pairing-code countdown only matters while the window is on screen, so this
+        // timer sleeps whenever the window is tucked in the tray: with the window hidden the
+        // helper wakes only for the phone, the network check, or the daily update check.
         _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         _timer.Tick += (_, _) => TickStatus();
         // First launch with the window already on screen (unpaired PCs): start ticking now.
         if (Visible) { TickStatus(); _timer.Start(); }
     }
 
-    /// <summary>Refresh the status line and roll an expired pairing code (window-visible work).</summary>
+    /// <summary>Roll an expired pairing code (window-visible work).</summary>
     private void TickStatus()
     {
         if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
         {
             Program.PairCode = Program.NewPairCode();
             Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
+            Program.PendingPhoneName = null; // an expired code keeps no name
         }
         _code.Text = Program.PairCode ?? "------";
-        _status.Text = !Program.Paired
-            ? "Listening on port " + Program.HttpPort + " - not paired yet"
-            : "Listening on port " + Program.HttpPort + " - paired (" + Program.Tokens.Count + (Program.Tokens.Count == 1 ? " phone" : " phones") + ")";
+    }
+
+    /// <summary>Rebuild the paired-phones list from the current config.</summary>
+    private void RefreshPhones()
+    {
+        var dark = IsDarkMode();
+        var card = dark ? DarkCard : LightCard;
+        var text = dark ? DarkText : LightText;
+        var muted = dark ? DarkMuted : LightMuted;
+        _phoneList.Controls.Clear();
+        foreach (var ph in Program.Phones.ToArray())
+        {
+            var row = new Panel { Width = 525, Height = 34, Margin = new Padding(0, 0, 0, 6), BackColor = card };
+            var name = new Label
+            {
+                Text = ph.Name,
+                AutoSize = true, Left = 10, Top = 8,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = text, BackColor = card,
+            };
+            var remove = new Button
+            {
+                Text = "Remove", Width = 90, Height = 26, Left = 425, Top = 4,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+                BackColor = card, ForeColor = text,
+            };
+            remove.FlatAppearance.BorderColor = muted;
+            var phone = ph;
+            remove.Click += (_, _) => RemovePhone(phone);
+            row.Controls.Add(name);
+            row.Controls.Add(remove);
+            _phoneList.Controls.Add(row);
+        }
+        _removeAll.Visible = Program.Phones.Count > 0;
+    }
+
+    private void RemovePhone(Program.PairedPhone ph)
+    {
+        if (!ConfirmDialog.Ask(this,
+                "Remove " + ph.Name + "? It stops controlling this PC right away. You can pair it again any time with a new code.",
+                "Remove")) return;
+        Program.Phones.Remove(ph);
+        Program.SaveConfig();
+        Program.Log("Phone removed: " + ph.Name + " (" + Program.Phones.Count + " left).");
+        RefreshPhones();
+    }
+
+    private void RemoveAllPhones()
+    {
+        if (Program.Phones.Count == 0) return;
+        if (!ConfirmDialog.Ask(this,
+                "Remove all phones? Every phone stops controlling this PC right away. Pair them again with new codes.",
+                "Remove all")) return;
+        Program.Phones.Clear();
+        Program.SaveConfig();
+        Program.Log("All phones removed.");
+        RefreshPhones();
+    }
+
+    /// <summary>Type the phone's name, tap Pair, and the code for it appears below.</summary>
+    private void StartPairing()
+    {
+        var name = _nameBox.Text.Trim();
+        if (name.Length == 0) return;
+        Program.PendingPhoneName = name;
+        Program.PairCode = Program.NewPairCode();
+        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
+        Program.PairFailures = 0;
+        _nameBox.Clear();
+        Program.Log("Pairing code created for \"" + name + "\".");
+        TickStatus();
     }
 
     private void AnnounceUpdateIfNeeded()
@@ -507,7 +626,7 @@ internal sealed class HelperWindow : Form
         Font = new Font("Segoe UI", 8.5f),
     };
 
-    private static bool IsDarkMode()
+    internal static bool IsDarkMode()
     {
         try
         {
@@ -528,24 +647,26 @@ internal sealed class HelperWindow : Form
         BackColor = bg;
         ForeColor = text;
         _title.ForeColor = text;
-        _status.ForeColor = muted;
         _moviesLabel.ForeColor = text;
         _folderBox.BackColor = card;
         _folderBox.ForeColor = muted;
-        _folderHint.ForeColor = muted;
         _sep1.BackColor = card;
         _sep2.BackColor = card;
-        _pairingHeader.ForeColor = text;
+        _phonesHeader.ForeColor = text;
+        _phoneList.BackColor = bg;
+        _pairHeader.ForeColor = text;
+        _nameBox.BackColor = card;
+        _nameBox.ForeColor = text;
         _codeCaption.ForeColor = text;
         _code.ForeColor = Orange;
         _codeNote.ForeColor = muted;
-        _footer.ForeColor = muted;
-        foreach (var b in new[] { _browse, _newCode, _resetPairing, _quit })
+        foreach (var b in new[] { _browse, _removeAll, _pair })
         {
             b.BackColor = card;
             b.ForeColor = text;
             b.FlatAppearance.BorderColor = muted;
         }
+        RefreshPhones();
     }
 
     private void PickFolder()
@@ -564,28 +685,46 @@ internal sealed class HelperWindow : Form
         Program.Log("Movies folder set on the PC: " + Program.MoviesFolder);
     }
 
-    private void NewPairingCode()
+    /// <summary>The public-Wi-Fi popup: names the network, one click marks it Private.</summary>
+    private void ShowPublicWifiDialog(NetProfile profile)
     {
-        Program.PairCode = Program.NewPairCode();
-        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-        Program.PairFailures = 0;
-        Program.Log("New pairing code from the tray menu.");
-        ShowFromTray();
+        using var dlg = new WifiDialog(profile);
+        switch (dlg.ShowDialog(this))
+        {
+            case WifiDialog.Result.Home:
+                if (NetworkCheck.MarkPrivate(profile))
+                {
+                    Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                    Program.SaveConfig();
+                    Program.Log("Network \"" + profile.Name + "\" marked Private from the popup.");
+                    NoteDialog.Show(this,
+                        "\u2713 Done. Your phone can reach this PC now.\n\nThis Wi-Fi is now marked Private in Windows, and Windows remembers it.");
+                }
+                else
+                {
+                    NoteDialog.Show(this,
+                        "The change did not go through. Opening the Windows setting so you can switch this Wi-Fi to Private by hand.");
+                    OpenWifiSettings();
+                }
+                break;
+            case WifiDialog.Result.Settings:
+                OpenWifiSettings();
+                break;
+            case WifiDialog.Result.NotNow:
+                Program.DeclinedNetworks.Add(profile.Name);
+                Program.SaveConfig();
+                Program.Log("Public-network popup declined for \"" + profile.Name + "\" - not asking again.");
+                break;
+        }
     }
 
-    private void ResetPairing()
+    private static void OpenWifiSettings()
     {
-        var sure = MessageBox.Show(
-            "Forget every paired phone and show a new pairing code? Pair each phone again with the new code to reconnect it.",
-            "BingeMote", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-        if (sure != DialogResult.Yes) return;
-        Program.Tokens.Clear();
-        Program.SaveConfig();
-        Program.PairCode = Program.NewPairCode();
-        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-        Program.PairFailures = 0;
-        Program.Log("Pairing reset - new code shown.");
-        ShowFromTray();
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:network-wifi") { UseShellExecute = true });
+        }
+        catch { /* the popup text still tells him what to do */ }
     }
 
     /// <summary>Bring the window up from the tray (menu, double-click, or a second launch of the exe).</summary>
@@ -617,18 +756,175 @@ internal sealed class HelperWindow : Form
     {
         if (e.CloseReason == CloseReason.UserClosing)
         {
-            e.Cancel = true; // closing tucks it into the tray; Quit exits for real
+            e.Cancel = true; // closing tucks it into the tray; the tray menu's Quit exits for real
             Hide();
             if (!_hideHintShown)
             {
                 _hideHintShown = true;
-                _tray.BalloonTipTitle = "BingeMote Helper";
-                _tray.BalloonTipText = "Still running down here by the clock. Right-click the icon for a pairing code or to quit.";
+                _tray.BalloonTipTitle = "BingeMote";
+                _tray.BalloonTipText = "Still running down here by the clock. Right-click the icon to show the window or quit.";
                 _tray.ShowBalloonTip(6000);
             }
             return;
         }
         _tray.Visible = false;
         base.OnFormClosing(e);
+    }
+}
+
+
+/// <summary>The public-Wi-Fi popup: names the network and offers the one-click Private fix,
+/// the manual Settings route, or Not now (remembered per Wi-Fi name).</summary>
+internal sealed class WifiDialog : Form
+{
+    public enum Result { None, Home, Settings, NotNow }
+    public Result Answer { get; private set; } = Result.None;
+
+    public WifiDialog(NetProfile profile)
+    {
+        var dark = HelperWindow.IsDarkMode();
+        var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
+        var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
+        var text = dark ? HelperWindow.DarkText : HelperWindow.LightText;
+        var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
+
+        Text = "BingeMote";
+        Width = 520; Height = 330;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false; MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        TopMost = true; // at login other windows can cover it
+        BackColor = bg;
+        ForeColor = text;
+
+        var body = new Label
+        {
+            Left = 20, Top = 18, Width = 460, Height = 160,
+            Font = new Font("Segoe UI", 9.5f),
+            ForeColor = text,
+            Text = "Windows is treating this Wi-Fi (" + profile.Name + ") like a public hotspot, so your phone cannot reach this PC.\n\n" +
+                   "If this is your home network, BingeMote can mark it as Private in Windows for you. This also turns on Windows features meant for home networks, like printer and file sharing.\n\n" +
+                   "On a network you don't know (hotel, cafe), choose Not now.",
+        };
+        var small = new Label
+        {
+            Left = 20, Top = 186, Width = 460, Height = 34,
+            Font = new Font("Segoe UI", 8f),
+            ForeColor = muted,
+            Text = "This only changes this one Wi-Fi. Windows will ask for permission once.",
+        };
+        Button Btn(string label, int left, int width, Result r)
+        {
+            var b = new Button
+            {
+                Text = label, Left = left, Top = 240, Width = width, Height = 32,
+                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+                BackColor = card, ForeColor = text,
+            };
+            b.FlatAppearance.BorderColor = muted;
+            b.Click += (_, _) => { Answer = r; Close(); };
+            return b;
+        }
+        Controls.Add(body);
+        Controls.Add(small);
+        Controls.Add(Btn("This is my home Wi-Fi", 20, 170, Result.Home));
+        Controls.Add(Btn("Open Settings instead", 198, 150, Result.Settings));
+        Controls.Add(Btn("Not now", 356, 90, Result.NotNow));
+    }
+
+    public new Result ShowDialog(IWin32Window owner)
+    {
+        base.ShowDialog(owner);
+        return Answer;
+    }
+}
+
+
+/// <summary>A small themed box whose confirm button says what it does (MessageBox can't relabel).</summary>
+internal static class ConfirmDialog
+{
+    public static bool Ask(IWin32Window owner, string text, string confirmLabel)
+    {
+        var dark = HelperWindow.IsDarkMode();
+        var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
+        var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
+        var fg = dark ? HelperWindow.DarkText : HelperWindow.LightText;
+        var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
+        var answer = false;
+        using var dlg = new Form
+        {
+            Text = "BingeMote",
+            Width = 460, Height = 200,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false,
+            StartPosition = FormStartPosition.CenterOwner,
+            BackColor = bg, ForeColor = fg,
+        };
+        var body = new Label
+        {
+            Left = 20, Top = 18, Width = 400, Height = 80,
+            Font = new Font("Segoe UI", 9.5f), ForeColor = fg, Text = text,
+        };
+        var yes = new Button
+        {
+            Text = confirmLabel, Left = 190, Top = 112, Width = 110, Height = 30,
+            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+            BackColor = card, ForeColor = fg, DialogResult = DialogResult.OK,
+        };
+        yes.FlatAppearance.BorderColor = muted;
+        var no = new Button
+        {
+            Text = "Cancel", Left = 310, Top = 112, Width = 90, Height = 30,
+            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+            BackColor = card, ForeColor = fg, DialogResult = DialogResult.Cancel,
+        };
+        no.FlatAppearance.BorderColor = muted;
+        dlg.Controls.Add(body);
+        dlg.Controls.Add(yes);
+        dlg.Controls.Add(no);
+        dlg.AcceptButton = yes;
+        dlg.CancelButton = no;
+        answer = dlg.ShowDialog(owner) == DialogResult.OK;
+        return answer;
+    }
+}
+
+
+/// <summary>A one-button themed note (the Wi-Fi popup's success line).</summary>
+internal static class NoteDialog
+{
+    public static void Show(IWin32Window owner, string text)
+    {
+        var dark = HelperWindow.IsDarkMode();
+        var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
+        var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
+        var fg = dark ? HelperWindow.DarkText : HelperWindow.LightText;
+        var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
+        using var dlg = new Form
+        {
+            Text = "BingeMote",
+            Width = 460, Height = 200,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false,
+            StartPosition = FormStartPosition.CenterOwner,
+            BackColor = bg, ForeColor = fg,
+        };
+        var body = new Label
+        {
+            Left = 20, Top = 18, Width = 400, Height = 90,
+            Font = new Font("Segoe UI", 9.5f), ForeColor = fg, Text = text,
+        };
+        var ok = new Button
+        {
+            Text = "OK", Left = 310, Top = 116, Width = 90, Height = 30,
+            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+            BackColor = card, ForeColor = fg, DialogResult = DialogResult.OK,
+        };
+        ok.FlatAppearance.BorderColor = muted;
+        dlg.Controls.Add(body);
+        dlg.Controls.Add(ok);
+        dlg.AcceptButton = ok;
+        dlg.CancelButton = ok;
+        dlg.ShowDialog(owner);
     }
 }
