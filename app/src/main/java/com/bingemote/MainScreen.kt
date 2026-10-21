@@ -261,7 +261,7 @@ private fun VolumeRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(84.dp),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SpeakerIcon(TextC, waves = 1)
+                VolumeDownIcon(TextC)
                 Spacer(Modifier.height(6.dp))
                 TileLabel("Vol down", TextC)
             }
@@ -304,7 +304,7 @@ private fun VolumeRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(84.dp),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SpeakerIcon(TextC, waves = 2)
+                VolumeUpIcon(TextC)
                 Spacer(Modifier.height(6.dp))
                 TileLabel("Vol up", TextC)
             }

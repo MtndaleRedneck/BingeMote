@@ -57,6 +57,34 @@ object HelperClient {
         post(host, port, "/ping", JSONObject(), token); true
     } catch (e: Exception) { false }
 
+    @Synchronized
+    private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 3000): JSONObject {
+        val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            c.setRequestProperty("X-BingeMote-Token", token)
+            when (c.responseCode) {
+                in 200..299 -> return JSONObject(c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
+                401, 403 -> throw BadToken("The PC rejected the pairing token.")
+                404 -> throw Unreachable("The helper is too old for this app.")
+                else -> throw Unreachable("The helper answered with error ${c.responseCode}.")
+            }
+        } catch (e: BadToken) { throw e }
+        catch (e: Unreachable) { throw e }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        finally { c.disconnect() }
+    }
+
+    /** The movies folder as set on the PC; null when the helper can't be asked (too old or down). */
+    fun getMoviesFolder(host: String, port: Int, token: String): String? = try {
+        get(host, port, "/config", token).optString("moviesFolder", "")
+    } catch (e: Exception) { null }
+
+    /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
+    fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =
+        post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)
+
     /**
      * Trade a one-time 6-digit code (shown on the PC) for the long-lived pairing token.
      * Returns the token and the PC's name.

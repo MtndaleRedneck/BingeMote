@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>BingeMoteHelper</AssemblyName>
+    <ApplicationIcon>..\Assets\bingemote.ico</ApplicationIcon>
     <Version>1.0.2.0</Version>
     <Description>BingeMote PC helper: mouse and keyboard control for the BingeMote Android app.</Description>
   </PropertyGroup>

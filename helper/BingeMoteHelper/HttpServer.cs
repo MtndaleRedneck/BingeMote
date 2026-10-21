@@ -61,6 +61,11 @@ internal sealed class HttpServer : IDisposable
                     HandlePair(req, res);
                     return;
 
+                case "/config":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    HandleConfig(req, res);
+                    return;
+
                 default:
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     RouteCommand(path, ReadBody(req), res);
@@ -110,6 +115,21 @@ internal sealed class HttpServer : IDisposable
         Program.SaveConfig();
         Program.Log("Phone paired.");
         Reply(res, 200, JsonSerializer.Serialize(new { token = Program.Token, name = Program.MachineLabel() }));
+    }
+
+    /// <summary>GET returns the shared settings; POST writes them. Only the movies folder so far.</summary>
+    private static void HandleConfig(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        if (req.HttpMethod == "GET")
+        {
+            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "" }));
+            return;
+        }
+        var folder = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("moviesFolder").GetString() ?? "";
+        Program.MoviesFolder = folder.Trim();
+        Program.SaveConfig();
+        Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
+        Reply(res, 200, "{\"ok\":true}");
     }
 
     private static void RouteCommand(string path, string body, HttpListenerResponse res)

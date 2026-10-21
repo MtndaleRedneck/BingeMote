@@ -108,7 +108,15 @@ fun FolderPickerScreen(remote: RemoteState, onPick: (String) -> Unit, onCancel: 
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             PressTile(
-                onTap = { onPick(path) },
+                onTap = {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            if (remote.store.helperToken.isNotBlank())
+                                HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, path)
+                        } catch (e: Exception) { /* the PC keeps its copy; the phone's still works */ }
+                    }
+                    onPick(path)
+                },
                 background = OrangeGradient,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 corner = 16.dp,
