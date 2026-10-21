@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,19 +97,25 @@ fun TopBar(trailing: @Composable RowScope.() -> Unit) {
             contentDescription = null,
             modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
         )
-        Spacer(Modifier.width(11.dp))
-        Text("BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
+        // The title takes whatever room is left and shortens first ("BingeMote" ->
+        // "Binge..."), so narrow screens and large fonts can never push the
+        // trailing buttons (mouse, Settings) off screen.
+        Text(
+            "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         trailing()
     }
 }
 
 @Composable
-fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, content: @Composable BoxScope.() -> Unit) {
+fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: Dp = 10.dp, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
     Box(
         Modifier
-            .padding(start = 10.dp)
+            .padding(start = startPad)
             .size(40.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(HeaderBtn)
