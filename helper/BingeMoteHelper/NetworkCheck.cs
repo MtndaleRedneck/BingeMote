@@ -9,13 +9,17 @@ namespace BingeMoteHelper;
 /// </summary>
 internal static class NetworkCheck
 {
-    /// <summary>True when an active connection is in the Public profile. Never throws.</summary>
-    public static bool AnyPublicProfile()
+    /// <summary>
+    /// The profile category of the adapter that owns the default IPv4 route - the one phone
+    /// traffic actually arrives on - so a VPN or second adapter doesn't trip the warning.
+    /// Empty string when it can't be determined. Never throws.
+    /// </summary>
+    public static string DefaultRouteCategory()
     {
         try
         {
             var psi = new ProcessStartInfo("powershell",
-                "-NoProfile -NonInteractive -Command \"@(Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public').Count\"")
+                "-NoProfile -NonInteractive -Command \"$i=(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).InterfaceIndex; $p=Get-NetConnectionProfile -InterfaceIndex $i -ErrorAction SilentlyContinue; if ($p) { $p.NetworkCategory }\"")
             {
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -24,15 +28,15 @@ internal static class NetworkCheck
             using var p = Process.Start(psi)!;
             var output = p.StandardOutput.ReadToEnd().Trim();
             p.WaitForExit(15000);
-            return int.TryParse(output, out var n) && n > 0;
+            return output;
         }
-        catch { return false; }
+        catch { return ""; }
     }
 
     /// <summary>Warn him the Public profile blocks the phone and offer to open the right Settings page.</summary>
     public static void WarnIfPublic()
     {
-        if (!AnyPublicProfile()) return;
+        if (!DefaultRouteCategory().Equals("Public", StringComparison.OrdinalIgnoreCase)) return;
         var answer = MessageBox.Show(
             "Windows has your Wi-Fi set as a Public network, so it blocks the phone app.\n\n" +
             "To fix it: Settings > Network & internet > Wi-Fi > your network > choose Private.\n\n" +

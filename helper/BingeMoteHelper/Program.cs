@@ -73,6 +73,8 @@ internal static class Program
 
         using var http = new HttpServer();
         using var discovery = new DiscoveryResponder();
+        // Public Wi-Fi silently blocks the phone; check on every launch, paired or not.
+        Task.Run(() => { try { NetworkCheck.WarnIfPublic(); } catch { /* never stop startup */ } });
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
             MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the helper's port.\n\n" + ex.Message,
@@ -207,21 +209,6 @@ internal sealed class HelperWindow : Form
     {
         if (!_allowShow && Program.Token != null) value = false;
         base.SetVisibleCore(value);
-    }
-
-    protected override void OnLoad(EventArgs e)
-    {
-        base.OnLoad(e);
-        // Public Wi-Fi silently blocks the phone; check off the UI thread, warn on it.
-        Task.Run(() =>
-        {
-            try
-            {
-                if (NetworkCheck.AnyPublicProfile())
-                    BeginInvoke(new Action(NetworkCheck.WarnIfPublic));
-            }
-            catch { /* a skipped warning never stops the helper */ }
-        });
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
