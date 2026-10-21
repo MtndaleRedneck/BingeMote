@@ -4,7 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
  * and the list scrolls to follow it, OK plays.
  */
 @Composable
-fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
+fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val root = remote.store.moviesPath.trim()
     var path by remember { mutableStateOf(root) }
@@ -39,7 +39,9 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
     var selected by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
-    val listState = rememberLazyListState()
+    // Where each folder was scrolled to before we walked into a child, so ".." lands
+    // you back on the folder you came from instead of the top of the list.
+    val scrollStack = remember { mutableStateListOf<Triple<String, Int, Int>>() }
     // VLC closed? The helper (always in the tray) lists and plays instead. In helper mode
     // paths are relative to the movies folder.
     var viaHelper by remember { mutableStateOf(false) }
@@ -48,7 +50,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         if (viaHelper) p.isEmpty()
         else root.isNotEmpty() && p.trimEnd('\\', '/').equals(root.trimEnd('\\', '/'), ignoreCase = true)
 
-    fun show(raw: List<BrowseItem>, dir: String, helperAtRoot: Boolean) {
+    fun show(raw: List<BrowseItem>, dir: String, helperAtRoot: Boolean, restore: Pair<Int, Int>? = null) {
         // Locked to the assigned folder: no "up" once we are standing on it. The helper's
         // listing has no ".." row of its own, so make one from the relative path.
         val up = when {
@@ -62,10 +64,13 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         selected = if (up.isNotEmpty()) 1.coerceAtMost(items.size - 1) else 0
         path = dir
         loading = false
-        scope.launch { listState.scrollToItem(0) }
+        scope.launch {
+            if (restore != null) listState.scrollToItem(restore.first, restore.second)
+            else listState.scrollToItem(0)
+        }
     }
 
-    fun loadHelper(rel: String) {
+    fun loadHelper(rel: String, restore: Pair<Int, Int>? = null) {
         loading = true
         error = null
         scope.launch {
@@ -76,7 +81,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                 val rows = raw.map { (name, dir) ->
                     BrowseItem(name = name, isDir = dir, path = if (rel.isEmpty()) name else "$rel\\$name", uri = "", sizeBytes = 0L)
                 }
-                show(rows, rel, rel.isEmpty())
+                show(rows, rel, rel.isEmpty(), restore)
             } catch (e: Exception) {
                 loading = false
                 error = e.message ?: "Couldn't open that folder on the PC."
@@ -84,7 +89,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         }
     }
 
-    fun load(dir: String) {
+    fun load(dir: String, restore: Pair<Int, Int>? = null) {
         if (viaHelper) { loadHelper(dir); return }
         loading = true
         error = null
@@ -93,7 +98,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
-                show(raw, dir, false)
+                show(raw, dir, false, restore)
             } catch (e: Exception) {
                 if (remote.store.helperToken.isNotBlank()) {
                     // VLC is closed - the helper takes over, relative to the movies folder.
@@ -108,18 +113,38 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
     }
 
     fun upOne() {
+        fun popPos(forPath: String): Pair<Int, Int>? {
+            val top = scrollStack.lastOrNull() ?: return null
+            if (top.first != forPath) return null
+            scrollStack.removeAt(scrollStack.size - 1)
+            return top.second to top.third
+        }
         if (viaHelper) {
             val parent = path.substringBeforeLast('\\', "")
-            loadHelper(parent)
+            loadHelper(parent, popPos(parent))
             return
         }
         val parent = path.trimEnd('\\', '/').substringBeforeLast('\\', "")
-        if (parent.isNotBlank()) load(parent)
+        if (parent.isNotBlank()) load(parent, popPos(parent))
     }
 
     fun open(item: BrowseItem) {
         when {
-            item.isDir -> if (viaHelper) loadHelper(item.path) else load(item.path)
+            item.isDir -> {
+                if (item.name == "..") {
+                    // Walking up: drop the spot we saved for this folder's parent on the
+                    // way down and land back on it, instead of jumping to the top.
+                    val top = scrollStack.lastOrNull()
+                    val restore = if (top != null && top.first == item.path) {
+                        scrollStack.removeAt(scrollStack.size - 1)
+                        top.second to top.third
+                    } else null
+                    if (viaHelper) loadHelper(item.path, restore) else load(item.path, restore)
+                } else {
+                    scrollStack.add(Triple(path, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset))
+                    if (viaHelper) loadHelper(item.path) else load(item.path)
+                }
+            }
             viaHelper -> {
                 scope.launch(Dispatchers.IO) {
                     val failed = HelperClient.playMovie(

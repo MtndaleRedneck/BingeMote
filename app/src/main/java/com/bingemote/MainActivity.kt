@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -49,22 +50,32 @@ class MainActivity : ComponentActivity() {
                 if (BuildConfig.DEBUG && intent.hasExtra("screen")) intent.getStringExtra("screen") ?: "setup"
                 else if (store.setupDone) "main" else "setup") }
             screen = current
+            // Scroll positions live above the screen switch so leaving a screen and
+            // coming back lands you where you were instead of back at the top.
+            val settingsScroll = rememberScrollState()
+            val setupScroll = rememberScrollState()
+            val feedbackScroll = rememberScrollState()
+            val moviesListState = rememberLazyListState()
+            val pickerListState = rememberLazyListState()
             BingeMoteTheme {
                 when (current.value) {
                     "setup" -> SetupScreen(
                         remote,
+                        setupScroll,
                         onDone = { remote.start(); current.value = "main" },
                         onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
                     )
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
-                    "movies" -> MoviesScreen(remote) { current.value = "main" }
+                    "movies" -> MoviesScreen(remote, moviesListState) { current.value = "main" }
                     "settings" -> SettingsScreen(
                         remote,
+                        settingsScroll,
+                        pickerListState,
                         onBack = { current.value = "main" },
                         onRepair = { current.value = "setup" },
                         onFeedback = { current.value = "feedback" },
                     )
-                    "feedback" -> FeedbackScreen { current.value = "settings" }
+                    "feedback" -> FeedbackScreen(feedbackScroll) { current.value = "settings" }
                     else -> MainScreen(
                         remote,
                         onMouse = { current.value = "mouse" },

@@ -192,9 +192,13 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
     val spin = remember { Animatable(0f) }
     LaunchedEffect(pressed) {
         if (pressed) {
-            spin.snapTo(0f)
-            spin.animateTo(if (forward) 360f else -360f, tween(420, easing = FastOutSlowInEasing))
-            spin.snapTo(0f)
+            try {
+                spin.snapTo(0f)
+                spin.animateTo(if (forward) 360f else -360f, tween(420, easing = FastOutSlowInEasing))
+            } finally {
+                // A quick tap cancels the spin mid-turn; always settle back upright.
+                spin.snapTo(0f)
+            }
         }
     }
     val rotation = spin.value
@@ -202,7 +206,7 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation; scaleX = if (forward) 1f else -1f }) {
             val w = this.size.width
-            val inset = w * 0.10f
+            val inset = w * 0.12f
             drawArc(
                 ringColor, startAngle = 120f, sweepAngle = 285f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
@@ -213,7 +217,7 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             val endAngle = Math.toRadians((120.0 + 285.0))
             val ex = cx + r * Math.cos(endAngle).toFloat()
             val ey = cx + r * Math.sin(endAngle).toFloat()
-            val s = w * 0.16f
+            val s = w * 0.14f
             val head = Path().apply {
                 moveTo(ex, ey - s * 0.7f)
                 lineTo(ex + s, ey + s * 0.1f)

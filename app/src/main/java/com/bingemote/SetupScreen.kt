@@ -28,7 +28,12 @@ import kotlinx.coroutines.withContext
  * continued or discarded - nobody gets stuck between steps.
  */
 @Composable
-fun SetupScreen(remote: RemoteState, onDone: () -> Unit, onCancel: (() -> Unit)? = null) {
+fun SetupScreen(
+    remote: RemoteState,
+    scrollState: androidx.compose.foundation.ScrollState,
+    onDone: () -> Unit,
+    onCancel: (() -> Unit)? = null,
+) {
     val store = remote.store
     val scope = rememberCoroutineScope()
 
@@ -127,7 +132,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit, onCancel: (() -> Unit)?
     }
 
     Column(
-        Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(20.dp),
+        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(20.dp),
     ) {
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
