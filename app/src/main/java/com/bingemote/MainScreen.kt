@@ -110,7 +110,7 @@ fun MainScreen(
             SubtitleSheet(remote, onClose = { subtitlesOpen = false })
         }
         if (remote.unreachable) {
-            ErrorCard(onRetry = { remote.retry() })
+            ErrorCard(vlcClosed = remote.vlcClosed, onRetry = { remote.retry() })
         }
     }
 }
@@ -517,7 +517,7 @@ private fun SubtitleRow(name: String, checked: Boolean, onClick: () -> Unit) {
 
 /** The connection-lost card. */
 @Composable
-private fun ErrorCard(onRetry: () -> Unit) {
+private fun ErrorCard(vlcClosed: Boolean, onRetry: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
@@ -544,7 +544,7 @@ private fun ErrorCard(onRetry: () -> Unit) {
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                if (remote.vlcClosed) "VLC isn't open on the PC. Open VLC and tap Retry."
+                if (vlcClosed) "VLC isn't open on the PC. Open VLC and tap Retry."
                 else "The PC may be off, asleep, or the helper program isn't running.",
                 color = TextC, fontSize = 14.sp,
             )
