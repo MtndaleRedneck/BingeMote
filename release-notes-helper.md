@@ -1,4 +1,4 @@
-## v1.0.2
+## v1.1.0
 
 Two downloads: **BingeMoteHelper-Setup** (recommended) installs it with a Start menu entry and an optional desktop shortcut; the plain **BingeMoteHelper.exe** runs without installing.
 

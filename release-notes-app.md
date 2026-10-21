@@ -1,4 +1,4 @@
-## v1.0.2
+## v1.1.0
 
 - The Movies tab is locked to your folder, rows respond to touch, and the d-pad scrolls the list; the folder picker in Settings browses the PC's folders with a Set button
 - Volume buttons match the approved design: speaker with sound waves (one for down, three for up)
