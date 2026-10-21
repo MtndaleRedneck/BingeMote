@@ -60,9 +60,9 @@ release downloads, to tell them apart from the phone app.
   for scroll, Ctrl+wheel for zoom, unicode key events for typed text.
 - Firewall: the installer (admin) adds the Private-profile rule (TCP 8488, UDP 8489) and
   the HTTP listen permission during install, and removes both on uninstall; the 1.x rule
-  ("BingeMote Helper") is removed in favor of "BingeMote". The plain exe does the same
-  setup itself on first run with one UAC prompt, verifies both with `netsh`, and writes a
-  marker file so it never asks again. A launch that finds the rule already present just
+  ("BingeMote Helper") is removed in favor of "BingeMote". Run outside the installer, the
+  exe does the same setup itself on first run with one UAC prompt, verifies both with
+  `netsh`, and writes a marker file so it never asks again. A launch that finds the rule already present just
   writes the marker - no prompt.
 - Autostart is an `HKCU\...\Run` entry ("BingeMote"; the 1.x "BingeMoteHelper" entry is
   removed); it lives in the tray.
@@ -72,6 +72,6 @@ release downloads, to tell them apart from the phone app.
 `.github/workflows/build.yml` runs the unit tests, builds the signed release APK from the
 `KEYSTORE_B64` / `KEYSTORE_PASSWORD` repository secrets, and publishes BingeMote PC.
 Android and PC release separately: `android-vX.Y.Z` (latest) ships
-`BingeMote-Android-X.Y.Z.apk`, `pc-vX.Y.Z` (never latest) ships `BingeMote-PC-X.Y.Z.exe`
-and `BingeMote-PC-Setup-X.Y.Z.exe`. Publishing is a manual workflow dispatch with
+`BingeMote-Android-X.Y.Z.apk`, `pc-vX.Y.Z` (never latest) ships the
+`BingeMote-PC-Setup-X.Y.Z.exe` installer. Publishing is a manual workflow dispatch with
 `publish=true` and a target, after review signs off on the exact commit.

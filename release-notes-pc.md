@@ -1,9 +1,9 @@
 ## v1.2.0
 
-Two downloads: **BingeMote-PC-Setup** (recommended) installs it with a Start menu entry and an optional desktop shortcut; the plain **BingeMote-PC** exe runs without installing. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
+**BingeMote-PC-Setup** installs it with a Start menu entry and an optional desktop shortcut. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
 
 - Setup stops springing an admin prompt on first run: the installer asks for Windows permission once, during install, and adds the firewall rule itself. Uninstalling removes the rule too
-- New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer. Install over the top of 1.x; it replaces the old copy and removes the old autostart entry, shortcuts and firewall rule. (If you use the plain exe over 1.x instead, the old rule name stays - same ports, everything still works)
+- New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer. Install over the top of 1.x; it replaces the old copy and removes the old autostart entry, shortcuts and firewall rule.
 - Friendlier setup messages, and the Wi-Fi help now says plainly what to click when Windows calls your home network Public
 - When BingeMote starts VLC for you, VLC's remote-control port listens only on the address your phone used - not on every network
 - Pair more than one phone: each phone pairs with its own code (tray menu, "New pairing code"). "Reset pairing" now forgets every phone

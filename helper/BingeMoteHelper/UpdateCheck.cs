@@ -16,7 +16,7 @@ internal static class UpdateCheck
     private const string TagPrefix = "pc-v";
     public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases";
 
-    /// <summary>The published version if it is newer than [current] and ships the PC exe, else null. Never throws.</summary>
+    /// <summary>The published version if it is newer than [current] and ships the installer, else null. Never throws.</summary>
     public static (string Version, string Url)? LatestNewerThan(string current)
     {
         try
@@ -53,7 +53,7 @@ internal static class UpdateCheck
                     foreach (var a in assets.EnumerateArray())
                     {
                         var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                        if (name.StartsWith("BingeMote-PC") && name.EndsWith(".exe"))
+                        if (name.StartsWith("BingeMote-PC-Setup-") && name.EndsWith(".exe"))
                             return (version, ReleasePage);
                     }
                 }
