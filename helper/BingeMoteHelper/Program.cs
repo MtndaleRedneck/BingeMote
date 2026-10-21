@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using WinForms = System.Windows.Forms;
 
 namespace BingeMoteHelper;
 
@@ -251,7 +252,6 @@ internal static class Program
     }
 }
 
-using WinForms = System.Windows.Forms;
 
 /// <summary>The helper window: status, the movies folder, and pairing controls. Sits in the tray;
 /// follows the Windows dark/light mode setting, repainting live when it changes.</summary>
