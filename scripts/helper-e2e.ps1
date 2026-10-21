@@ -122,6 +122,52 @@ try {
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "saved token still works after restart"
 
+    # A second phone pairs with a fresh code and both phones stay connected.
+    Write-Host "== multi-phone pairing =="
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $env:BINGEMOTE_PAIR_CODE = '123456'
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart for second pairing" }
+    $r = Invoke-Helper '/pair' '{"code":"123456"}' $null
+    Assert ($r.code -eq 200) "second phone pairs with a fresh code"
+    $token2 = ($r.body | ConvertFrom-Json).token
+    Assert ($token2 -ne $token) "second phone gets its own token"
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "first phone still works after second pairs"
+    $r = Invoke-Helper '/ping' '{}' $token2
+    Assert ($r.code -eq 200) "second phone works"
+    $r = Invoke-Helper '/ping' '{}' ('0' * 64)
+    Assert ($r.code -eq 401) "unknown token is still 401 with two phones paired"
+
+    # A 1.0/1.1 config stored one token; that phone must stay paired after upgrading.
+    Write-Host "== old config migration =="
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
+    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper/config.json'
+    Set-Content $cfg ('{"token":"' + $token + '","moviesFolder":null}')
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart on old config" }
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "old single-token config keeps the phone paired"
+    $r = Invoke-Helper '/ping' '{}' $token2
+    Assert ($r.code -eq 401) "old config no longer carries the second phone (fresh format rewrites on next save)"
+
     # UDP discovery answers the app's broadcast.
     Write-Host "== UDP discovery =="
     $udp = New-Object Net.Sockets.UdpClient

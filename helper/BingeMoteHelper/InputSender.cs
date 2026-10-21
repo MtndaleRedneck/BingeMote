@@ -39,6 +39,9 @@ internal static class InputSender
     [StructLayout(LayoutKind.Sequential)]
     private struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
 
+    // Two phones can tap at the same instant; keep one gesture's SendInput calls together.
+    private static readonly object Gate = new();
+
     private static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
 
     private static INPUT Mouse(uint flags, int dx = 0, int dy = 0, uint data = 0) =>
@@ -50,38 +53,46 @@ internal static class InputSender
     private static INPUT KeyChar(char c, bool up) =>
         new() { type = INPUT_KEYBOARD, U = new INPUTUNION { ki = new KEYBDINPUT { wScan = c, dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0) } } };
 
-    public static void Move(float dx, float dy) =>
-        Send(Mouse(MOUSEEVENTF_MOVE, (int)Math.Round(dx), (int)Math.Round(dy)));
+    public static void Move(float dx, float dy)
+    {
+        lock (Gate) Send(Mouse(MOUSEEVENTF_MOVE, (int)Math.Round(dx), (int)Math.Round(dy)));
+    }
 
     public static void Button(string button, bool down)
     {
         var flags = button == "right"
             ? (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP)
             : (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP);
-        Send(Mouse(flags));
+        lock (Gate) Send(Mouse(flags));
     }
 
     public static void Scroll(float dy)
     {
         // Windows wheel units: 120 per notch. Positive = up.
-        Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(dy * 8)));
+        lock (Gate) Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(dy * 8)));
     }
 
     public static void Zoom(float delta)
     {
         // Ctrl+wheel is what most apps treat as zoom.
-        Send(KeyVk(VK_CONTROL, false));
-        Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(delta * 40)));
-        Send(KeyVk(VK_CONTROL, true));
+        lock (Gate)
+        {
+            Send(KeyVk(VK_CONTROL, false));
+            Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(delta * 40)));
+            Send(KeyVk(VK_CONTROL, true));
+        }
     }
 
     public static void TypeText(string text)
     {
         if (text.Length > 2000) text = text[..2000];
-        foreach (var c in text)
+        lock (Gate)
         {
-            if (char.IsHighSurrogate(c) || char.IsLowSurrogate(c)) continue; // plain text only
-            Send(KeyChar(c, false), KeyChar(c, true));
+            foreach (var c in text)
+            {
+                if (char.IsHighSurrogate(c) || char.IsLowSurrogate(c)) continue; // plain text only
+                Send(KeyChar(c, false), KeyChar(c, true));
+            }
         }
     }
 
@@ -101,6 +112,6 @@ internal static class InputSender
             _ => (ushort)0,
         };
         if (vk == 0) return;
-        Send(KeyVk(vk, false), KeyVk(vk, true));
+        lock (Gate) Send(KeyVk(vk, false), KeyVk(vk, true));
     }
 }
