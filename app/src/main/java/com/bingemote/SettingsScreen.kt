@@ -170,7 +170,7 @@ fun SettingsScreen(
                                 result = "Version " + outcome.info.versionName + " is available."
                                 ManualUpdate.offer = outcome.info
                             }
-                            Updater.CheckOutcome.UpToDate -> result = "You're up to date. Nothing installs on its own."
+                            Updater.CheckOutcome.UpToDate -> result = "You're up to date."
                             Updater.CheckOutcome.Unavailable -> result = "Couldn't check right now. Try again later."
                         }
                     }
