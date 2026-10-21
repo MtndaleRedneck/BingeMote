@@ -207,24 +207,33 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
         Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation; scaleX = if (forward) 1f else -1f }) {
             val w = this.size.width
             val inset = w * 0.12f
+            // The ring ends flat so it can flow straight into the arrowhead's base.
             drawArc(
                 ringColor, startAngle = 120f, sweepAngle = 285f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
-                style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
+                style = Stroke(width = w * 0.09f, cap = StrokeCap.Butt),
             )
-            // Arrowhead at the arc's end: a clean triangle aligned to the tangent (the
-            // direction of travel), sized to stay inside the icon at every spin angle.
             val cx = w / 2; val r = (w - inset * 2) / 2
+            val strokeW = w * 0.09f
+            // Round cap at the ring's start only.
+            val startAngle = Math.toRadians(120.0)
+            drawCircle(
+                ringColor, radius = strokeW / 2,
+                center = Offset(cx + r * Math.cos(startAngle).toFloat(), cx + r * Math.sin(startAngle).toFloat()),
+            )
+            // Arrowhead: an isoceles triangle centered on the ring's end, pointing along
+            // the tangent (direction of travel), about 2.5x the stroke wide, staying
+            // inside the icon bounds at every spin angle.
             val endAngle = Math.toRadians((120.0 + 285.0))
             val ex = cx + r * Math.cos(endAngle).toFloat()
             val ey = cx + r * Math.sin(endAngle).toFloat()
             val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
             val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
-            val tipLen = w * 0.18f; val back = w * 0.05f; val halfW = w * 0.11f
+            val tipLen = w * 0.16f; val halfW = strokeW * 1.25f
             val head = Path().apply {
                 moveTo(ex + tx * tipLen, ey + ty * tipLen)
-                lineTo(ex - tx * back + nx * halfW, ey - ty * back + ny * halfW)
-                lineTo(ex - tx * back - nx * halfW, ey - ty * back - ny * halfW)
+                lineTo(ex + nx * halfW, ey + ny * halfW)
+                lineTo(ex - nx * halfW, ey - ny * halfW)
                 close()
             }
             drawPath(head, ringColor)
