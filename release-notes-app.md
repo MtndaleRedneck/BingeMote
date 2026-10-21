@@ -1,8 +1,8 @@
 ## v1.2.0
 
-- Movies now play even when VLC is closed: BingeMote PC finds the movie and starts it for you (needs BingeMote PC 1.2.0)
-- Two phones can control the same PC - each phone pairs once with its own code from the BingeMote PC window
-- The PC program has a new name, BingeMote PC, so setup and messages say what to look for
+- Movies now play even when VLC is closed: the PC program finds the movie and starts it for you (needs the BingeMote PC 1.2.0 download)
+- Two phones can control the same PC - each phone pairs once with its own code from the BingeMote window on the PC
+- The PC program is now just called BingeMote (the download is labeled BingeMote PC to tell it apart from this app), and setup text says what to look for
 
 ## v1.1.0
 
@@ -25,7 +25,7 @@
 - Remote for VLC on your PC: play, pause, fullscreen, seek, skips, volume, mute, subtitles
 - Movies screen: browse a folder on your PC and play from the couch
 - Mouse screen: touchpad, scroll strip, click buttons and a keyboard for your PC
-- One-time pairing with the BingeMote PC helper
+- One-time pairing with the PC program
 - Checks for app updates each time it opens; nothing installs without your OK
 
 Android 12+. See the README for the PC setup.
