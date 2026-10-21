@@ -44,19 +44,17 @@ fun MainScreen(
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
-            TopBar {
-                // The pill sits centered between the name and Settings: equal
-                // spacers on both sides. Mouse moved to the bottom row (1.5.0).
-                Spacer(Modifier.weight(1f))
-                StatusPill(connected = !remote.unreachable)
-                Spacer(Modifier.weight(1f))
-                HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
-                    androidx.compose.material3.Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "Settings", tint = Orange,
-                    )
-                }
-            }
+            TopBar(
+                pill = { StatusPill(connected = !remote.unreachable) },
+                settings = {
+                    HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
+                        androidx.compose.material3.Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings", tint = Orange,
+                        )
+                    }
+                },
+            )
 
             // Now playing
             // When the PC is unreachable the card itself says so; no overlay, no Retry.
@@ -324,6 +322,7 @@ private fun VolumeRow(remote: RemoteState) {
             onHoldRepeat = { remote.volumeStep(false) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
+            desc = "Volume down",
         ) {
             VolumeDownIcon(TextC, size = 30.dp)
         }
@@ -333,6 +332,7 @@ private fun VolumeRow(remote: RemoteState) {
             onTap = { remote.toggleMute() },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.width(96.dp).height(84.dp),
+            desc = "Mute",
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -363,6 +363,7 @@ private fun VolumeRow(remote: RemoteState) {
             onHoldRepeat = { remote.volumeStep(true) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
+            desc = "Volume up",
         ) {
             VolumeUpIcon(TextC, size = 30.dp)
         }
@@ -382,6 +383,7 @@ private fun SkipRow(remote: RemoteState) {
             onHoldRepeat = { remote.skip(-remote.store.skipMainSec) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(108.dp),
+            desc = "Back $label",
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp)
         }
@@ -393,8 +395,9 @@ private fun SkipRow(remote: RemoteState) {
             onHoldRepeat = { remote.skip(remote.store.skipMainSec) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(108.dp),
+            desc = "Forward $label",
         ) { pressed ->
-            SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp)
+            SkipIcon(forward = true, label = label, pressed = pressed, tint = TextC, size = 44.dp)
         }
     }
 }
@@ -404,6 +407,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean) {
     PressTile(
         onTap = { remote.togglePause() },
         hapticsOn = remote.store.haptics,
+        desc = if (playing) "Pause" else "Play",
         background = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Card2, Card)),
         modifier = Modifier.size(108.dp),
         corner = 54.dp,
@@ -436,6 +440,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             onHoldRepeat = { remote.skip(-remote.store.skipSecondarySec) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(62.dp),
+            desc = "Back $label",
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 28.dp)
         }
@@ -445,6 +450,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             onHoldRepeat = { remote.skip(remote.store.skipSecondarySec) },
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(62.dp),
+            desc = "Forward $label",
         ) { pressed ->
             SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 28.dp)
         }
@@ -455,19 +461,19 @@ private fun SecondarySkipRow(remote: RemoteState) {
 private fun BottomRow(remote: RemoteState, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit) {
     // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Movies") {
             FolderIcon(TextC, size = 26.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Subtitles") {
             SubtitleIcon(TextC, size = 26.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Fullscreen") {
             FullscreenIcon(TextC, size = 26.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Mouse") {
             CursorIcon(TextC, size = 24.dp)
         }
     }

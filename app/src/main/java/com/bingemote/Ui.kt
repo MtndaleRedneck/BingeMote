@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -46,6 +48,7 @@ fun PressTile(
     hapticsOn: Boolean = true,
     background: Brush = CardGradient,
     corner: Dp = 18.dp,
+    desc: String? = null,
     content: @Composable BoxScope.(pressed: Boolean) -> Unit,
 ) {
     var pressed by remember { mutableStateOf(false) }
@@ -55,6 +58,7 @@ fun PressTile(
 
     Box(
         modifier
+            .then(if (desc != null) Modifier.semantics { contentDescription = desc } else Modifier)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .shadow(if (pressed) 2.dp else 6.dp, RoundedCornerShape(corner))
             .clip(RoundedCornerShape(corner))
@@ -85,27 +89,46 @@ fun PressTile(
     ) { content(pressed) }
 }
 
-/** Header: the BingeMote logo + app name + trailing buttons. */
+/** Header: logo + app name + centered status pill + Settings. The pill centers in the
+ * free room between the name and Settings with equal gaps. When space runs short (large
+ * font scale), the name shortens with an ellipsis first, then the pill caps and
+ * ellipsizes - Settings is always fully on screen. */
 @Composable
-fun TopBar(trailing: @Composable RowScope.() -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
-            contentDescription = null,
-            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
-        )
-        Spacer(Modifier.width(8.dp))
-        // 1.5.0: the title wraps its text and the trailing lambda gets two
-        // weighted spacers around the status pill, so the pill centers itself in
-        // the free room between the name and Settings with equal gaps.
-        Text(
-            "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis,
-        )
-        trailing()
+fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        androidx.compose.ui.layout.Layout(content = {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
+                contentDescription = null,
+                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
+            )
+            Text(
+                "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            pill()
+            settings()
+        }) { measurables, constraints ->
+            val gap = 8.dp.roundToPx()
+            val logoP = measurables[0].measure(androidx.compose.ui.unit.Constraints())
+            val setP = measurables[3].measure(androidx.compose.ui.unit.Constraints())
+            val middle = (constraints.maxWidth - logoP.width - gap - setP.width).coerceAtLeast(0)
+            // The pill caps at the middle minus a stub of the name; the name gets what is left.
+            val minTitle = 56.dp.roundToPx()
+            val pillP = measurables[2].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - minTitle).coerceAtLeast(0)))
+            val titleP = measurables[1].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - pillP.width).coerceAtLeast(0)))
+            val h = maxOf(logoP.height, titleP.height, pillP.height, setP.height)
+            layout(constraints.maxWidth, h) {
+                logoP.placeRelative(0, (h - logoP.height) / 2)
+                val titleX = logoP.width + gap
+                titleP.placeRelative(titleX, (h - titleP.height) / 2)
+                val freeStart = titleX + titleP.width
+                val freeEnd = constraints.maxWidth - setP.width
+                val pillX = freeStart + ((freeEnd - freeStart - pillP.width) / 2).coerceAtLeast(0)
+                pillP.placeRelative(pillX, (h - pillP.height) / 2)
+                setP.placeRelative(constraints.maxWidth - setP.width, (h - setP.height) / 2)
+            }
+        }
     }
 }
 
