@@ -45,11 +45,11 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar {
-                // fill = false: the pill keeps its natural size until space runs
-                // short, then it shortens after the title does. The two buttons
-                // stay fixed, so Settings is always fully on screen.
-                StatusPill(connected = !remote.unreachable, modifier = Modifier.widthIn(max = 110.dp))
-                HeaderIconButton(onMouse, remote.store.haptics, startPad = 6.dp) { CursorIcon(Orange) }
+                // The pill sits centered between the name and Settings: equal
+                // spacers on both sides. Mouse moved to the bottom row (1.5.0).
+                Spacer(Modifier.weight(1f))
+                StatusPill(connected = !remote.unreachable)
+                Spacer(Modifier.weight(1f))
                 HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                     androidx.compose.material3.Icon(
                         Icons.Default.Settings,
@@ -143,7 +143,7 @@ fun MainScreen(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
             Spacer(Modifier.weight(1f))
-            BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies)
+            BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
         }
 
@@ -160,23 +160,22 @@ fun MainScreen(
 private fun StatusPill(connected: Boolean, modifier: Modifier = Modifier) {
     Row(
         modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(HeaderBtn)
-            .padding(horizontal = 9.dp, vertical = 7.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .size(7.dp)
+                .size(9.dp)
                 .clip(CircleShape)
                 .background(if (connected) Orange else ErrorRed),
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             if (connected) "Connected" else "Disconnected",
-            color = TextC, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold,
+            color = TextC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }
@@ -326,11 +325,7 @@ private fun VolumeRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                VolumeDownIcon(TextC)
-                Spacer(Modifier.height(6.dp))
-                TileLabel("Vol down", TextC)
-            }
+            VolumeDownIcon(TextC, size = 30.dp)
         }
         Spacer(Modifier.width(12.dp))
         // Percent readout: tap toggles mute. Muted: dimmed 0% + MUTED, thin red strike corner to corner.
@@ -369,11 +364,7 @@ private fun VolumeRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                VolumeUpIcon(TextC)
-                Spacer(Modifier.height(6.dp))
-                TileLabel("Vol up", TextC)
-            }
+            VolumeUpIcon(TextC, size = 30.dp)
         }
     }
 }
@@ -392,11 +383,7 @@ private fun SkipRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(108.dp),
         ) { pressed ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC)
-                Spacer(Modifier.height(8.dp))
-                TileLabel("Back $label", TextC)
-            }
+            SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp)
         }
         Spacer(Modifier.width(12.dp))
         PlayPauseButton(remote, playing)
@@ -407,11 +394,7 @@ private fun SkipRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(108.dp),
         ) { pressed ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SkipIcon(forward = true, label = label, pressed = pressed, tint = TextC)
-                Spacer(Modifier.height(8.dp))
-                TileLabel("Fwd $label", TextC)
-            }
+            SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp)
         }
     }
 }
@@ -454,11 +437,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(62.dp),
         ) { pressed ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 22.dp)
-                Spacer(Modifier.height(2.dp))
-                TileLabel("Back $label", Orange, size = 13)
-            }
+            SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 28.dp)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(
@@ -467,40 +446,29 @@ private fun SecondarySkipRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(62.dp),
         ) { pressed ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 22.dp)
-                Spacer(Modifier.height(2.dp))
-                TileLabel("Fwd $label", Orange, size = 13)
-            }
+            SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 28.dp)
         }
     }
 }
 
 @Composable
-private fun BottomRow(remote: RemoteState, onSubtitles: () -> Unit, onMovies: () -> Unit) {
+private fun BottomRow(remote: RemoteState, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit) {
+    // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FullscreenIcon(TextC)
-                Spacer(Modifier.height(6.dp))
-                TileLabel("Fullscreen", TextC, size = 13)
-            }
+        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+            FolderIcon(TextC, size = 26.dp)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                SubtitleIcon(TextC)
-                Spacer(Modifier.height(6.dp))
-                TileLabel("Subtitles", TextC, size = 13)
-            }
+            SubtitleIcon(TextC, size = 26.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FolderIcon(TextC)
-                Spacer(Modifier.height(6.dp))
-                TileLabel("Movies", TextC, size = 13)
-            }
+        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+            FullscreenIcon(TextC, size = 26.dp)
+        }
+        Spacer(Modifier.width(12.dp))
+        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp)) {
+            CursorIcon(TextC, size = 24.dp)
         }
     }
 }

@@ -96,35 +96,48 @@ fun VolumeUpIcon(color: Color, size: Dp = 22.dp) {
     }
 }
 
-/** Four fullscreen corner brackets. */
+/** Fullscreen: four corner brackets with rounded turns (approved 1.5.0 vector). */
 @Composable
 fun FullscreenIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
-        val st = Stroke(width = w * 0.09f, cap = StrokeCap.Round)
-        val inset = w * 0.12f; val len = w * 0.26f
-        val lines = listOf(
-            // top-left
-            Offset(inset, inset + len) to Offset(inset, inset), Offset(inset, inset) to Offset(inset + len, inset),
-            // top-right
-            Offset(w - inset - len, inset) to Offset(w - inset, inset), Offset(w - inset, inset) to Offset(w - inset, inset + len),
-            // bottom-left
-            Offset(inset, h - inset - len) to Offset(inset, h - inset), Offset(inset, h - inset) to Offset(inset + len, h - inset),
-            // bottom-right
-            Offset(w - inset - len, h - inset) to Offset(w - inset, h - inset), Offset(w - inset, h - inset) to Offset(w - inset, h - inset - len),
-        )
-        for ((a, b) in lines) drawLine(color, a, b, strokeWidth = st.width, cap = StrokeCap.Round)
+        val st = w * 0.0357f
+        val ins = w * 0.143f; val arm = w * 0.207f; val r = w * 0.061f
+        // corner arcs (quarter circles): TL 180->270, TR 270->360, BL 90->180, BR 0->90
+        drawArc(color, 180f, 90f, false, Offset(ins, ins), Size(2 * r, 2 * r), style = Stroke(width = st, cap = StrokeCap.Round))
+        drawArc(color, 270f, 90f, false, Offset(w - ins - 2 * r, ins), Size(2 * r, 2 * r), style = Stroke(width = st, cap = StrokeCap.Round))
+        drawArc(color, 90f, 90f, false, Offset(ins, h - ins - 2 * r), Size(2 * r, 2 * r), style = Stroke(width = st, cap = StrokeCap.Round))
+        drawArc(color, 0f, 90f, false, Offset(w - ins - 2 * r, h - ins - 2 * r), Size(2 * r, 2 * r), style = Stroke(width = st, cap = StrokeCap.Round))
+        // arms
+        drawLine(color, Offset(ins + r, ins), Offset(ins + arm, ins), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(ins, ins + r), Offset(ins, ins + arm), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(w - ins - r, ins), Offset(w - ins - arm, ins), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(w - ins, ins + r), Offset(w - ins, ins + arm), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(ins + r, h - ins), Offset(ins + arm, h - ins), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(ins, h - ins - r), Offset(ins, h - ins - arm), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(w - ins - r, h - ins), Offset(w - ins - arm, h - ins), st, cap = StrokeCap.Round)
+        drawLine(color, Offset(w - ins, h - ins - r), Offset(w - ins, h - ins - arm), st, cap = StrokeCap.Round)
     }
 }
 
-/** Subtitle bubble: rounded rect with two text lines. */
+/** Subtitles (approved 1.5.0 vector): hollow chat bubble, sharp hollow tail,
+ * three staggered rows of dashed text lines. */
 @Composable
 fun SubtitleIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
-        drawRoundRect(color, topLeft = Offset(w * 0.10f, h * 0.18f), size = Size(w * 0.80f, h * 0.64f), cornerRadius = CornerRadius(w * 0.12f), style = Stroke(width = w * 0.07f))
-        drawLine(color, Offset(w * 0.22f, h * 0.42f), Offset(w * 0.70f, h * 0.42f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
-        drawLine(color, Offset(w * 0.22f, h * 0.60f), Offset(w * 0.54f, h * 0.60f), strokeWidth = w * 0.07f, cap = StrokeCap.Round)
+        val st = w * 0.0357f
+        drawRoundRect(color, topLeft = Offset(w * 0.143f, h * 0.179f), size = Size(w * 0.714f, h * 0.500f), cornerRadius = CornerRadius(w * 0.093f), style = Stroke(width = st))
+        val tail = Path().apply {
+            moveTo(w * 0.339f, h * 0.675f)
+            lineTo(w * 0.275f, h * 0.829f)
+            lineTo(w * 0.518f, h * 0.675f)
+        }
+        drawPath(tail, color, style = Stroke(width = st, join = androidx.compose.ui.graphics.StrokeJoin.Miter, miter = 4f))
+        val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(w * 0.0643f, w * 0.0536f))
+        drawLine(color, Offset(w * 0.257f, h * 0.321f), Offset(w * 0.743f, h * 0.321f), st, cap = StrokeCap.Round, pathEffect = dash)
+        drawLine(color, Offset(w * 0.329f, h * 0.429f), Offset(w * 0.714f, h * 0.429f), st, cap = StrokeCap.Round, pathEffect = dash)
+        drawLine(color, Offset(w * 0.257f, h * 0.536f), Offset(w * 0.636f, h * 0.536f), st, cap = StrokeCap.Round, pathEffect = dash)
     }
 }
 

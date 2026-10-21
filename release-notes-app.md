@@ -1,3 +1,10 @@
+## v1.5.0
+
+- Icons only on the remote: volume, skip and bottom buttons lose their text labels
+- Mouse moves into the bottom row next to Movies, Subtitles and Fullscreen
+- Top bar keeps the full app name and a roomier, centered connection light
+- New Subtitles and Fullscreen icons
+
 ## v1.4.0
 
 - Clearer connection cards: they say exactly what's wrong (phone cut off, PC program off, or VLC closed) and point at the fix

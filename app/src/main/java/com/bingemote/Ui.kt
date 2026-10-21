@@ -98,13 +98,12 @@ fun TopBar(trailing: @Composable RowScope.() -> Unit) {
             modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
         )
         Spacer(Modifier.width(8.dp))
-        // The title takes whatever room is left and shortens first ("BingeMote" ->
-        // "Binge..."), so narrow screens and large fonts can never push the
-        // trailing buttons (mouse, Settings) off screen.
+        // 1.5.0: the title wraps its text and the trailing lambda gets two
+        // weighted spacers around the status pill, so the pill centers itself in
+        // the free room between the name and Settings with equal gaps.
         Text(
             "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
         )
         trailing()
     }
