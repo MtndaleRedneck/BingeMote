@@ -88,6 +88,7 @@ internal sealed class HttpServer : IDisposable
     {
         if (Program.PairFailures >= Program.MaxPairFailures)
         {
+            Program.Log("Pairing locked - too many wrong codes.");
             Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Restart the helper on the PC to try again.\"}");
             return;
         }
@@ -99,6 +100,7 @@ internal sealed class HttpServer : IDisposable
         if (!valid)
         {
             Program.PairFailures++;
+            Program.Log("Wrong pairing code entered (" + Program.PairFailures + " of " + Program.MaxPairFailures + ").");
             Reply(res, 403, "{\"error\":\"bad code\"}");
             return;
         }
@@ -106,6 +108,7 @@ internal sealed class HttpServer : IDisposable
         Program.PairCode = null;
         Program.PairFailures = 0;
         Program.SaveConfig();
+        Program.Log("Phone paired.");
         Reply(res, 200, JsonSerializer.Serialize(new { token = Program.Token, name = Program.MachineLabel() }));
     }
 
