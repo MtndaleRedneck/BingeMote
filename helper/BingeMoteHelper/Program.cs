@@ -422,33 +422,52 @@ internal sealed class HelperWindow : Form
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
-        daily.Tick += (_, _) => Program.CheckForUpdate();
+        daily.Tick += (_, _) => { Program.CheckForUpdate(); AnnounceUpdateIfNeeded(); };
         daily.Start();
-
-        // Keep the status line and an expired code fresh, and announce a found update once.
-        // Ten seconds is plenty for a status line, and a lazy timer is kinder to laptop batteries.
-        _timer = new System.Windows.Forms.Timer { Interval = 10000 };
-        _timer.Tick += (_, _) =>
+        // The startup update check finishes on its own task; announce it once it lands.
+        Task.Run(async () =>
         {
-            if (Program.AvailableUpdate != null && !_updateAnnounced)
-            {
-                _updateAnnounced = true;
-                _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
-                _tray.BalloonTipTitle = "BingeMote Helper update";
-                _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
-                _tray.ShowBalloonTip(8000);
-            }
-            if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
-            {
-                Program.PairCode = Program.NewPairCode();
-                Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-            }
-            _code.Text = Program.PairCode ?? "------";
-            _status.Text = Program.Token == null
-                ? "Listening on port " + Program.HttpPort + " - not paired yet"
-                : "Listening on port " + Program.HttpPort + " - paired";
-        };
-        _timer.Start();
+            await Task.Delay(20000);
+            try { BeginInvoke(new Action(AnnounceUpdateIfNeeded)); } catch { }
+        });
+
+        // The status line and pairing-code countdown only matter while the window is on
+        // screen, so this timer sleeps whenever the window is tucked in the tray: with the
+        // window hidden the helper wakes only for the phone or the daily update check.
+        _timer = new System.Windows.Forms.Timer { Interval = 10000 };
+        _timer.Tick += (_, _) => TickStatus();
+    }
+
+    /// <summary>Refresh the status line and roll an expired pairing code (window-visible work).</summary>
+    private void TickStatus()
+    {
+        if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
+        {
+            Program.PairCode = Program.NewPairCode();
+            Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
+        }
+        _code.Text = Program.PairCode ?? "------";
+        _status.Text = Program.Token == null
+            ? "Listening on port " + Program.HttpPort + " - not paired yet"
+            : "Listening on port " + Program.HttpPort + " - paired";
+    }
+
+    private void AnnounceUpdateIfNeeded()
+    {
+        if (Program.AvailableUpdate == null || _updateAnnounced) return;
+        _updateAnnounced = true;
+        _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
+        _tray.BalloonTipTitle = "BingeMote Helper update";
+        _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
+        _tray.ShowBalloonTip(8000);
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (_timer == null) return;
+        if (Visible) { TickStatus(); AnnounceUpdateIfNeeded(); _timer.Start(); }
+        else _timer.Stop();
     }
 
     private static Button MakeButton(string text, int left, int top, int width) => new()
