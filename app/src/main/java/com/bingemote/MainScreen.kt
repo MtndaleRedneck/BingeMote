@@ -544,7 +544,8 @@ private fun ErrorCard(onRetry: () -> Unit) {
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                "The PC may be off, asleep, or the helper program isn't running.",
+                if (remote.vlcClosed) "VLC isn't open on the PC. Open VLC and tap Retry."
+                else "The PC may be off, asleep, or the helper program isn't running.",
                 color = TextC, fontSize = 14.sp,
             )
             Spacer(Modifier.height(14.dp))

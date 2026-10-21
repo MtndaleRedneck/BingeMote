@@ -96,6 +96,32 @@ try {
         Write-Host "no audio device on this machine; 503 path verified"
     }
 
+    # A second copy must exit quietly instead of failing to bind the port.
+    Write-Host "== single instance =="
+    $second = Start-Process $exe -Wait -PassThru
+    Assert ($second.ExitCode -eq 0) "second instance exits quietly (code $($second.ExitCode))"
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "first instance still serving"
+
+    # After pairing, a fresh launch shows no live code: re-pairing must fail.
+    Write-Host "== no silent re-pair =="
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart" }
+    $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+    Assert ($r.code -eq 403) "no live pair code after pairing (got $($r.code))"
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "saved token still works after restart"
+
     # UDP discovery answers the app's broadcast.
     Write-Host "== UDP discovery =="
     $udp = New-Object Net.Sockets.UdpClient

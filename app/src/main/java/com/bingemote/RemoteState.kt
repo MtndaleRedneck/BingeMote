@@ -26,6 +26,10 @@ class RemoteState(
         private set
     var unreachable by mutableStateOf(false)
         private set
+
+    /** VLC didn't answer but the helper did: the PC is fine, VLC just isn't open. */
+    var vlcClosed by mutableStateOf(false)
+        private set
     var connecting by mutableStateOf(false)
         private set
 
@@ -79,6 +83,7 @@ class RemoteState(
             } else null
             failures = 0
             unreachable = false
+            vlcClosed = false
             connecting = false
         } catch (e: Vlc.BadAuth) {
             failures = 2
@@ -87,6 +92,9 @@ class RemoteState(
             failures++
             if (failures >= 2) {
                 unreachable = true
+                // The PC answering its helper but not VLC means VLC simply isn't open.
+                vlcClosed = store.helperToken.isNotBlank() &&
+                    withContext(Dispatchers.IO) { HelperClient.ping(store.host, store.helperPort, store.helperToken) }
                 if (store.autoReconnect) rediscover()
             }
         }
