@@ -2,6 +2,8 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -43,7 +45,11 @@ fun MainScreen(
     var subtitlesOpen by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
-        Column(Modifier.fillMaxSize()) {
+        // The screen scrolls whenever the cards push content past the bottom (the
+        // 1.4.0 bug: Disconnected + "Phone blocked?" clipped the bottom row with no
+        // scroll). The bottom row stays pinned over the scroll, so the layout looks
+        // exactly as before when everything fits.
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             TopBar(
                 pill = { StatusPill(connected = !remote.unreachable) },
                 settings = {
@@ -140,7 +146,10 @@ fun MainScreen(
                 color = Muted, fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
-            Spacer(Modifier.weight(1f))
+            // Room to scroll the last control clear of the pinned bottom row.
+            Spacer(Modifier.height(112.dp))
+        }
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Bg)) {
             BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
         }
