@@ -1,3 +1,7 @@
+## v1.0.1
+
+- The PC helper checks for updates too and tells you from the tray when a new version is out. Nothing installs without your OK.
+
 ## First release
 
 - Remote for VLC on your PC: play, pause, fullscreen, seek, skips, volume, mute, subtitles
