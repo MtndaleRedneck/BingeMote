@@ -86,4 +86,5 @@ class Store(context: Context) {
 
 /** VLC sometimes hands back mixed separators ("Desktop\/Movies"); store and show one clean form. Keeps a leading "\\" (network share) intact. */
 private fun normalizeWinPath(p: String): String =
-    p.trim().replace('/', '\\').replace(Regex("(?<=.)\\\\{2,}"), "\\")
+    // Lambda replacement on purpose: a "\" string replacement is an invalid escape and throws on a match.
+    p.trim().replace('/', '\\').replace(Regex("(?<=.)\\\\{2,}")) { "\\" }
