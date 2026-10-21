@@ -41,7 +41,7 @@ internal static class NetworkCheck
             "Windows has your Wi-Fi set as a Public network, so it blocks the phone app.\n\n" +
             "To fix it: Settings > Network & internet > Wi-Fi > your network > choose Private.\n\n" +
             "Open those settings now?",
-            "BingeMote PC",
+            "BingeMote",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button1,

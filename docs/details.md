@@ -43,13 +43,14 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
 
 ## BingeMote PC (Windows)
 
-.NET 8, Windows Forms, single self-contained exe ("BingeMote PC.exe"; the code still calls
-itself BingeMoteHelper internally).
+.NET 8, Windows Forms, single self-contained exe (installed as "BingeMote.exe"; the code
+still calls itself BingeMoteHelper internally). The "BingeMote PC" label lives only on the
+release downloads, to tell them apart from the phone app.
 
 - HTTP on 8488: `/ping`, `/pair`, `/mouse/move`, `/mouse/button`, `/mouse/scroll`,
   `/mouse/zoom`, `/key`, `/type`. Every request except `/pair` needs
   `X-BingeMote-Token`. Only private addresses (loopback, RFC1918, link-local) are served.
-- Pairing: BingeMote PC shows a 6-digit code. `/pair` trades it (single use, 10-minute
+- Pairing: the PC window shows a 6-digit code. `/pair` trades it (single use, 10-minute
   expiry, 5 strikes locks until restart) for a random 256-bit token. Each phone gets its
   own token, so several phones can stay paired at once (capped at 8); the tokens live in
   `%LOCALAPPDATA%\BingeMoteHelper\config.json` (per-user directory), and a 1.x
@@ -60,8 +61,9 @@ itself BingeMoteHelper internally).
 - First run elevates once (UAC) to add the firewall rule (Private profile only, TCP 8488
   and UDP 8489) and the HTTP listen permission, verifies both with `netsh`, and writes a
   marker file so it never asks again. Saying no leaves it running but unreachable
-  until it offers again on next launch. The 1.x rule ("BingeMote Helper") is removed.
-- Autostart is an `HKCU\...\Run` entry ("BingeMotePC"; the 1.x "BingeMoteHelper" entry is
+  until it offers again on next launch. The 1.x rule ("BingeMote Helper") is removed in
+  favor of "BingeMote".
+- Autostart is an `HKCU\...\Run` entry ("BingeMote"; the 1.x "BingeMoteHelper" entry is
   removed); it lives in the tray.
 
 ## CI

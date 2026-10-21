@@ -72,7 +72,7 @@ jobs:
         run: |
           $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
-          Copy-Item "helper/out/BingeMote PC.exe" "BingeMote-PC-$v.exe"
+          Copy-Item "helper/out/BingeMote.exe" "BingeMote-PC-$v.exe"
 
       - uses: actions/upload-artifact@v4
         with:
