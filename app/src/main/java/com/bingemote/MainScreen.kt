@@ -2,8 +2,6 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -45,11 +43,7 @@ fun MainScreen(
     var subtitlesOpen by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
-        // The screen scrolls whenever the cards push content past the bottom (the
-        // 1.4.0 bug: Disconnected + "Phone blocked?" clipped the bottom row with no
-        // scroll). The bottom row stays pinned over the scroll, so the layout looks
-        // exactly as before when everything fits.
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxSize()) {
             TopBar(
                 pill = { StatusPill(connected = !remote.unreachable) },
                 settings = {
@@ -96,24 +90,6 @@ fun MainScreen(
                 }
             }
 
-            if (lost) {
-                Spacer(Modifier.height(14.dp))
-                Column(
-                    Modifier
-                        .padding(horizontal = 16.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Card)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    Text("Phone blocked?", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Windows may have marked the PC's Wi-Fi as Public. Open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
-                        color = TextC, fontSize = 13.sp,
-                    )
-                }
-            }
             Spacer(Modifier.height(20.dp))
             SeekBlock(remote)
             Spacer(Modifier.height(18.dp))
@@ -146,10 +122,7 @@ fun MainScreen(
                 color = Muted, fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
-            // Room to scroll the last control clear of the pinned bottom row.
-            Spacer(Modifier.height(112.dp))
-        }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Bg)) {
+            Spacer(Modifier.weight(1f))
             BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
         }
