@@ -4,12 +4,12 @@
 
 ```
 Android app  --(VLC HTTP, port 8080, Basic auth)-->  VLC on the PC
-Android app  --(Helper HTTP, port 8488, token)  -->  BingeMote Helper (mouse/keyboard)
-Android app  --(UDP broadcast, port 8489)       -->  Helper discovery
+Android app  --(BingeMote PC HTTP, port 8488, token)-->  BingeMote PC (mouse/keyboard)
+Android app  --(UDP broadcast, port 8489)          -->  BingeMote PC discovery
 ```
 
-Both HTTP APIs are plain HTTP on the LAN. VLC's interface is HTTP-only; the helper follows
-suit. The pairing token and typed input are visible to a device able to observe LAN traffic.
+Both HTTP APIs are plain HTTP on the LAN. VLC's interface is HTTP-only; BingeMote PC follows
+suit. Pairing tokens and typed input are visible to a device able to observe LAN traffic.
 Use only on a trusted private network, and never forward these ports to the internet.
 
 ## The Android app
@@ -18,8 +18,8 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
 
 - `Vlc.kt` - VLC's built-in HTTP interface client. Polls `status.json` once a second while
   open; commands are the standard `command=...&val=...` requests. Volume uses VLC's raw
-  scale (256 = 100%). The volume buttons control Windows system volume and mute through the helper; VLC volume is the fallback when the helper is unreachable, capped at 100%.
-- `HelperClient.kt` - the helper's HTTP API plus UDP broadcast discovery
+  scale (256 = 100%). The volume buttons control Windows system volume and mute through BingeMote PC; VLC volume is the fallback when it is unreachable, capped at 100%.
+- `HelperClient.kt` - the BingeMote PC HTTP API plus UDP broadcast discovery
   (`BINGEMOTE_DISCOVER_V1` / `BINGEMOTE_HERE_V1`).
 - `RemoteState.kt` - holds the latest VLC status, fan-out of commands, mute bookkeeping
   (tap-to-mute restores the previous volume on unmute), and reconnect + rediscovery.
@@ -41,27 +41,34 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
 - `browse.json?dir=` lists any folder VLC can read; playing a file is
   `command=in_play&input=<uri>`.
 
-## The Windows helper
+## BingeMote PC (Windows)
 
-.NET 8, Windows Forms, single self-contained exe.
+.NET 8, Windows Forms, single self-contained exe ("BingeMote PC.exe"; the code still calls
+itself BingeMoteHelper internally).
 
 - HTTP on 8488: `/ping`, `/pair`, `/mouse/move`, `/mouse/button`, `/mouse/scroll`,
   `/mouse/zoom`, `/key`, `/type`. Every request except `/pair` needs
   `X-BingeMote-Token`. Only private addresses (loopback, RFC1918, link-local) are served.
-- Pairing: the helper shows a 6-digit code. `/pair` trades it (single use, 10-minute
-  expiry, 5 strikes locks until restart) for a random 256-bit token, stored in
-  `%LOCALAPPDATA%\BingeMoteHelper\config.json` (per-user directory).
-- Input playback is `SendInput`: relative mouse moves, button down/up, wheel for scroll,
-  Ctrl+wheel for zoom, unicode key events for typed text.
+- Pairing: BingeMote PC shows a 6-digit code. `/pair` trades it (single use, 10-minute
+  expiry, 5 strikes locks until restart) for a random 256-bit token. Each phone gets its
+  own token, so several phones can stay paired at once (capped at 8); the tokens live in
+  `%LOCALAPPDATA%\BingeMoteHelper\config.json` (per-user directory), and a 1.x
+  single-token config migrates on first launch.
+- Input playback is `SendInput`, serialized behind one lock so two phones tapping at the
+  same instant cannot interleave a gesture: relative mouse moves, button down/up, wheel
+  for scroll, Ctrl+wheel for zoom, unicode key events for typed text.
 - First run elevates once (UAC) to add the firewall rule (Private profile only, TCP 8488
   and UDP 8489) and the HTTP listen permission, verifies both with `netsh`, and writes a
-  marker file so it never asks again. Saying no leaves the helper running but unreachable
-  until it offers again on next launch.
-- Autostart is an `HKCU\...\Run` entry; the helper lives in the tray.
+  marker file so it never asks again. Saying no leaves it running but unreachable
+  until it offers again on next launch. The 1.x rule ("BingeMote Helper") is removed.
+- Autostart is an `HKCU\...\Run` entry ("BingeMotePC"; the 1.x "BingeMoteHelper" entry is
+  removed); it lives in the tray.
 
 ## CI
 
 `.github/workflows/build.yml` runs the unit tests, builds the signed release APK from the
-`KEYSTORE_B64` / `KEYSTORE_PASSWORD` repository secrets, and publishes the Windows helper.
-A GitHub release is created only for a new version number at 1.0.0 or above; 0.x builds
-are artifacts only. The APK and the helper exe ship on the same release.
+`KEYSTORE_B64` / `KEYSTORE_PASSWORD` repository secrets, and publishes BingeMote PC.
+Android and PC release separately: `android-vX.Y.Z` (latest) ships
+`BingeMote-Android-X.Y.Z.apk`, `pc-vX.Y.Z` (never latest) ships `BingeMote-PC-X.Y.Z.exe`
+and `BingeMote-PC-Setup-X.Y.Z.exe`. Publishing is a manual workflow dispatch with
+`publish=true` and a target, after review signs off on the exact commit.

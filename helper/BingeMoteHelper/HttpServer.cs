@@ -118,7 +118,7 @@ internal sealed class HttpServer : IDisposable
         if (Program.PairFailures >= Program.MaxPairFailures)
         {
             Program.Log("Pairing locked - too many wrong codes.");
-            Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Restart the helper on the PC to try again.\"}");
+            Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Restart BingeMote PC on the computer to try again.\"}");
             return;
         }
         var body = ReadBody(req);
@@ -136,7 +136,7 @@ internal sealed class HttpServer : IDisposable
         if (Program.Tokens.Count >= Program.MaxPhones)
         {
             Program.Log("Pairing refused - already " + Program.MaxPhones + " phones paired.");
-            Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Reset pairing on the PC to start over.\"}");
+            Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Reset pairing in BingeMote PC to start over.\"}");
             return;
         }
         var token = Program.NewToken();

@@ -250,7 +250,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
 
         if (!helperOk) {
             Text(
-                "Lost the helper on the PC. Is BingeMoteHelper running?",
+                "Lost BingeMote PC on the computer. Is it running?",
                 color = ErrorRed, fontSize = 13.sp,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp),
             )

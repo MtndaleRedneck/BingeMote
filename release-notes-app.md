@@ -1,3 +1,9 @@
+## v1.2.0
+
+- Movies now play even when VLC is closed: BingeMote PC finds the movie and starts it for you (needs BingeMote PC 1.2.0)
+- Two phones can control the same PC - each phone pairs once with its own code from the BingeMote PC window
+- The PC program has a new name, BingeMote PC, so setup and messages say what to look for
+
 ## v1.1.0
 
 - The Movies tab is locked to your folder, rows respond to touch, and the d-pad scrolls the list; the folder picker in Settings browses the PC's folders with a Set button

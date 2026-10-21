@@ -2,7 +2,7 @@
 # Exercises: the elevated firewall/URL-ACL setup, the pairing flow, token auth,
 # every input endpoint, the volume endpoints, and UDP discovery.
 $ErrorActionPreference = 'Stop'
-$exe = "helper/out/BingeMoteHelper.exe"
+$exe = "helper/out/BingeMote PC.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
 # --- Part 1: the one-time elevated setup, run as-is (CI runners are already admin) ---
@@ -11,7 +11,7 @@ Write-Host "== install-firewall =="
 $fw = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
 $fwExit = $fw.ExitCode
 Write-Host "install-firewall exit code: $fwExit"
-netsh advfirewall firewall show rule name="BingeMote Helper"
+netsh advfirewall firewall show rule name="BingeMote PC"
 $aclOut = netsh http show urlacl
 $aclOut | Select-String '8488'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
@@ -185,7 +185,7 @@ try {
     $dir2 = Join-Path $env:TEMP "bingemote-e2e-takeover"
     New-Item -ItemType Directory -Force $dir2 | Out-Null
     Copy-Item $exe $dir2 -Force
-    $exe2 = Join-Path $dir2 "BingeMoteHelper.exe"
+    $exe2 = Join-Path $dir2 "BingeMote PC.exe"
     $p2 = Start-Process $exe2 -PassThru
     $oldExited = $p.WaitForExit(25000)
     Assert $oldExited "running copy quits when a copy from another folder launches"
@@ -204,5 +204,5 @@ try {
     Write-Host "HELPER E2E PASSED"
 } finally {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-    netsh advfirewall firewall delete rule name="BingeMote Helper" | Out-Null
+    netsh advfirewall firewall delete rule name="BingeMote PC" | Out-Null
 }

@@ -12,17 +12,17 @@ namespace BingeMoteHelper;
 internal static class UpdateCheck
 {
     private const string Api = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases?per_page=30";
-    /// <summary>App and helper release separately; this checker only ever looks at helper-v* tags.</summary>
-    private const string TagPrefix = "helper-v";
+    /// <summary>Android and PC release separately; this checker only ever looks at pc-v* tags.</summary>
+    private const string TagPrefix = "pc-v";
     public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases";
 
-    /// <summary>The published version if it is newer than [current] and ships a helper exe, else null. Never throws.</summary>
+    /// <summary>The published version if it is newer than [current] and ships the PC exe, else null. Never throws.</summary>
     public static (string Version, string Url)? LatestNewerThan(string current)
     {
         try
         {
             using var http = new HttpClient();
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("BingeMoteHelper");
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("BingeMotePC");
             http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
             http.Timeout = TimeSpan.FromSeconds(8);
             var json = http.GetStringAsync(Api).GetAwaiter().GetResult();
@@ -47,13 +47,13 @@ internal static class UpdateCheck
                     if (a != b) { newer = a > b; break; }
                 }
                 if (!newer) continue;
-                // Only nag when the release actually carries a helper exe.
+                // Only nag when the release actually carries the PC download.
                 if (root.TryGetProperty("assets", out var assets))
                 {
                     foreach (var a in assets.EnumerateArray())
                     {
                         var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                        if (name.StartsWith("BingeMoteHelper") && name.EndsWith(".exe"))
+                        if (name.StartsWith("BingeMote-PC") && name.EndsWith(".exe"))
                             return (version, ReleasePage);
                     }
                 }

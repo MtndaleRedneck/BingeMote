@@ -52,7 +52,7 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
 
         SettingsSection("Your PC") {
             SettingsRow("PC", store.pcName.ifBlank { store.host })
-            SettingsRow("Helper", "${store.host}:${store.helperPort}")
+            SettingsRow("BingeMote PC", "${store.host}:${store.helperPort}")
             SettingsRow("VLC", "${store.host}:${store.vlcPort}")
             Spacer(Modifier.height(6.dp))
             TextButton(onClick = onRepair) { Text("Pair with a different PC", color = Orange) }

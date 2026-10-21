@@ -43,12 +43,12 @@ object HelperClient {
             when (c.responseCode) {
                 in 200..299 -> return
                 401, 403 -> throw BadToken("The PC rejected the pairing token.")
-                404 -> throw Unreachable("The helper is too old for this app.")
-                else -> throw Unreachable("The helper answered with error ${c.responseCode}.")
+                404 -> throw Unreachable("BingeMote PC is too old for this app.")
+                else -> throw Unreachable("BingeMote PC answered with error ${c.responseCode}.")
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
         finally { c.disconnect() }
     }
 
@@ -67,12 +67,12 @@ object HelperClient {
             when (c.responseCode) {
                 in 200..299 -> return JSONObject(c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
                 401, 403 -> throw BadToken("The PC rejected the pairing token.")
-                404 -> throw Unreachable("The helper is too old for this app.")
-                else -> throw Unreachable("The helper answered with error ${c.responseCode}.")
+                404 -> throw Unreachable("BingeMote PC is too old for this app.")
+                else -> throw Unreachable("BingeMote PC answered with error ${c.responseCode}.")
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
         finally { c.disconnect() }
     }
 
@@ -125,12 +125,12 @@ object HelperClient {
                     return o.getString("token") to o.optString("name", "PC")
                 }
                 401, 403 -> throw BadPairCode("Wrong code. Check the code on the PC and try again.")
-                429 -> throw BadPairCode("Too many tries. Restart the helper on the PC to pair again.")
+                429 -> throw BadPairCode("Too many tries. Restart BingeMote PC on the computer to pair again.")
                 else -> throw Unreachable("Pairing failed (error ${c.responseCode}).")
             }
         } catch (e: BadPairCode) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
         finally { c.disconnect() }
     }
 
@@ -194,7 +194,7 @@ object HelperClient {
             val o = JSONObject(text)
             return o.getInt("volume") to o.getBoolean("mute")
         } catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach the helper.") }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
         finally { c.disconnect() }
     }
 
