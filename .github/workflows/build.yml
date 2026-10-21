@@ -148,5 +148,6 @@ jobs:
             gh release create "app-v$V" "artifacts/BingeMote-v$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote app v$V" --notes-file release-notes-app.md
           else
             V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
-            gh release create "helper-v$V" "artifacts/BingeMoteHelper-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote Helper v$V" --notes-file release-notes-helper.md
+            # Helper releases never take "latest" - the installed app's updater reads it.
+            gh release create "helper-v$V" "artifacts/BingeMoteHelper-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote Helper v$V" --notes-file release-notes-helper.md --latest=false
           fi
