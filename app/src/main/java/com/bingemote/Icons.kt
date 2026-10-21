@@ -2,6 +2,8 @@ package com.bingemote
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -218,20 +220,26 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
         }) {
             val w = this.size.width
             val inset = w * 0.10f
+            // Geometry measured from Ezzy's approved target (430-canvas spec, mapped
+            // onto center 0.5w / radius 0.4w): ring stroke 28/118 of radius, butt end
+            // at the head so no round cap pokes out, fat round dot on the tail,
+            // arrowhead rotated ~8 deg inward from the tangent so it reads centered.
             drawArc(
-                ringColor, startAngle = 120f, sweepAngle = 270f, useCenter = false,
+                ringColor, startAngle = 130f, sweepAngle = 262f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
-                style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
+                style = Stroke(width = w * 0.095f, cap = StrokeCap.Butt),
             )
-            // Arrowhead copied pixel-measured from Ezzy's final target image
-            // (vertices at 0.2744/0.1504, 0.4554/0.3036, 0.2256/0.4046 of width).
-            // The ring ends at 30 deg so its round cap stays hidden behind the head,
-            // matching the target - no stray cap pokes out.
             val cx = w / 2
+            val r = w * 0.4f
+            val tail = 130f * (Math.PI / 180f)
+            drawCircle(
+                ringColor, radius = w * 0.059f,
+                center = Offset(cx + r * cos(tail).toFloat(), cx + r * sin(tail).toFloat()),
+            )
             val head = Path().apply {
-                moveTo(cx + w * 0.2744f, cx + w * 0.1504f)
-                lineTo(cx + w * 0.4554f, cx + w * 0.3036f)
-                lineTo(cx + w * 0.2256f, cx + w * 0.4046f)
+                moveTo(cx + w * 0.2207f, cx + w * 0.4043f)
+                lineTo(cx + w * 0.2782f, cx + w * 0.1494f)
+                lineTo(cx + w * 0.4607f, cx + w * 0.3016f)
                 close()
             }
             drawPath(head, ringColor)
