@@ -32,6 +32,15 @@ class RemoteState(
     /** The helper just started VLC: hide the error card while it comes up. */
     var expectingVlc by mutableStateOf(false)
         private set
+
+    /** The helper just started VLC: hide the error card for up to 20s while it comes up. */
+    fun expectVlcStarting() {
+        expectingVlc = true
+        scope.launch {
+            kotlinx.coroutines.delay(20_000)
+            expectingVlc = false
+        }
+    }
     var connecting by mutableStateOf(false)
         private set
 

@@ -62,7 +62,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         selected = if (up.isNotEmpty()) 1.coerceAtMost(items.size - 1) else 0
         path = dir
         loading = false
-        listState.scrollToItem(0)
+        scope.launch { listState.scrollToItem(0) }
     }
 
     fun loadHelper(rel: String) {
@@ -127,12 +127,8 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                         remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true,
                     )
                     if (failed == null) {
-                        remote.expectingVlc = true
+                        remote.expectVlcStarting()
                         remote.retry()
-                        scope.launch {
-                            kotlinx.coroutines.delay(20000)
-                            remote.expectingVlc = false
-                        }
                         withContext(Dispatchers.Main) { onBack() }
                     } else {
                         withContext(Dispatchers.Main) { error = failed }
