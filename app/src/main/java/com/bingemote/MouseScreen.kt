@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -43,6 +45,8 @@ import kotlin.math.sqrt
 fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var keyboardOpen by remember { mutableStateOf(false) }
+    var speedOpen by remember { mutableStateOf(false) }
+    var speed by remember { mutableStateOf(remote.store.mouseSpeed) }
     var helperOk by remember { mutableStateOf(true) }
     val view = LocalView.current
 
@@ -189,20 +193,23 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                 },
             contentAlignment = Alignment.Center,
         ) {
+            // The gesture cheat sheet, faint on the pad itself. The pad's end padding keeps
+            // these lines clear of the scroll strip.
             Text(
-                "Slide a finger here\nto move the cursor",
-                color = Dimmed, fontSize = 16.sp, lineHeight = 24.sp,
+                "Tap for left click\nTwo-finger tap for right click\nTwo-finger drag to scroll\nPinch to zoom\nLong-press + move to drag\nTap to release drag",
+                color = Dimmed, fontSize = 15.sp, lineHeight = 30.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
 
-        // Scroll strip on the right edge
+        // Scroll strip on the right edge: it fills the pad between the top buttons and the
+        // click buttons, with the same breathing space at both ends, on any screen size.
         Box(
             Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 10.dp)
+                .padding(top = 84.dp, bottom = 116.dp, end = 10.dp)
                 .width(26.dp)
-                .fillMaxHeight(0.55f)
+                .fillMaxHeight()
                 .clip(RoundedCornerShape(13.dp))
                 .background(Card)
                 .pointerInput(host, port, token) {
@@ -234,12 +241,21 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
             )
         }
 
-        // Top-left back chip, top-right keyboard button
+        // Top-left back chip, top-right gear (pointer speed) + keyboard buttons
         Row(Modifier.fillMaxWidth().padding(16.dp)) {
             HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.weight(1f))
             PressTile(
-                onTap = { keyboardOpen = true },
+                onTap = { speedOpen = !speedOpen },
+                background = OrangeGradient,
+                modifier = Modifier.size(52.dp),
+                corner = 26.dp,
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = "Pointer speed", tint = androidx.compose.ui.graphics.Color(0xFF1B1B1E), modifier = Modifier.size(26.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            PressTile(
+                onTap = { keyboardOpen = true; speedOpen = false },
                 background = OrangeGradient,
                 modifier = Modifier.size(52.dp),
                 corner = 26.dp,
@@ -248,29 +264,55 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
             }
         }
 
+        // The gear's pointer-speed panel: - / value / +, effective at once. Tap outside closes.
+        if (speedOpen) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown()
+                            if (waitForUpOrCancellation() != null) speedOpen = false
+                        }
+                    },
+            )
+            Column(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 84.dp, end = 16.dp)
+                    .shadow(10.dp, RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Card)
+                    // taps inside the panel don't close it
+                    .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); waitForUpOrCancellation() } }
+                    .padding(14.dp),
+            ) {
+                Text("Pointer speed", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SpeedStep("\u2212") { speed = (kotlin.math.round((speed - 0.1f) * 10) / 10).coerceAtLeast(0.5f); remote.store.mouseSpeed = speed }
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        "%.1fx".format(speed),
+                        color = TextC, fontSize = 19.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(64.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    SpeedStep("+") { speed = (kotlin.math.round((speed + 0.1f) * 10) / 10).coerceAtMost(3.0f); remote.store.mouseSpeed = speed }
+                }
+            }
+        }
+
         if (!helperOk) {
             Text(
-                "Lost BingeMote PC on the computer. Is it running?",
+                "Lost BingeMote on the computer. Is it running?",
                 color = ErrorRed, fontSize = 13.sp,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp),
             )
         }
 
-        // Bottom: gesture hints + click buttons
+        // Bottom: click buttons (the gestures live on the pad itself now)
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Card)
-                    .padding(12.dp),
-            ) {
-                Text(
-                    "Tap left click  ·  2-finger tap right click  ·  2-finger drag scroll  ·  Pinch zoom  ·  Long-press + move drag  ·  Tap release drag",
-                    color = Muted, fontSize = 12.sp, lineHeight = 18.sp,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth()) {
                 MouseButton("Left click", "left", remote.store.haptics, Modifier.weight(1f).height(84.dp)) { b, d -> fire { HelperClient.button(host, port, token, b, d) } }
                 Spacer(Modifier.width(12.dp))
@@ -279,12 +321,34 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
         }
     }
 
+    BackHandler { onBack() }
+
     if (keyboardOpen) {
         KeyboardSheet(
             onClose = { keyboardOpen = false },
             onType = { text -> fire { HelperClient.typeText(host, port, token, text) } },
             onKey = { key -> fire { HelperClient.key(host, port, token, key) } },
         )
+    }
+}
+
+/** One - / + step of the pointer-speed stepper. */
+@Composable
+private fun SpeedStep(glyph: String, onTap: () -> Unit) {
+    Box(
+        Modifier
+            .size(52.dp, 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(HeaderBtn)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    if (waitForUpOrCancellation() != null) onTap()
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, color = Orange, fontSize = 24.sp, fontWeight = FontWeight.Bold)
     }
 }
 

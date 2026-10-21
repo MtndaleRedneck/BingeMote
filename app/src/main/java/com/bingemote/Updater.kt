@@ -87,12 +87,21 @@ object Updater {
         u.protocol == "https" && (u.host == "github.com" || u.host == "githubusercontent.com" || u.host.endsWith(".githubusercontent.com"))
     } catch (e: Exception) { false }
 
-    /** The newest app-v* release that beats [current]. The list comes newest-first; helper-v* tags are ignored. Null on any failure, offline, rate limit or odd response. Call off the main thread. */
-    fun check(current: String): UpdateInfo? = try {
+    /** The newest android-v* release that beats [current]. The list comes newest-first; pc-v* tags are ignored. Null on any failure, offline, rate limit or odd response. Call off the main thread. */
+    fun check(current: String): UpdateInfo? = (checkDetailed(current) as? CheckOutcome.Newer)?.info
+
+    /** The manual "Check for updates" button gets to know which way a null went. */
+    sealed interface CheckOutcome {
+        data class Newer(val info: UpdateInfo) : CheckOutcome
+        object UpToDate : CheckOutcome
+        object Unavailable : CheckOutcome
+    }
+
+    fun checkDetailed(current: String): CheckOutcome = try {
         val c = URL(API).openConnection() as HttpURLConnection
         c.connectTimeout = 6000; c.readTimeout = 8000; c.instanceFollowRedirects = false
         c.setRequestProperty("Accept", "application/vnd.github+json"); c.setRequestProperty("User-Agent", "BingeMote")
-        if (c.responseCode != 200) null else {
+        if (c.responseCode != 200) CheckOutcome.Unavailable else {
             val body = c.inputStream.use { it.readBytes(1024 * 1024) }
             val arr = org.json.JSONArray(String(body, Charsets.UTF_8))
             var found: UpdateInfo? = null
@@ -100,9 +109,9 @@ object Updater {
                 found = parseRelease(arr.getJSONObject(i).toString(), current)
                 if (found != null) break
             }
-            found
+            if (found != null) CheckOutcome.Newer(found) else CheckOutcome.UpToDate
         }
-    } catch (e: Exception) { null }
+    } catch (e: Exception) { CheckOutcome.Unavailable }
 
     private fun java.io.InputStream.readBytes(max: Int): ByteArray {
         val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(8192); var n = read(buf); var t = 0

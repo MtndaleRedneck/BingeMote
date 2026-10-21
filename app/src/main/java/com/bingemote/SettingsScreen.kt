@@ -1,6 +1,11 @@
 package com.bingemote
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -8,8 +13,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -25,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit) {
+fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit, onFeedback: () -> Unit) {
     val store = remote.store
     var mainSkip by remember { mutableStateOf(store.skipMainSec) }
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
@@ -49,6 +52,7 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
             Text("Settings", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(18.dp))
+        BackHandler { onBack() }
 
         SettingsSection("Your PC") {
             SettingsRow("PC", store.pcName.ifBlank { store.host })
@@ -105,31 +109,73 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Feel") {
-            var speed by remember { mutableStateOf(store.mouseSpeed) }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Pointer speed", color = TextC, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                Text("%.1fx".format(speed), color = Muted, fontSize = 14.sp)
-            }
-            Slider(
-                value = speed,
-                onValueChange = { speed = it; store.mouseSpeed = it },
-                valueRange = 0.5f..3.0f,
-                colors = SliderDefaults.colors(thumbColor = Orange, activeTrackColor = Orange, inactiveTrackColor = TrackGray),
-            )
-            Text("Lower is slower. If the pointer feels jumpy, bring this down.", color = Muted, fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
             ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
             ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
         }
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Updates") {
-            Text(
-                "BingeMote checks for a new version each time it opens and offers it to you. Nothing installs on its own.",
-                color = Muted, fontSize = 13.sp, lineHeight = 18.sp,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text("This is version ${BuildConfig.VERSION_NAME}.", color = Dimmed, fontSize = 12.sp)
+            var checking by remember { mutableStateOf(false) }
+            var result by remember { mutableStateOf("") }
+            val scope = rememberCoroutineScope()
+            PressTile(
+                onTap = {
+                    if (checking) return@PressTile
+                    checking = true
+                    result = ""
+                    scope.launch {
+                        val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            Updater.checkDetailed(BuildConfig.VERSION_NAME)
+                        }
+                        checking = false
+                        when (outcome) {
+                            is Updater.CheckOutcome.Newer -> {
+                                result = "Version " + outcome.info.versionName + " is available."
+                                ManualUpdate.offer = outcome.info
+                            }
+                            Updater.CheckOutcome.UpToDate -> result = "You're up to date. Nothing installs on its own."
+                            Updater.CheckOutcome.Unavailable -> result = "Couldn't check right now. Try again later."
+                        }
+                    }
+                },
+                background = OrangeGradient,
+                modifier = Modifier.fillMaxWidth().height(46.dp),
+                corner = 14.dp,
+            ) {
+                Text(
+                    if (checking) "Checking..." else "Check for updates",
+                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                )
+            }
+            if (result.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(result, color = Muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Version ${BuildConfig.VERSION_NAME}", color = Dimmed, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsSection("Feedback") {
+            Row(
+                Modifier.fillMaxWidth().pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        if (waitForUpOrCancellation() != null) onFeedback()
+                    }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "General feedback, bugs, and\nfeature suggestions",
+                    color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp, modifier = Modifier.weight(1f),
+                )
+                Text("\u203A", color = Muted, fontSize = 20.sp)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("You see exactly what is sent before you send it.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(28.dp))
     }
@@ -147,8 +193,10 @@ fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) 
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardGradient).padding(16.dp),
     ) {
-        Text(title, color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
+        if (title.isNotEmpty()) {
+            Text(title, color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+        }
         content()
     }
 }

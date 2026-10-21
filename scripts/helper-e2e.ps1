@@ -78,6 +78,10 @@ try {
     $token = $paired.token
     Assert ($token.Length -eq 64) "token is 64 hex chars"
     Write-Host "paired with machine: $($paired.name)"
+    # Paired phones get stored with a name; a code made outside the window pairs as "Phone N".
+    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper/config.json'
+    $cfgText = Get-Content $cfg -Raw
+    Assert ($cfgText -match '"name":"Phone 1"') "first paired phone gets a default name: $cfgText"
 
     $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
     Assert ($r.code -eq 403) "pairing code is single-use"

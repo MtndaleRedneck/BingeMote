@@ -58,7 +58,9 @@ class MainActivity : ComponentActivity() {
                         remote,
                         onBack = { current.value = "main" },
                         onRepair = { current.value = "setup" },
+                        onFeedback = { current.value = "feedback" },
                     )
+                    "feedback" -> FeedbackScreen { current.value = "settings" }
                     else -> MainScreen(
                         remote,
                         onMouse = { current.value = "mouse" },
@@ -98,6 +100,11 @@ class MainActivity : ComponentActivity() {
             else -> super.onKeyDown(keyCode, event)
         }
     }
+}
+
+/** One-slot hand-off from the Settings update button to the offer dialog. */
+object ManualUpdate {
+    var offer by mutableStateOf<UpdateInfo?>(null)
 }
 
 private sealed interface UpdateUi {
@@ -175,6 +182,15 @@ fun UpdateHost(store: Store) {
         val info = withContext(Dispatchers.IO) { Updater.check(current) } ?: return@LaunchedEffect
         if (info.versionName == store.skippedUpdate) return@LaunchedEffect
         updateUi = UpdateUi.Offer(info)
+    }
+
+    // The Settings "Check for updates" button drops its find here; a manual ask always
+    // shows the offer, even for a version he skipped before.
+    LaunchedEffect(ManualUpdate.offer) {
+        ManualUpdate.offer?.let {
+            updateUi = UpdateUi.Offer(it)
+            ManualUpdate.offer = null
+        }
     }
 
     updateUi?.let { u ->

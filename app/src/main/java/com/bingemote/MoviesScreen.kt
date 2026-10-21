@@ -155,7 +155,9 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
     }
 
     // Inside a folder, Back goes up one level first (never above the assigned folder).
-    BackHandler(enabled = root.isNotEmpty() && !atRoot(path)) { upOne() }
+    val insideFolder = root.isNotEmpty() && !atRoot(path)
+    BackHandler(enabled = insideFolder) { upOne() }
+    BackHandler(enabled = !insideFolder) { onBack() }
 
     // Volume keys steer the highlight too (wired from MainActivity).
     MoviesKeyHandler.register { key ->
@@ -238,6 +240,7 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
             PressTile(onTap = { if (selected > 0) selected-- }, modifier = Modifier.size(64.dp, 52.dp)) {
                 Icon(Icons.Default.KeyboardArrowUp, null, tint = Orange)
             }
+            Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PressTile(onTap = { items.getOrNull(0)?.takeIf { it.name == ".." }?.let { load(it.path) } }, modifier = Modifier.size(64.dp, 52.dp)) {
                     Icon(Icons.Default.KeyboardArrowLeft, null, tint = Orange)
@@ -251,15 +254,12 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                     Icon(Icons.Default.KeyboardArrowRight, null, tint = Orange)
                 }
             }
+            Spacer(Modifier.height(10.dp))
             PressTile(onTap = { if (selected < items.size - 1) selected++ }, modifier = Modifier.size(64.dp, 52.dp)) {
                 Icon(Icons.Default.KeyboardArrowDown, null, tint = Orange)
             }
         }
-        Text(
-            "Tap a row, or use the arrows and OK. Volume keys work as arrows too.",
-            color = Muted, fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp),
-        )
+        Spacer(Modifier.height(12.dp))
     }
 }
 
