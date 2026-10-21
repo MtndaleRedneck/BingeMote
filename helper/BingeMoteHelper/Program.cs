@@ -436,6 +436,8 @@ internal sealed class HelperWindow : Form
         // window hidden the helper wakes only for the phone or the daily update check.
         _timer = new System.Windows.Forms.Timer { Interval = 10000 };
         _timer.Tick += (_, _) => TickStatus();
+        // First launch with the window already on screen (unpaired PCs): start ticking now.
+        if (Visible) { TickStatus(); _timer.Start(); }
     }
 
     /// <summary>Refresh the status line and roll an expired pairing code (window-visible work).</summary>
