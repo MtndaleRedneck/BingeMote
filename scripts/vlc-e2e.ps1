@@ -71,6 +71,12 @@ try {
         Start-Sleep -Milliseconds 500
     }
     Assert $playing "state is playing"
+    # Length lands a moment after playback starts.
+    foreach ($i in 1..20) {
+        if ([int]$s.length -gt 0) { break }
+        Start-Sleep -Milliseconds 500
+        $s = (Vlc "$base/status.json").body | ConvertFrom-Json
+    }
     Assert ([int]$s.length -gt 0) "length reported: $($s.length)"
 
     # pause toggle both ways
