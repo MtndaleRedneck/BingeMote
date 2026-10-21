@@ -36,7 +36,6 @@ Name: "{userdesktop}\BingeMote"; Filename: "{app}\BingeMote.exe"; Tasks: desktop
 
 [InstallDelete]
 Type: files; Name: "{app}\BingeMoteHelper.exe"
-Type: files; Name: "{app}\BingeMote PC.exe"
 Type: files; Name: "{userprograms}\BingeMote Helper.lnk"
 Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 
