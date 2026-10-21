@@ -26,6 +26,8 @@ internal static class Program
 
     internal static string? Token;
     internal static string? PairCode;
+    /// <summary>A newer published helper version, found by the background update check.</summary>
+    internal static string? AvailableUpdate;
     internal static DateTime PairCodeExpires = DateTime.MinValue;
     internal static int PairFailures;
     internal const int MaxPairFailures = 5;
@@ -75,6 +77,7 @@ internal static class Program
         using var discovery = new DiscoveryResponder();
         // Public Wi-Fi silently blocks the phone; check on every launch, paired or not.
         Task.Run(() => { try { NetworkCheck.WarnIfPublic(); } catch { /* never stop startup */ } });
+        CheckForUpdate();
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
             MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the helper's port.\n\n" + ex.Message,
@@ -110,6 +113,21 @@ internal static class Program
 
     internal static string MachineLabel() => Environment.MachineName;
 
+    /// <summary>Background update check: on launch, and the window re-runs it daily.</summary>
+    internal static void CheckForUpdate()
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                var current = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+                var newer = UpdateCheck.LatestNewerThan(current);
+                if (newer != null) Program.AvailableUpdate = newer.Value.Version;
+            }
+            catch { /* a failed check is invisible */ }
+        });
+    }
+
     /// <summary>Start with Windows for this user (no admin needed).</summary>
     private static void RegisterAutostart()
     {
@@ -127,6 +145,7 @@ internal static class Program
 internal sealed class HelperWindow : Form
 {
     private bool _allowShow;
+    private bool _updateAnnounced;
     private readonly Label _code;
     private readonly Label _status;
     private readonly NotifyIcon _tray;
@@ -186,11 +205,25 @@ internal sealed class HelperWindow : Form
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => { _allowShow = true; Show(); WindowState = FormWindowState.Normal; Activate(); };
+        _tray.BalloonTipClicked += (_, _) => OpenUpdatePage();
 
-        // Keep the status line and an expired code fresh.
+        // Daily re-check for updates while running.
+        var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
+        daily.Tick += (_, _) => Program.CheckForUpdate();
+        daily.Start();
+
+        // Keep the status line and an expired code fresh, and announce a found update once.
         _timer = new System.Windows.Forms.Timer { Interval = 2000 };
         _timer.Tick += (_, _) =>
         {
+            if (Program.AvailableUpdate != null && !_updateAnnounced)
+            {
+                _updateAnnounced = true;
+                menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
+                _tray.BalloonTipTitle = "BingeMote Helper update";
+                _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
+                _tray.ShowBalloonTip(8000);
+            }
             if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
             {
                 Program.PairCode = Program.NewPairCode();
@@ -209,6 +242,15 @@ internal sealed class HelperWindow : Form
     {
         if (!_allowShow && Program.Token != null) value = false;
         base.SetVisibleCore(value);
+    }
+
+    private static void OpenUpdatePage()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(UpdateCheck.ReleasePage) { UseShellExecute = true });
+        }
+        catch { /* he can open the page from the app's About link too */ }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
