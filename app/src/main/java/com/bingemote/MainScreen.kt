@@ -109,7 +109,7 @@ fun MainScreen(
         if (subtitlesOpen) {
             SubtitleSheet(remote, onClose = { subtitlesOpen = false })
         }
-        if (remote.unreachable) {
+        if (remote.unreachable && !remote.expectingVlc) {
             ErrorCard(vlcClosed = remote.vlcClosed, onRetry = { remote.retry() })
         }
     }

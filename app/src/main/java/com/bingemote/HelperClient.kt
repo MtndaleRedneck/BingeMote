@@ -81,6 +81,26 @@ object HelperClient {
         get(host, port, "/config", token).optString("moviesFolder", "")
     } catch (e: Exception) { null }
 
+    /** One level of the PC's movies folder, listed by the helper (works with VLC closed). */
+    fun listMovies(host: String, port: Int, token: String, relPath: String): List<Pair<String, Boolean>> {
+        val enc = java.net.URLEncoder.encode(relPath, "UTF-8")
+        val json = get(host, port, "/movies/list?path=$enc", token)
+        val out = mutableListOf<Pair<String, Boolean>>()
+        val arr = json.getJSONArray("entries")
+        for (i in 0 until arr.length()) {
+            val e = arr.getJSONObject(i)
+            out.add(e.getString("name") to e.getBoolean("dir"))
+        }
+        return out
+    }
+
+    /** Ask the helper to start VLC with this file (folder-relative path). detail = error text when it fails. */
+    fun playMovie(host: String, port: Int, token: String, relPath: String, httpPort: Int, httpPassword: String, fullscreen: Boolean): String? = try {
+        post(host, port, "/movies/play", JSONObject()
+            .put("path", relPath).put("httpPort", httpPort).put("httpPassword", httpPassword).put("fullscreen", fullscreen), token)
+        null
+    } catch (e: Exception) { e.message ?: "The PC could not start the movie." }
+
     /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
     fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =
         post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)
