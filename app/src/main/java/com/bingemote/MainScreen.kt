@@ -25,6 +25,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
@@ -44,10 +45,12 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar {
-                StatusPill(connected = !remote.unreachable)
-                Spacer(Modifier.width(10.dp))
-                HeaderIconButton(onMouse, remote.store.haptics) { CursorIcon(Orange) }
-                HeaderIconButton(onSettings, remote.store.haptics) {
+                // fill = false: the pill keeps its natural size until space runs
+                // short, then it shortens after the title does. The two buttons
+                // stay fixed, so Settings is always fully on screen.
+                StatusPill(connected = !remote.unreachable, modifier = Modifier.weight(1.13f, fill = false))
+                HeaderIconButton(onMouse, remote.store.haptics, startPad = 6.dp) { CursorIcon(Orange) }
+                HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                     androidx.compose.material3.Icon(
                         Icons.Default.Settings,
                         contentDescription = "Settings", tint = Orange,
@@ -122,24 +125,26 @@ fun MainScreen(
 
 /** The connection state, top right: a quiet dot + word. An indicator only - not tappable. */
 @Composable
-private fun StatusPill(connected: Boolean) {
+private fun StatusPill(connected: Boolean, modifier: Modifier = Modifier) {
     Row(
-        Modifier
+        modifier
             .clip(RoundedCornerShape(20.dp))
             .background(HeaderBtn)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 9.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .size(8.dp)
+                .size(7.dp)
                 .clip(CircleShape)
                 .background(if (connected) Orange else ErrorRed),
         )
-        Spacer(Modifier.width(7.dp))
+        Spacer(Modifier.width(6.dp))
         Text(
             if (connected) "Connected" else "Disconnected",
-            color = TextC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            color = TextC, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }

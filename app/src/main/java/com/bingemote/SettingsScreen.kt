@@ -99,13 +99,11 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
                 corner = 14.dp,
             ) {
                 Text(
-                    "Browse PC folders...",
+                    "Browse PC folders",
                     color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }
-            Spacer(Modifier.height(6.dp))
-            Text("The folder on your PC that the Movies screen opens. Browse to pick it, or type it above.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(14.dp))
 
