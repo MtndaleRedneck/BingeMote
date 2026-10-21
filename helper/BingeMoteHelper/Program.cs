@@ -1147,6 +1147,7 @@ internal sealed class FeedbackDialog : Form
         var msg = Clean(_message.Text, 3000);
         _preview.Text = msg + "\n\nBingeMote PC version: " + Program.VersionText +
             "\nWindows version: " + OsVersion() +
+            "\nDevice: PC" +
             "\n\nNothing else. No PC name, user name, Wi-Fi, phones, or paths.";
         var has = !string.IsNullOrWhiteSpace(msg);
         _issue.Enabled = has;
