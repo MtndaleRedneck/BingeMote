@@ -73,6 +73,22 @@ internal static class Program
             return FirewallSetup.RunElevated(FirewallMarker);
         }
 
+#if WINDOW_SHOT_HOOK
+        // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
+        if (args.Contains("--window-shot"))
+        {
+            Directory.CreateDirectory(DataDir);
+            LoadConfig();
+            lock (PhonesLock) { Phones.Clear(); }
+            ApplicationConfiguration.Initialize();
+            using var shot = new HelperWindow(windowShot: true);
+            var shotPath = Environment.GetEnvironmentVariable("BINGEMOTE_WINDOW_SHOT")
+                ?? Path.Combine(DataDir, "window.png");
+            shot.ShowOffscreenAndCapture(shotPath);
+            return 0;
+        }
+#endif
+
         // One copy at a time. What a second launch does depends on what is already running:
         // the same exe just pops the running copy's window up; a different exe (an update)
         // asks the old copy to quit and takes over; a copy too old to have the events
@@ -404,12 +420,12 @@ internal sealed class HelperWindow : Form
     private NetProfile? _wifiProfile;
     private bool _wifiStripVisible;
     private bool _wifiDialogOpen;
-    private readonly System.Windows.Forms.Timer _wifiTimer;
+    private readonly System.Windows.Forms.Timer? _wifiTimer;
     private readonly Dictionary<Control, int> _baseTops = new();
     private int _baseHeight;
     private bool _downloading;
 
-    public HelperWindow()
+    public HelperWindow(bool windowShot = false)
     {
         Text = "BingeMote";
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -494,6 +510,7 @@ internal sealed class HelperWindow : Form
             Text = "Feedback & bugs",
             Font = new Font("Segoe UI", 10.5f),
             AutoSize = true, Left = 14, Top = 14,
+            UseMnemonic = false,
         };
         _feedbackBtn = MakeButton("Send feedback...", contentW - 130 - 10, 9, 130);
         _feedbackBtn.Height = 30;
@@ -593,6 +610,12 @@ internal sealed class HelperWindow : Form
         {
             try { BeginInvoke(new Action(() => { _wifiProfile = p; SetWifiStripVisible(true); ShowPublicWifiDialog(p); })); } catch { }
         };
+        if (windowShot)
+        {
+            _wifiProfile = new NetProfile { Name = "Home Wi-Fi", Category = "Public" };
+            SetWifiStripVisible(true);
+        }
+        else
         Task.Run(() => { try { NetworkCheck.CheckNow(showWifi); } catch { /* never stop startup */ } });
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += (_, _) =>
         {
@@ -600,9 +623,12 @@ internal sealed class HelperWindow : Form
         };
         // A profile flipped to Private in Windows Settings raises no network event, so the
         // strip re-checks every 30 seconds. The same poll re-asks for a home network.
-        _wifiTimer = new System.Windows.Forms.Timer { Interval = 30000 };
-        _wifiTimer.Tick += (_, _) => ProbeWifi();
-        _wifiTimer.Start();
+        if (!windowShot)
+        {
+            _wifiTimer = new System.Windows.Forms.Timer { Interval = 30000 };
+            _wifiTimer.Tick += (_, _) => ProbeWifi();
+            _wifiTimer.Start();
+        }
 
         // Follow the Windows dark/light mode setting, live.
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
@@ -661,8 +687,14 @@ internal sealed class HelperWindow : Form
         ApplyLayout();
     }
 
+    /// <summary>Which home network already got its one re-ask for this Public flip; cleared
+    /// when the network is Private again.</summary>
+    private string? _homeReasked;
+
     /// <summary>The 30-second profile re-check: sync the strip with reality (a network fixed
-    /// in Windows Settings raises no event), and re-ask when a home network shows Public.</summary>
+    /// in Windows Settings raises no event). The popup itself belongs to launch and real
+    /// network changes; the only popup from the poll is one re-ask per Public flip for a
+    /// network marked home, which "Not now" must not bury.</summary>
     private void ProbeWifi()
     {
         if (_wifiDialogOpen) return;
@@ -674,11 +706,12 @@ internal sealed class HelperWindow : Form
             {
                 _wifiProfile = isPublic ? p : null;
                 SetWifiStripVisible(isPublic);
-                if (isPublic && p != null)
+                if (!isPublic || p == null) { _homeReasked = null; return; }
+                var knownHome = Program.HomeNetworks.Any(n => string.Equals(n, p.Name, StringComparison.OrdinalIgnoreCase));
+                if (knownHome && _homeReasked != p.Name)
                 {
-                    var declined = Program.DeclinedNetworks.Any(n => string.Equals(n, p.Name, StringComparison.OrdinalIgnoreCase));
-                    var knownHome = Program.HomeNetworks.Any(n => string.Equals(n, p.Name, StringComparison.OrdinalIgnoreCase));
-                    if (!declined || knownHome) ShowPublicWifiDialog(p);
+                    _homeReasked = p.Name;
+                    ShowPublicWifiDialog(p);
                 }
             })); } catch { }
         });
@@ -716,6 +749,23 @@ internal sealed class HelperWindow : Form
                 }
             })); } catch { }
         });
+    }
+
+    /// <summary>CI-only: show the window offscreen, let layout settle, and save a PNG of it.
+    /// DrawToBitmap renders in memory, so no visible desktop is needed.</summary>
+    internal void ShowOffscreenAndCapture(string path)
+    {
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(-20000, -20000);
+        ShowInTaskbar = false;
+        Show();
+        Application.DoEvents();
+        System.Threading.Thread.Sleep(400);
+        Application.DoEvents();
+        using var bmp = new Bitmap(Width, Height);
+        DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+        bmp.Save(path, System.Drawing.Imaging.ImagingFormat.Png);
+        Close();
     }
 
     /// <summary>Roll an expired pairing code (window-visible work).</summary>
@@ -991,6 +1041,23 @@ internal sealed class HelperWindow : Form
         });
     }
 
+    /// <summary>Open the verified installer on the UI thread and quit so it can replace the
+    /// running exe. A "no" at the Windows permission prompt cancels the launch quietly.</summary>
+    private void LaunchUpdate(string path)
+    {
+        try
+        {
+            SelfUpdate.LaunchAndQuit(path);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            Program.Log("Update launch canceled at the Windows permission prompt.");
+            _updatesCaption.Text = "Update canceled.";
+            _checkUpdates.Enabled = true;
+            _downloading = false;
+        }
+    }
+
     /// <summary>Download the update's installer, check it against the release's SHA-256, and
     /// open it. Nothing installs on its own: the installer still shows and Windows asks once.</summary>
     private void StartUpdateDownload()
@@ -1010,9 +1077,8 @@ internal sealed class HelperWindow : Form
                 try { BeginInvoke(new Action(() =>
                 {
                     _updatesCaption.Text = "Checked. Opening the installer - Windows will ask for permission.";
+                    LaunchUpdate(path);
                 })); } catch { }
-                await Task.Delay(1500);
-                SelfUpdate.LaunchAndQuit(path);
             }
             catch
             {
@@ -1296,7 +1362,7 @@ internal sealed class FeedbackDialog : Form
         ClientSize = new Size(440, 420);
         Font = new Font("Segoe UI", 9.5f);
 
-        var title = new Label { Text = "Feedback & bugs", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 16 };
+        var title = new Label { Text = "Feedback & bugs", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 16, UseMnemonic = false };
         _message = new TextBox
         {
             Multiline = true, Left = 24, Top = 44, Width = 392, Height = 96,
