@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -207,36 +209,51 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
         Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation; scaleX = if (forward) 1f else -1f }) {
             val w = this.size.width
             val inset = w * 0.12f
-            // The ring ends flat so it can flow straight into the arrowhead's base.
-            drawArc(
-                ringColor, startAngle = 120f, sweepAngle = 285f, useCenter = false,
-                topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
-                style = Stroke(width = w * 0.09f, cap = StrokeCap.Butt),
-            )
             val cx = w / 2; val r = (w - inset * 2) / 2
             val strokeW = w * 0.09f
-            // Round cap at the ring's start only.
-            val startAngle = Math.toRadians(120.0)
-            drawCircle(
-                ringColor, radius = strokeW / 2,
-                center = Offset(cx + r * Math.cos(startAngle).toFloat(), cx + r * Math.sin(startAngle).toFloat()),
-            )
-            // Arrowhead: an isoceles triangle centered on the ring's end, pointing along
-            // the tangent (direction of travel), about 2.5x the stroke wide, staying
-            // inside the icon bounds at every spin angle.
-            val endAngle = Math.toRadians((120.0 + 285.0))
+            // Gap centered on the vertical axis: the ring's start dot and the arrowhead
+            // sit at mirror angles about the bottom (90 deg in Compose's clockwise space).
+            val arcStart = 120f; val arcSweep = 285f
+            val endAngle = Math.toRadians((arcStart + arcSweep).toDouble())
             val ex = cx + r * Math.cos(endAngle).toFloat()
             val ey = cx + r * Math.sin(endAngle).toFloat()
             val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
             val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
-            val tipLen = w * 0.16f; val halfW = strokeW * 1.25f
-            val head = Path().apply {
-                moveTo(ex + tx * tipLen, ey + ty * tipLen)
-                lineTo(ex + nx * halfW, ey + ny * halfW)
-                lineTo(ex - nx * halfW, ey - ny * halfW)
-                close()
+            // Arrowhead in proportion to the ring: 2.5x the stroke wide, pointing along
+            // the tangent (direction of travel). The flat base is centered exactly on
+            // the ring's end and buried a touch into it, so the ring enters the middle
+            // of the base with equal overhang on both sides.
+            val tipLen = w * 0.15f; val halfW = strokeW * 1.25f; val bury = w * 0.03f
+            val bx = ex - tx * bury; val by = ey - ty * bury
+            val tip = Offset(ex + tx * tipLen, ey + ty * tipLen)
+            val baseA = Offset(bx + nx * halfW, by + ny * halfW)
+            val baseB = Offset(bx - nx * halfW, by - ny * halfW)
+            val startAngle = Math.toRadians(arcStart.toDouble())
+            val dot = Offset(cx + r * Math.cos(startAngle).toFloat(), cx + r * Math.sin(startAngle).toFloat())
+            // Center the full shape (ring + dot + head): compute the bounding box and
+            // translate so its center lands on the icon center.
+            val half = strokeW / 2
+            val xs = mutableListOf(cx - r - half, cx + r + half, tip.x, baseA.x, baseB.x, dot.x - half, dot.x + half)
+            val ys = mutableListOf(cx - r - half, cx + r + half, tip.y, baseA.y, baseB.y, dot.y - half, dot.y + half)
+            val offX = cx - (xs.min() + xs.max()) / 2
+            val offY = cx - (ys.min() + ys.max()) / 2
+            withTransform({ translate(offX, offY) }) {
+                // The ring ends flat so it can flow straight into the arrowhead's base.
+                drawArc(
+                    ringColor, startAngle = arcStart, sweepAngle = arcSweep, useCenter = false,
+                    topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
+                    style = Stroke(width = strokeW, cap = StrokeCap.Butt),
+                )
+                // Round cap at the ring's start only.
+                drawCircle(ringColor, radius = half, center = dot)
+                val head = Path().apply {
+                    moveTo(tip.x, tip.y)
+                    lineTo(baseA.x, baseA.y)
+                    lineTo(baseB.x, baseB.y)
+                    close()
+                }
+                drawPath(head, ringColor)
             }
-            drawPath(head, ringColor)
         }
         Text(label, color = tint, fontSize = (size.value * 0.30f).sp, fontWeight = FontWeight.Bold)
     }
