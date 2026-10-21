@@ -218,11 +218,9 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
         }) {
             val w = this.size.width
             val inset = w * 0.10f
-            // Skip/replay arrow, Ezzy's rule: plain butt-ended ring (no tail dot),
-            // arrowhead seated square on the shaft end - base across the shaft,
-            // ring centerline through the middle of the base, tip along the spin
-            // (standard refresh-icon look). Ring stroke 28/118 of the radius, head
-            // base 2.5x stroke across, 2.3x stroke long (measured from his target).
+            // Skip/replay arrow, Ezzy's final pick (Tab's v2 drop-in file): plain
+            // butt-ended ring (no tail dot), stroke 28/118 of the radius, arrowhead
+            // turned 7.8 deg inward from the tangent.
             drawArc(
                 ringColor, startAngle = 130f, sweepAngle = 262f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
@@ -230,9 +228,9 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             )
             val cx = w / 2
             val head = Path().apply {
-                moveTo(cx + w * 0.2234f, cx + w * 0.3973f)
-                lineTo(cx + w * 0.2385f, cx + w * 0.1491f)
-                lineTo(cx + w * 0.4399f, cx + w * 0.2749f)
+                moveTo(cx + w * 0.1997f, cx + w * 0.3797f)
+                lineTo(cx + w * 0.2573f, cx + w * 0.1251f)
+                lineTo(cx + w * 0.4397f, cx + w * 0.2769f)
                 close()
             }
             drawPath(head, ringColor)
