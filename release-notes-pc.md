@@ -1,6 +1,6 @@
 ## v1.2.0
 
-**BingeMote-PC-Setup** installs it with a Start menu entry and an optional desktop shortcut. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
+**BingeMote-PC** (the installer) installs it with a Start menu entry and an optional desktop shortcut. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
 
 - Setup stops springing an admin prompt on first run: the installer asks for Windows permission once, during install, and adds the firewall rule itself. Uninstalling removes the rule too
 - New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer. Install over the top of 1.x; it replaces the old copy and removes the old autostart entry, shortcuts and firewall rule.

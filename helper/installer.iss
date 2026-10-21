@@ -1,6 +1,6 @@
 ; BingeMote for Windows installer (Inno Setup, free). Asks for admin once, during install,
 ; so it can add the firewall rule itself and the app never needs a surprise admin prompt.
-; Builds the BingeMote-PC-Setup-<version>.exe download from the published single-file exe.
+; Builds the BingeMote-PC-<version>.exe installer download from the published single-file exe.
 #ifndef MyAppVersion
   #define MyAppVersion "1.2.0"
 #endif
@@ -12,7 +12,7 @@ AppVerName=BingeMote {#MyAppVersion}
 DefaultDirName={localappdata}\Programs\BingeMote
 DefaultGroupName=BingeMote
 PrivilegesRequired=admin
-OutputBaseFilename=BingeMote-PC-Setup-{#MyAppVersion}
+OutputBaseFilename=BingeMote-PC-{#MyAppVersion}
 SetupIconFile=Assets\bingemote.ico
 UninstallDisplayIcon={app}\BingeMote.exe
 CloseApplications=yes
