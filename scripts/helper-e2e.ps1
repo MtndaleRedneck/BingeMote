@@ -39,6 +39,12 @@ try {
         return @{ code = [int]$r.StatusCode; body = $r.Content }
     }
     function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+    function Invoke-HelperGet($path, $token) {
+        $headers = @{}
+        if ($token) { $headers['X-BingeMote-Token'] = $token }
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+        return @{ code = [int]$r.StatusCode; body = $r.Content }
+    }
 
     $r = Invoke-Helper '/ping' '{}' $null
     Assert ($r.code -eq 401) "ping without token is 401"
@@ -167,6 +173,41 @@ try {
     Assert ($r.code -eq 200) "old single-token config keeps the phone paired"
     $r = Invoke-Helper '/ping' '{}' $token2
     Assert ($r.code -eq 401) "old config no longer carries the second phone (fresh format rewrites on next save)"
+
+    # Movies: the folder is jailed, listed, and a real launch starts VLC.
+    Write-Host "== movies =="
+    choco install vlc --no-progress -y | Out-Null
+    $movies = Join-Path $env:TEMP 'bingemote-e2e-movies'
+    New-Item -ItemType Directory -Force $movies | Out-Null
+    New-Item -ItemType Directory -Force (Join-Path $movies 'Sub') | Out-Null
+    Set-Content (Join-Path $movies 'clip.mkv') 'fake'
+    Set-Content (Join-Path $movies 'Sub/inner.mkv') 'fake'
+    Set-Content (Join-Path $movies 'notes.txt') 'not a video'
+    $folderJson = '{"moviesFolder":"' + ($movies -replace '\\','/') + '"}'
+    $r = Invoke-Helper '/config' $folderJson $token
+    Assert ($r.code -eq 200) "movies folder set from the phone"
+    $r = Invoke-HelperGet '/movies/list?path=' $token
+    Assert ($r.code -eq 200) "list the movies folder root"
+    $list = $r.body | ConvertFrom-Json
+    Assert ($list.atRoot -eq $true) "root reports atRoot"
+    Assert ($list.entries[0].name -eq 'Sub' -and $list.entries[0].dir -eq $true) "folders list first"
+    Assert (($list.entries | Where-Object { $_.name -eq 'clip.mkv' }).Count -eq 1) "video file listed"
+    Assert (($list.entries | Where-Object { $_.name -eq 'notes.txt' }).Count -eq 0) "non-video files hidden"
+    $r = Invoke-HelperGet '/movies/list?path=Sub' $token
+    Assert (($r.body | ConvertFrom-Json).entries[0].name -eq 'inner.mkv') "subfolder lists"
+    $r = Invoke-HelperGet '/movies/list?path=..' $token
+    Assert ($r.code -eq 404) "list outside the folder is refused (got $($r.code))"
+    $r = Invoke-Helper '/movies/play' '{"path":"../Windows/win.ini"}' $token
+    Assert ($r.code -eq 400) "play outside the folder is refused (got $($r.code))"
+    $r = Invoke-Helper '/movies/play' '{"path":"clip.mkv"}' $token
+    Assert ($r.code -eq 200) "play starts VLC: $($r.body)"
+    $vlcUp = $false
+    foreach ($i in 1..20) {
+        if (Get-Process vlc -ErrorAction SilentlyContinue) { $vlcUp = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert $vlcUp "VLC is running after play"
+    Get-Process vlc -ErrorAction SilentlyContinue | Stop-Process -Force
 
     # UDP discovery answers the app's broadcast.
     Write-Host "== UDP discovery =="
