@@ -25,6 +25,7 @@ internal static class Program
     private static readonly string FirewallMarker = Path.Combine(DataDir, "firewall.ok");
 
     private const string ShowEventName = @"Local\BingeMoteHelper.ShowWindow";
+    private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
 
     internal static string? Token;
     internal static string? PairCode;
@@ -43,14 +44,45 @@ internal static class Program
             return FirewallSetup.RunElevated(FirewallMarker);
         }
 
-        // One copy at a time. A second launch asks the running copy to show its window
-        // (it is often just hidden in the tray), then exits.
+        // One copy at a time. What a second launch does depends on what is already running:
+        // the same exe just pops the running copy's window up; a different exe (an update)
+        // asks the old copy to quit and takes over; a copy too old to have the events
+        // (1.0.0/1.0.1) has to be quit by hand first.
         using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var onlyCopy);
         if (!onlyCopy)
         {
-            try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
-            Log("Launched while already running - asked the running copy to show its window.");
-            return 0;
+            if (RunningCopyIsThisExe())
+            {
+                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+                Log("Launched while already running - asked the running copy to show its window.");
+                return 0;
+            }
+            EventWaitHandle? quitEvent = null;
+            try { quitEvent = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
+            if (quitEvent == null)
+            {
+                Log("An older helper (before 1.0.2) is running - asked him to quit it by hand.");
+                MessageBox.Show(
+                    "An older BingeMote Helper is already running. Right-click its icon by the clock (click the ^ arrow if you don't see it) and choose Quit, then open this one again.",
+                    "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 0;
+            }
+            Log("Update launched while an older copy ran - asked it to quit, taking over.");
+            quitEvent.Set();
+            // The old copy exits and releases the mutex; take it over (give it a few seconds).
+            var tookOver = false;
+            for (var i = 0; i < 40 && !tookOver; i++)
+            {
+                try { tookOver = single.WaitOne(250); } catch (AbandonedMutexException) { tookOver = true; }
+            }
+            if (!tookOver)
+            {
+                Log("The older copy did not exit in time - giving up.");
+                MessageBox.Show(
+                    "The older BingeMote Helper is still closing. Open this one again in a few seconds.",
+                    "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 0;
+            }
         }
 
         Directory.CreateDirectory(DataDir);
@@ -97,16 +129,25 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
         using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        using var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
         var window = new HelperWindow();
         _ = window.Handle; // force handle creation so a second launch can always signal us
         var watcher = new Thread(() =>
         {
+            var events = new WaitHandle[] { showEvent, quitEvent };
             while (true)
             {
                 try
                 {
-                    showEvent.WaitOne();
+                    var which = WaitHandle.WaitAny(events);
                     if (window.IsDisposed) return;
+                    if (which == 1)
+                    {
+                        // A newer copy launched: step aside so it can take over the mutex.
+                        Log("A newer copy launched - quitting so it can take over.");
+                        window.BeginInvoke(new Action(Application.Exit));
+                        return;
+                    }
                     window.BeginInvoke(new Action(window.ShowFromTray));
                 }
                 catch { return; }
@@ -118,6 +159,26 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>True when the copy holding the mutex runs from the same exe file as this launch.</summary>
+    private static bool RunningCopyIsThisExe()
+    {
+        try
+        {
+            var self = Environment.ProcessPath;
+            var me = Environment.ProcessId;
+            foreach (var proc in Process.GetProcessesByName("BingeMoteHelper"))
+            {
+                if (proc.Id == me) continue;
+                string? other = null;
+                try { other = proc.MainModule?.FileName; } catch { }
+                if (other == null || self == null) return false; // cannot tell - treat as a different exe
+                return string.Equals(other, self, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch { }
+        return false;
+    }
+
     internal static string NewPairCode() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 
     internal static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -127,7 +188,14 @@ internal static class Program
     {
         try
         {
-            File.AppendAllText(Path.Combine(DataDir, "helper.log"),
+            var path = Path.Combine(DataDir, "helper.log");
+            var info = new FileInfo(path);
+            if (info.Exists && info.Length > 1_000_000)
+            {
+                var lines = File.ReadAllLines(path);
+                File.WriteAllLines(path, lines.Skip(lines.Length / 2)); // keep the newer half
+            }
+            File.AppendAllText(path,
                 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine);
         }
         catch { /* logging must never break the helper */ }
