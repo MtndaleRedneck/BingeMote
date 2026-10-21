@@ -758,28 +758,46 @@ internal sealed class HelperWindow : Form
 
     internal void ShowOffscreenAndCapture(string path)
     {
+        // Shown at (0,0): offscreen coordinates make DWM skip composing the window,
+        // which is what dropped the placeholder and link text in earlier captures.
         StartPosition = FormStartPosition.Manual;
-        Location = new Point(-20000, -20000);
+        Location = new Point(0, 0);
         ShowInTaskbar = false;
         Show();
+        Activate();
         Application.DoEvents();
-        System.Threading.Thread.Sleep(400);
+        System.Threading.Thread.Sleep(600);
         Application.DoEvents();
-        using var bmp = new Bitmap(Width, Height);
-        using (var g = Graphics.FromImage(bmp))
+        // Capture 1: DWM-composed (PW_RENDERFULLCONTENT) so cue banners and
+        // LinkLabel text that WM_PRINT (DrawToBitmap) drops still show.
+        using (var bmp = new Bitmap(Width, Height))
         {
-            // PW_RENDERFULLCONTENT (2): captures the composed window, so cue
-            // banners and LinkLabel text that WM_PRINT (DrawToBitmap) drops still show.
-            IntPtr hdc = g.GetHdc();
-            bool captured = PrintWindow(Handle, hdc, 2);
-            g.ReleaseHdc(hdc);
-            if (!captured)
+            using (var g = Graphics.FromImage(bmp))
             {
-                g.Clear(BackColor);
-                DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+                IntPtr hdc = g.GetHdc();
+                bool captured = PrintWindow(Handle, hdc, 2);
+                g.ReleaseHdc(hdc);
+                if (!captured)
+                {
+                    g.Clear(BackColor);
+                    DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+                }
             }
+            bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
         }
-        bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+        // Capture 2: what the user would see on the desktop (needs an interactive
+        // session on the runner; skipped silently where there is none).
+        try
+        {
+            var screenPath = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(path) ?? ".",
+                System.IO.Path.GetFileNameWithoutExtension(path) + "-screen.png");
+            using var bmp2 = new Bitmap(Width, Height);
+            using var g2 = Graphics.FromImage(bmp2);
+            g2.CopyFromScreen(Left, Top, 0, 0, new Size(Width, Height));
+            bmp2.Save(screenPath, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        catch { }
         Close();
     }
 

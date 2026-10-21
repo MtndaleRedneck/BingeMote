@@ -116,7 +116,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: BingeMote-PC-window
-          path: helper/window.png
+          path: |
+            helper/window.png
+            helper/window-screen.png
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
