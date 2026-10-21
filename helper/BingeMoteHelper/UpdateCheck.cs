@@ -16,11 +16,18 @@ internal static class UpdateCheck
     private const string TagPrefix = "pc-v";
     public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases";
 
-    /// <summary>The published version if it is newer than [current] and ships the installer, else null. Never throws.</summary>
+    /// <summary>The published version if it is newer than [current] and ships the installer, else null. Never throws.
+    /// The automatic background checks use this one.</summary>
     public static (string Version, string Url)? LatestNewerThan(string current)
     {
-        try
-        {
+        try { return LatestNewerThanOrThrow(current); }
+        catch { return null; }
+    }
+
+    /// <summary>Same as [LatestNewerThan] but lets failures reach the caller, so the manual
+    /// "Check for updates" button can tell a failed check apart from "no newer version".</summary>
+    public static (string Version, string Url)? LatestNewerThanOrThrow(string current)
+    {
             using var http = new HttpClient();
             http.DefaultRequestHeaders.UserAgent.ParseAdd("BingeMotePC");
             http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
@@ -59,8 +66,6 @@ internal static class UpdateCheck
                 }
             }
             return null;
-        }
-        catch { return null; }
     }
 
     /// <summary>"v1.8.0" or "1.8.0.0" as numbers, or null when it is not a plain dotted version.</summary>

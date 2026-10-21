@@ -29,7 +29,7 @@ internal static class Movies
     /// <summary>List one level of the movies folder (folders first, then video files).</summary>
     public static string List(string root, string rel)
     {
-        if (root.Length == 0) return Error(400, "no movies folder", "Pick a movies folder first (in this window or in the app's Settings).");
+        if (root.Length == 0) return Error(400, "no movies folder", "Pick a movies folder first in the phone app's Settings.");
         var dir = Jail(root, rel);
         if (dir == null || !Directory.Exists(dir)) return Error(404, "not found", "That folder does not exist on the PC.");
         var entries = new List<object>();

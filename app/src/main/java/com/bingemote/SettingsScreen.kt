@@ -66,8 +66,6 @@ fun SettingsScreen(
 
         SettingsSection("Your PC") {
             SettingsRow("PC", store.pcName.ifBlank { store.host })
-            SettingsRow("BingeMote PC", "${store.host}:${store.helperPort}")
-            SettingsRow("VLC", "${store.host}:${store.vlcPort}")
             Spacer(Modifier.height(6.dp))
             TextButton(onClick = onRepair) { Text("Pair with a different PC", color = Orange) }
         }
@@ -90,16 +88,17 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
-        SettingsSection("Movies folder") {
-            var path by remember(store.moviesPath) { mutableStateOf(store.moviesPath) }
-            OutlinedTextField(
-                value = path,
-                onValueChange = { path = it; store.moviesPath = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("C:\\Users\\you\\Videos", color = Dimmed) },
-                colors = fieldColors(),
-            )
+        SettingsSection("Assigned Movies folder") {
+            // Read-only: Browse PC folders is the only way to change it, so a typo can't break the Movies tab.
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card2).padding(horizontal = 16.dp, vertical = 15.dp),
+            ) {
+                Text(
+                    store.moviesPath.ifBlank { "Not set yet - use Browse PC folders" },
+                    color = if (store.moviesPath.isBlank()) Dimmed else TextC,
+                    fontSize = 14.sp,
+                )
+            }
             Spacer(Modifier.height(10.dp))
             PressTile(
                 onTap = { pickingMovies = true },
@@ -119,6 +118,28 @@ fun SettingsScreen(
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
             ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsSection("Feedback & bugs") {
+            Row(
+                Modifier.fillMaxWidth().pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        if (waitForUpOrCancellation() != null) onFeedback()
+                    }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "General feedback, bugs, and\nfeature suggestions",
+                    color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp, modifier = Modifier.weight(1f),
+                )
+                Text("\u203A", color = Muted, fontSize = 20.sp)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("You see exactly what is sent before you send it.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -162,28 +183,6 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(8.dp))
             Text("Version ${BuildConfig.VERSION_NAME}", color = Dimmed, fontSize = 12.sp)
-        }
-        Spacer(Modifier.height(14.dp))
-
-        SettingsSection("Feedback") {
-            Row(
-                Modifier.fillMaxWidth().pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        if (waitForUpOrCancellation() != null) onFeedback()
-                    }
-                },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "General feedback, bugs, and\nfeature suggestions",
-                    color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                    lineHeight = 20.sp, modifier = Modifier.weight(1f),
-                )
-                Text("\u203A", color = Muted, fontSize = 20.sp)
-            }
-            Spacer(Modifier.height(6.dp))
-            Text("You see exactly what is sent before you send it.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(28.dp))
     }
