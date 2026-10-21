@@ -66,6 +66,30 @@ internal sealed class HttpServer : IDisposable
                     HandleConfig(req, res);
                     return;
 
+                case "/movies/list":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    {
+                        var rel = req.QueryString["path"] ?? "";
+                        var answer = Movies.List(Program.MoviesFolder ?? "", rel);
+                        Reply(res, answer.Contains("\"not found\"") || answer.Contains("\"no movies folder\"") ? 404 : 200, answer);
+                    }
+                    return;
+
+                case "/movies/play":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    {
+                        using var doc = JsonDocument.Parse(ReadBody(req));
+                        var rr = doc.RootElement;
+                        var answer = Movies.Play(
+                            Program.MoviesFolder ?? "",
+                            rr.GetProperty("path").GetString() ?? "",
+                            rr.TryGetProperty("httpPort", out var hp) ? hp.GetInt32() : 8080,
+                            rr.TryGetProperty("httpPassword", out var pw) ? pw.GetString() ?? "" : "",
+                            rr.TryGetProperty("fullscreen", out var fs) && fs.GetBoolean());
+                        Reply(res, answer.Contains("\"error\"") ? 400 : 200, answer);
+                    }
+                    return;
+
                 default:
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     RouteCommand(path, ReadBody(req), res);

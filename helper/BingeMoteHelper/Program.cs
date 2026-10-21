@@ -426,7 +426,8 @@ internal sealed class HelperWindow : Form
         daily.Start();
 
         // Keep the status line and an expired code fresh, and announce a found update once.
-        _timer = new System.Windows.Forms.Timer { Interval = 2000 };
+        // Ten seconds is plenty for a status line, and a lazy timer is kinder to laptop batteries.
+        _timer = new System.Windows.Forms.Timer { Interval = 10000 };
         _timer.Tick += (_, _) =>
         {
             if (Program.AvailableUpdate != null && !_updateAnnounced)
