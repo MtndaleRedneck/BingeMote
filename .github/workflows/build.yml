@@ -110,7 +110,7 @@ jobs:
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
           $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
-          & helper/shot/BingeMoteHelper.exe --window-shot
+          & helper/shot/BingeMote.exe --window-shot
 
       - name: Upload the window shot
         uses: actions/upload-artifact@v4
