@@ -4,7 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -26,15 +26,17 @@ import kotlinx.coroutines.withContext
  * tap, back out with "Up one folder", and confirm with "Select this folder".
  */
 @Composable
-fun FolderPickerScreen(remote: RemoteState, onPick: (String) -> Unit, onCancel: () -> Unit) {
+fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (String) -> Unit, onCancel: () -> Unit) {
     val scope = rememberCoroutineScope()
     var path by remember { mutableStateOf(remote.store.moviesPath.trim()) }
     var dirs by remember { mutableStateOf<List<BrowseItem>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
-    val listState = rememberLazyListState()
+    // Where each folder was scrolled to before we walked into a child, so going back
+    // up lands you where you were instead of back at the top.
+    val scrollStack = remember { mutableStateListOf<Triple<String, Int, Int>>() }
 
-    fun load(dir: String) {
+    fun load(dir: String, restore: Pair<Int, Int>? = null) {
         loading = true
         error = null
         scope.launch {
@@ -45,7 +47,8 @@ fun FolderPickerScreen(remote: RemoteState, onPick: (String) -> Unit, onCancel: 
                 dirs = raw.filter { it.isDir }
                 path = dir
                 loading = false
-                listState.scrollToItem(0)
+                if (restore != null) listState.scrollToItem(restore.first, restore.second)
+                else listState.scrollToItem(0)
             } catch (e: Exception) {
                 loading = false
                 error = "Couldn't open that folder. Check the PC is on and VLC is running."
@@ -85,7 +88,19 @@ fun FolderPickerScreen(remote: RemoteState, onPick: (String) -> Unit, onCancel: 
                 else -> items(dirs.size, key = { it }) { i ->
                     val item = dirs[i]
                     PressTile(
-                        onTap = { load(item.path) },
+                        onTap = {
+                            if (item.name == "..") {
+                                val top = scrollStack.lastOrNull()
+                                val restore = if (top != null && top.first == item.path) {
+                                    scrollStack.removeAt(scrollStack.size - 1)
+                                    top.second to top.third
+                                } else null
+                                load(item.path, restore)
+                            } else {
+                                scrollStack.add(Triple(path, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset))
+                                load(item.path)
+                            }
+                        },
                         background = CardGradient,
                         modifier = Modifier
                             .fillMaxWidth()

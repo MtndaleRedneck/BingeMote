@@ -48,7 +48,7 @@ fun MainScreen(
                 // fill = false: the pill keeps its natural size until space runs
                 // short, then it shortens after the title does. The two buttons
                 // stay fixed, so Settings is always fully on screen.
-                StatusPill(connected = !remote.unreachable, modifier = Modifier.weight(1.13f, fill = false))
+                StatusPill(connected = !remote.unreachable, modifier = Modifier.widthIn(max = 110.dp))
                 HeaderIconButton(onMouse, remote.store.haptics, startPad = 6.dp) { CursorIcon(Orange) }
                 HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                     androidx.compose.material3.Icon(

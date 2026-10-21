@@ -187,8 +187,8 @@ fun formatTime(totalSeconds: Long): String {
 fun formatSkip(seconds: Int): String =
     if (seconds < 60) "${seconds}s" else "${seconds / 60}m"
 
-val MAIN_SKIP_OPTIONS = listOf(5, 10, 15, 30, 60)
-val SECONDARY_SKIP_OPTIONS = listOf(15, 30, 60, 120, 180, 300)
+val MAIN_SKIP_OPTIONS = listOf(5, 10, 15, 30)
+val SECONDARY_SKIP_OPTIONS = listOf(15, 30, 60, 120, 180)
 
 /** "1.6 GB" / "340 MB". */
 fun formatSize(bytes: Long): String = when {

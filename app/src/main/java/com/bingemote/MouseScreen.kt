@@ -15,7 +15,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -192,13 +191,20 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         }
                     }
                 },
+        )
+
+        // The gesture cheat sheet, faint on the pad itself, centered in the free pad area
+        // between the top buttons and the click buttons. The end padding keeps the lines
+        // clear of the scroll strip.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(top = 96.dp, bottom = 190.dp, end = 40.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // The gesture cheat sheet, faint on the pad itself. The pad's end padding keeps
-            // these lines clear of the scroll strip.
             Text(
                 "Tap for left click\nTwo-finger tap for right click\nTwo-finger drag to scroll\nPinch to zoom\nLong-press + move to drag\nTap to release drag",
-                color = Dimmed, fontSize = 15.sp, lineHeight = 30.sp,
+                color = Dimmed, fontSize = 15.sp, lineHeight = 22.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
@@ -279,8 +285,10 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
             )
             Column(
                 Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 84.dp, end = 16.dp)
+                    .align(Alignment.TopCenter)
+                    // Sits below the red warning when it shows, otherwise right under the
+                    // top buttons; centered keeps it clear of the scroll strip.
+                    .padding(top = if (helperOk) 84.dp else 150.dp)
                     .shadow(10.dp, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(Card)
@@ -306,9 +314,10 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
 
         if (!helperOk) {
             Text(
-                "Lost BingeMote on the computer. Is it running?",
+                "Lost BingeMote on the computer.\nIs it running?",
                 color = ErrorRed, fontSize = 13.sp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp, end = 40.dp),
             )
         }
 
@@ -393,12 +402,15 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.wai
 @Composable
 private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onClose,
-        containerColor = Card2,
-        title = { Text("Keyboard", color = TextC) },
-        text = {
-            Column {
+    // Tapping anywhere outside dismisses, so there is no Done button.
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        androidx.compose.material3.Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = Card2,
+        ) {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 30.dp)) {
+                Text("Keyboard", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { new ->
@@ -414,18 +426,22 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                     placeholder = { Text("Type here - it types on the PC", color = Muted) },
                 )
                 Spacer(Modifier.height(10.dp))
-                Row {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     listOf("enter" to "Enter", "backspace" to "Backspace", "escape" to "Esc", "space" to "Space", "tab" to "Tab").forEach { (k, label) ->
                         TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 13.sp) }
                     }
                 }
-                Row {
-                    listOf("up" to "↑", "down" to "↓", "left" to "←", "right" to "→").forEach { (k, label) ->
-                        TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 16.sp) }
-                    }
+                Spacer(Modifier.height(4.dp))
+                // Inverted-T arrow cluster.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { onKey("up") }) { Text("↑", color = Orange, fontSize = 16.sp) }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { onKey("left") }) { Text("←", color = Orange, fontSize = 16.sp) }
+                    TextButton(onClick = { onKey("down") }) { Text("↓", color = Orange, fontSize = 16.sp) }
+                    TextButton(onClick = { onKey("right") }) { Text("→", color = Orange, fontSize = 16.sp) }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onClose) { Text("Done", color = Orange) } },
-    )
+        }
+    }
 }

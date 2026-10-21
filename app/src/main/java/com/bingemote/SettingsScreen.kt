@@ -7,7 +7,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,7 +30,14 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit, onFeedback: () -> Unit) {
+fun SettingsScreen(
+    remote: RemoteState,
+    scrollState: ScrollState,
+    pickerListState: LazyListState,
+    onBack: () -> Unit,
+    onRepair: () -> Unit,
+    onFeedback: () -> Unit,
+) {
     val store = remote.store
     var mainSkip by remember { mutableStateOf(store.skipMainSec) }
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
@@ -39,13 +47,14 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
     if (pickingMovies) {
         FolderPickerScreen(
             remote,
+            pickerListState,
             onPick = { store.moviesPath = it; pickingMovies = false },
             onCancel = { pickingMovies = false },
         )
         return
     }
     Column(
-        Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
@@ -68,14 +77,14 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
             Text("Main buttons", color = Muted, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
-                options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s", 60 to "60s"),
+                options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s"),
                 selected = mainSkip,
             ) { mainSkip = it; store.skipMainSec = it }
             Spacer(Modifier.height(12.dp))
             Text("Smaller buttons", color = Muted, fontSize = 13.sp)
             Spacer(Modifier.height(8.dp))
             ChoiceRow(
-                options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m", 300 to "5m"),
+                options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m"),
                 selected = secondarySkip,
             ) { secondarySkip = it; store.skipSecondarySec = it }
         }

@@ -47,11 +47,12 @@ class Store(context: Context) {
         set(v) = prefs.edit().putString("moviesPath", v).apply()
 
     var skipMainSec: Int
-        get() = prefs.getInt("skipMainSec", 5)
+        // A stored value that is no longer offered falls back to the default.
+        get() = prefs.getInt("skipMainSec", 5).takeIf { it in MAIN_SKIP_OPTIONS } ?: 5
         set(v) = prefs.edit().putInt("skipMainSec", v).apply()
 
     var skipSecondarySec: Int
-        get() = prefs.getInt("skipSecondarySec", 30)
+        get() = prefs.getInt("skipSecondarySec", 30).takeIf { it in SECONDARY_SKIP_OPTIONS } ?: 30
         set(v) = prefs.edit().putInt("skipSecondarySec", v).apply()
 
     var haptics: Boolean

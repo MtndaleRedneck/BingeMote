@@ -1,3 +1,11 @@
+## v1.3.1
+
+- The app always stays upright, and the top bar fits on every phone - the name shrinks before anything gets pushed off screen
+- Setup has a Cancel button once your PC is paired, and every screen remembers where you scrolled to
+- Mouse screen: the gesture guide sits centered on the pad, the pointer-speed panel sits clear of the scroll bar, and the keyboard is tidied up
+- Skip buttons always spin back to upright, and the Movies folder card is cleaner
+- New app icon
+
 ## v1.3.0
 
 - See at a glance whether your PC is connected: a small pill in the top bar, and the now-playing card says when it's trying to reconnect
