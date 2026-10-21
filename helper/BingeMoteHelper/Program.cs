@@ -84,7 +84,7 @@ internal static class Program
             try { oldQuit = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
             if (oldQuit == null)
             {
-                Log("An older helper (before 1.0.2) is running - asked him to quit it by hand.");
+                Log("An older helper (before 1.1.0) is running - asked him to quit it by hand.");
                 MessageBox.Show(
                     "An older BingeMote Helper is already running. Right-click its icon by the clock (click the ^ arrow if you don't see it) and choose Quit, then open this one again.",
                     "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);

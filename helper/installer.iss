@@ -1,7 +1,7 @@
 ; BingeMote Helper installer (Inno Setup, free). Per-user install: no admin needed.
 ; Builds BingeMoteHelper-Setup.exe from the published single-file exe.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.2"
+  #define MyAppVersion "1.1.0"
 #endif
 
 [Setup]
