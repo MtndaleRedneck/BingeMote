@@ -24,7 +24,9 @@ data class UpdateInfo(
  * and every failure ends quietly or with a plain message.
  */
 object Updater {
-    const val API = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases/latest"
+    const val API = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases?per_page=30"
+    /** App and helper release separately; this updater only ever looks at app-v* tags. */
+    const val TAG_PREFIX = "app-v"
     private const val DOWNLOAD_PREFIX = "https://github.com/MtndaleRedneck/BingeMote/releases/download/"
     private const val MAX_APK = 150L * 1024 * 1024
 
@@ -56,11 +58,12 @@ object Updater {
         }
         .filter { it.isNotEmpty() }.take(16)
 
-    /** The offer for a release JSON, or null when it is a draft, a prerelease, has no usable APK, or is not newer than [current]. */
+    /** The offer for one release JSON, or null when it is not an app release, is a draft or prerelease, has no usable APK, or is not newer than [current]. */
     fun parseRelease(json: String, current: String): UpdateInfo? = try {
         val o = JSONObject(json)
         val tag = o.optString("tag_name", "")
-        if (o.optBoolean("draft", false) || o.optBoolean("prerelease", false) || parseVersion(tag) == null || !isNewer(tag, current)) null
+        val version = tag.trim().removePrefix(TAG_PREFIX).takeIf { tag.trim().startsWith(TAG_PREFIX) } ?: ""
+        if (o.optBoolean("draft", false) || o.optBoolean("prerelease", false) || parseVersion(version) == null || !isNewer(version, current)) null
         else {
             val assets = o.optJSONArray("assets")
             var found: UpdateInfo? = null
@@ -72,7 +75,7 @@ object Updater {
                 if (found == null && name.startsWith("BingeMote") && name.endsWith(".apk") && url.startsWith(DOWNLOAD_PREFIX) && size in 1..MAX_APK) {
                     val d = a.optString("digest", "")
                     val hex = if (d.startsWith("sha256:") && Regex("[0-9a-fA-F]{64}").matches(d.removePrefix("sha256:"))) d.removePrefix("sha256:").lowercase() else null
-                    found = UpdateInfo(tag.trim().removePrefix("v").removePrefix("V"), notesBullets(o.optString("body", "")), url, size, hex)
+                    found = UpdateInfo(version, notesBullets(o.optString("body", "")), url, size, hex)
                 }
             }
             found
@@ -84,14 +87,20 @@ object Updater {
         u.protocol == "https" && (u.host == "github.com" || u.host == "githubusercontent.com" || u.host.endsWith(".githubusercontent.com"))
     } catch (e: Exception) { false }
 
-    /** Asks GitHub for the latest release. Null on any failure, offline, rate limit or odd response. Call off the main thread. */
+    /** The newest app-v* release that beats [current]. The list comes newest-first; helper-v* tags are ignored. Null on any failure, offline, rate limit or odd response. Call off the main thread. */
     fun check(current: String): UpdateInfo? = try {
         val c = URL(API).openConnection() as HttpURLConnection
         c.connectTimeout = 6000; c.readTimeout = 8000; c.instanceFollowRedirects = false
         c.setRequestProperty("Accept", "application/vnd.github+json"); c.setRequestProperty("User-Agent", "BingeMote")
         if (c.responseCode != 200) null else {
-            val body = c.inputStream.use { it.readBytes(512 * 1024) }
-            parseRelease(String(body, Charsets.UTF_8), current)
+            val body = c.inputStream.use { it.readBytes(1024 * 1024) }
+            val arr = org.json.JSONArray(String(body, Charsets.UTF_8))
+            var found: UpdateInfo? = null
+            for (i in 0 until arr.length()) {
+                found = parseRelease(arr.getJSONObject(i).toString(), current)
+                if (found != null) break
+            }
+            found
         }
     } catch (e: Exception) { null }
 
