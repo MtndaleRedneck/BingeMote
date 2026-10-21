@@ -212,16 +212,19 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
                 style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
             )
-            // Arrowhead at the arc's end (top of the circle, pointing along the spin).
+            // Arrowhead at the arc's end: a clean triangle aligned to the tangent (the
+            // direction of travel), sized to stay inside the icon at every spin angle.
             val cx = w / 2; val r = (w - inset * 2) / 2
             val endAngle = Math.toRadians((120.0 + 285.0))
             val ex = cx + r * Math.cos(endAngle).toFloat()
             val ey = cx + r * Math.sin(endAngle).toFloat()
-            val s = w * 0.14f
+            val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
+            val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
+            val tipLen = w * 0.18f; val back = w * 0.05f; val halfW = w * 0.11f
             val head = Path().apply {
-                moveTo(ex, ey - s * 0.7f)
-                lineTo(ex + s, ey + s * 0.1f)
-                lineTo(ex - s * 0.2f, ey + s * 0.75f)
+                moveTo(ex + tx * tipLen, ey + ty * tipLen)
+                lineTo(ex - tx * back + nx * halfW, ey - ty * back + ny * halfW)
+                lineTo(ex - tx * back - nx * halfW, ey - ty * back - ny * halfW)
                 close()
             }
             drawPath(head, ringColor)
