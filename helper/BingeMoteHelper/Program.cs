@@ -764,7 +764,7 @@ internal sealed class HelperWindow : Form
         Application.DoEvents();
         using var bmp = new Bitmap(Width, Height);
         DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
-        bmp.Save(path, System.Drawing.Imaging.ImagingFormat.Png);
+        bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
         Close();
     }
 
