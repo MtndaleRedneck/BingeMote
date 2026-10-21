@@ -1,5 +1,6 @@
 package com.bingemote
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -10,7 +11,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -21,16 +21,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * First-run setup, one screen in four steps:
- * 1) install the helper on the PC, 2) find the PC on the network,
- * 3) pair with the 6-digit code the helper shows, 4) VLC password + movies folder.
+ * First-run setup as a real wizard, one step on screen at a time:
+ * 1) install the helper on the PC, 2) find the PC and pair with its 6-digit code,
+ * 3) VLC password + movies folder. Back always works, and a saved pairing can be
+ * continued or discarded - nobody gets stuck between steps.
  */
 @Composable
 fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
     val store = remote.store
     val scope = rememberCoroutineScope()
 
-    var step by remember { mutableStateOf(1) }
+    // Re-entering setup with a saved pairing opens on the pair step, which offers to continue with it.
+    var step by remember { mutableStateOf(if (store.helperToken.isBlank()) 1 else 2) }
     var scanning by remember { mutableStateOf(false) }
     var found by remember { mutableStateOf<List<DiscoveredHelper>>(emptyList()) }
     var chosen by remember { mutableStateOf<DiscoveredHelper?>(null) }
@@ -44,6 +46,11 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
     var messageIsError by remember { mutableStateOf(false) }
 
     fun say(text: String, isError: Boolean) { message = text; messageIsError = isError }
+
+    BackHandler(enabled = step > 1) {
+        step -= 1
+        say("", false)
+    }
 
     fun scan() {
         scanning = true
@@ -69,15 +76,27 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                 store.helperToken = token
                 store.pcName = name.ifBlank { target.name }
                 pairing = false
+                say("", false)
                 step = 3
             } catch (e: HelperClient.BadPairCode) {
                 pairing = false
-                say("That code didn't work. Check the code on your PC and try again.", true)
+                say("That code didn't work. Get a fresh one: on your PC, right-click the helper's icon by the clock and pick \"New pairing code\".", true)
             } catch (e: Exception) {
                 pairing = false
                 say("Couldn't reach the helper on ${target.host}. Check the PC is awake and try again.", true)
             }
         }
+    }
+
+    fun startOver() {
+        store.host = ""
+        store.helperToken = ""
+        store.pcName = ""
+        code = ""
+        chosen = null
+        manualHost = ""
+        found = emptyList()
+        say("Pairing cleared. On your PC, right-click the helper's icon by the clock and pick \"New pairing code\", then pair here.", false)
     }
 
     fun finish() {
@@ -112,13 +131,13 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
         Text("Set up BingeMote", color = TextC, fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Step 1 of 3 - the PC helper",
+            "Step $step of 3",
             color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(18.dp))
 
-        Column {
-            Column {
+        when (step) {
+            1 -> Column {
                 SetupCard {
                     Text("1. On your PC, download BingeMoteHelper.exe from the BingeMote release page and run it.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
@@ -126,15 +145,25 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Text("3. The first time, Windows asks for permission to add a firewall rule. Click Yes - this is the only admin prompt, and it only opens the helper to your home network.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("4. Leave the helper running (it sits in the tray and starts with Windows). It shows a 6-digit code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("4. Leave the helper running (it sits in the tray, by the clock, and starts with Windows). It shows a 6-digit code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                 }
                 Spacer(Modifier.height(18.dp))
-                OrangeButton("The helper is running", onClick = { step = 2 })
+                OrangeButton("The helper is running", onClick = { say("", false); step = 2 })
             }
-            Spacer(Modifier.height(24.dp))
-            Text("Step 2 of 3 - pair with your PC", color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(12.dp))
-            Column {
+
+            2 -> Column {
+                if (store.helperToken.isNotBlank()) {
+                    SetupCard {
+                        Text("Already paired" + (if (store.pcName.isNotBlank()) " with ${store.pcName}" else ""), color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("This phone paired with your PC earlier. Continue with it, or start over to pair again with a new code.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                        Spacer(Modifier.height(12.dp))
+                        OrangeButton("Continue with this PC", onClick = { say("", false); step = 3 })
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { startOver() }) { Text("Start over with a new code", color = Muted) }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                }
                 SetupCard {
                     Text("Find your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -174,7 +203,7 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Enter the 6-digit code the helper is showing on your PC. It only works once.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text("Enter the 6-digit code the helper is showing on your PC. It only works once. No code on screen? Right-click the helper's icon by the clock and pick \"New pairing code\".", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,
@@ -187,11 +216,11 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     OrangeButton(if (pairing) "Pairing..." else "Pair", enabled = !pairing, onClick = { pair() })
                 }
+                Spacer(Modifier.height(14.dp))
+                TextButton(onClick = { say("", false); step = 1 }) { Text("Back", color = Muted) }
             }
-            Spacer(Modifier.height(24.dp))
-            Text("Step 3 of 3 - VLC", color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(12.dp))
-            Column {
+
+            else -> Column {
                 SetupCard {
                     Text("Turn on VLC's web remote", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -232,6 +261,8 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
                     Spacer(Modifier.height(12.dp))
                     OrangeButton(if (testing) "Checking..." else "Finish", enabled = !testing, onClick = { finish() })
                 }
+                Spacer(Modifier.height(14.dp))
+                TextButton(onClick = { say("", false); step = 2 }) { Text("Back", color = Muted) }
             }
         }
 
