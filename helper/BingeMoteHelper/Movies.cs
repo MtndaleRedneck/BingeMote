@@ -44,19 +44,27 @@ internal static class Movies
         return JsonSerializer.Serialize(new { path = rel, atRoot, entries });
     }
 
-    /// <summary>Start VLC with the chosen file and the web interface the app expects.</summary>
-    public static string Play(string root, string rel, int httpPort, string httpPassword, bool fullscreen)
+    /// <summary>Start VLC with the chosen file and the web interface the app expects.
+    /// The web interface binds to the address the phone just used, never to every network.</summary>
+    public static string Play(string root, string rel, int httpPort, string httpPassword, bool fullscreen, IPAddress bindTo)
     {
         var file = Jail(root, rel);
         if (file == null || !File.Exists(file)) return Error(404, "not found", "That file does not exist on the PC.");
         if (!VideoExt.Contains(Path.GetExtension(file))) return Error(400, "not a video", "That file is not a video.");
         var vlc = FindVlc();
         if (vlc == null) return Error(404, "vlc not found", "VLC does not seem to be installed on this PC (looked in the usual places).");
-        var args = "\"" + file + "\" --extraintf=http --http-host=0.0.0.0 --http-port=" + httpPort
-            + " --http-password=\"" + httpPassword + "\"" + (fullscreen ? " --fullscreen" : "");
+        // ArgumentList, never string concatenation: a quote in the VLC password must not
+        // become extra VLC options.
+        var psi = new ProcessStartInfo { FileName = vlc, UseShellExecute = false };
+        psi.ArgumentList.Add(file);
+        psi.ArgumentList.Add("--extraintf=http");
+        psi.ArgumentList.Add("--http-host=" + BindAddress(bindTo));
+        psi.ArgumentList.Add("--http-port=" + httpPort);
+        psi.ArgumentList.Add("--http-password=" + httpPassword);
+        if (fullscreen) psi.ArgumentList.Add("--fullscreen");
         try
         {
-            Process.Start(new ProcessStartInfo(vlc, args) { UseShellExecute = true });
+            Process.Start(psi);
         }
         catch (Exception ex)
         {
@@ -64,6 +72,19 @@ internal static class Movies
         }
         Program.Log("Started VLC with: " + file);
         return JsonSerializer.Serialize(new { ok = true });
+    }
+
+    /// <summary>The address VLC's web interface listens on: the one the phone reached us on.</summary>
+    private static string BindAddress(IPAddress addr)
+    {
+        if (addr.IsIPv4MappedToIPv6) return addr.MapToIPv4().ToString();
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !IPAddress.IsLoopback(addr))
+        {
+            // VLC's --http-host wants brackets for IPv6; rather than risk a malformed bind, listen on all.
+            Program.Log("Phone reached us over IPv6 - VLC's web interface will listen on all addresses.");
+            return "0.0.0.0";
+        }
+        return addr.ToString();
     }
 
     /// <summary>Where is vlc.exe: Windows App Paths first, then the two usual install folders.</summary>

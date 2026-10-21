@@ -8,7 +8,7 @@ A couch remote for VLC on your Windows PC, with a movie browser and a mouse-and-
 
 1. Download BingeMote Android (the APK) and BingeMote PC (the Windows installer) from the project's GitHub Releases page.
 2. Run the installer on your PC - the program it installs is called BingeMote. If SmartScreen warns, choose More info, then Run anyway.
-3. Complete the one-time Windows permission prompt for the Private-network firewall rules and HTTP listener.
+3. The installer asks for Windows permission once - it adds the firewall rule (home networks only) so the phone can reach the PC.
 4. Open the Android app and follow setup: find the PC, enter its pairing code, then configure VLC's web interface.
 
 Android 12+ and Windows x64. Keep both devices on the same trusted private network.
@@ -25,6 +25,6 @@ Android 12+ and Windows x64. Keep both devices on the same trusted private netwo
 
 BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
 
-Uninstalling BingeMote removes the program and its start-with-Windows entry. The one-time firewall rule and HTTP-listener permission stay behind (removing them needs administrator rights; they are inert without the program). To remove them, run as administrator: `netsh advfirewall firewall delete rule name="BingeMote"` and `netsh http delete urlacl url=http://+:8488/`.
+Uninstalling BingeMote removes the program, its start-with-Windows entry, the firewall rule and the listen permission. If you ran the plain exe instead of the installer, remove the last two by hand as administrator: `netsh advfirewall firewall delete rule name="BingeMote"` (on PCs that had 1.x, also `name="BingeMote Helper"`) and `netsh http delete urlacl url=http://+:8488/`.
 
 More setup, build and protocol details are in [docs/details.md](docs/details.md).

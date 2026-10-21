@@ -1,4 +1,5 @@
-; BingeMote for Windows installer (Inno Setup, free). Per-user install: no admin needed.
+; BingeMote for Windows installer (Inno Setup, free). Asks for admin once, during install,
+; so it can add the firewall rule itself and the app never needs a surprise admin prompt.
 ; Builds the BingeMote-PC-Setup-<version>.exe download from the published single-file exe.
 #ifndef MyAppVersion
   #define MyAppVersion "1.2.0"
@@ -10,7 +11,7 @@ AppVersion={#MyAppVersion}
 AppVerName=BingeMote {#MyAppVersion}
 DefaultDirName={localappdata}\Programs\BingeMote
 DefaultGroupName=BingeMote
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 OutputBaseFilename=BingeMote-PC-Setup-{#MyAppVersion}
 SetupIconFile=Assets\bingemote.ico
 UninstallDisplayIcon={app}\BingeMote.exe
@@ -40,4 +41,16 @@ Type: files; Name: "{userprograms}\BingeMote Helper.lnk"
 Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 
 [Run]
+; The installer is already elevated, so it owns the firewall rule and the listen
+; permission: no surprise admin prompt on first run. Old 1.x rule name removed too.
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote Helper"""; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=TCP localport=8488 profile=private"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;WD)"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
+Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"

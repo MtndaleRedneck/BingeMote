@@ -38,8 +38,8 @@ internal static class NetworkCheck
     {
         if (!DefaultRouteCategory().Equals("Public", StringComparison.OrdinalIgnoreCase)) return;
         var answer = MessageBox.Show(
-            "Windows has your Wi-Fi set as a Public network, so it blocks the phone app.\n\n" +
-            "To fix it: Settings > Network & internet > Wi-Fi > your network > choose Private.\n\n" +
+            "Windows is treating this Wi-Fi like a public hotspot, so your phone cannot reach this PC.\n\n" +
+            "If this is your home network, the fix takes a few seconds: Settings > Network & internet > Wi-Fi > your network > choose Private. Windows remembers it.\n\n" +
             "Open those settings now?",
             "BingeMote",
             MessageBoxButtons.YesNo,
