@@ -785,6 +785,28 @@ internal sealed class HelperWindow : Form
             }
             bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
         }
+        // Diagnostics: is the Pair row really collapsed, or is the capture lying?
+        try
+        {
+            var diagPath = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(path) ?? ".", "window-diag.txt");
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("DeviceDpi=" + DeviceDpi);
+            sb.AppendLine("AutoScaleMode=" + AutoScaleMode + " AutoScaleDimensions=" + CurrentAutoScaleDimensions);
+            foreach (var (n, c) in new (string, Control)[] {
+                ("firstRun", _firstRun), ("nameBox", _nameBox), ("pair", _pair),
+                ("codeCaption", _codeCaption), ("wifiBorder", _wifiBorder) })
+            {
+                string region;
+                try { using var g = Graphics.FromHwnd(IntPtr.Zero);
+                      var r = c.Region?.GetBounds(g) ?? System.Drawing.RectangleF.Empty;
+                      region = r.Width + "x" + r.Height; }
+                catch { region = "?"; }
+                sb.AppendLine(n + " bounds=" + c.Bounds + " region=" + region + " visible=" + c.Visible);
+            }
+            System.IO.File.WriteAllText(diagPath, sb.ToString());
+        }
+        catch { }
         // Capture 2: what the user would see on the desktop (needs an interactive
         // session on the runner; skipped silently where there is none).
         try
