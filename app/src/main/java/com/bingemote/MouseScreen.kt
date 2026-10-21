@@ -88,7 +88,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                                 val dx: Float; val dy: Float
                                 synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f }
                                 if (dx != 0f || dy != 0f) {
-                                    fire { HelperClient.move(host, port, token, dx * 2.2f, dy * 2.2f) }
+                                    fire { HelperClient.move(host, port, token, dx * remote.store.mouseSpeed, dy * remote.store.mouseSpeed) }
                                 }
                             }
                         }
