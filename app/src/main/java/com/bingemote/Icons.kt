@@ -71,13 +71,14 @@ private fun DrawScope.drawWave(color: Color, w: Float, h: Float, radius: Float, 
     )
 }
 
-/** Volume down: speaker with one sound wave (the approved render's look). */
+/** Volume down (approved v4): speaker with Vol up's inner wave alone - down reads
+ * as "up minus the outer two rings", a matched pair with VolumeUpIcon. */
 @Composable
 fun VolumeDownIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
-        drawWave(color, w, h, radius = w * 0.44f, stroke = w * 0.16f)
+        drawWave(color, w, h, radius = w * 0.24f, stroke = w * 0.08f)
     }
 }
 
@@ -222,24 +223,15 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
                 style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
             )
-            // Arrowhead matching the approved target: base square across the ring's end
-            // with the ring's centerline hitting the exact middle of the base (Ezzy's
-            // nudge: the reference had it sitting slightly outside the centerline), tip
-            // pointing along the spin. Base a touch behind the ring end so the ring's
-            // round end is fully swallowed - no stray cap poking out.
-            val cx = w / 2; val r = (w - inset * 2) / 2
-            val strokeW = w * 0.09f
-            val endAngle = Math.toRadians((120.0 + 285.0))
-            val ex = cx + r * Math.cos(endAngle).toFloat()
-            val ey = cx + r * Math.sin(endAngle).toFloat()
-            val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
-            val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
-            val tip = Offset(ex + tx * strokeW * 2.1f, ey + ty * strokeW * 2.1f)
-            val bx = ex - tx * strokeW * 0.5f; val by = ey - ty * strokeW * 0.5f
+            // Arrowhead redrawn to the approved target image, then nudged slightly
+            // inward so the ring's centerline hits the exact middle of the head's flat
+            // base edge (Ezzy's ask). The ring's round end lands inside the head - no
+            // stray cap pokes out.
+            val cx = w / 2
             val head = Path().apply {
-                moveTo(tip.x, tip.y)
-                lineTo(bx + nx * strokeW * 0.75f, by + ny * strokeW * 0.75f)
-                lineTo(bx - nx * strokeW * 0.75f, by - ny * strokeW * 0.75f)
+                moveTo(cx + w * 0.2265f, cx + w * 0.1491f)
+                lineTo(cx + w * 0.4429f, cx + w * 0.2712f)
+                lineTo(cx + w * 0.2125f, cx + w * 0.3934f)
                 close()
             }
             drawPath(head, ringColor)
