@@ -220,16 +220,23 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
                 style = Stroke(width = w * 0.09f, cap = StrokeCap.Round),
             )
-            // Arrowhead at the arc's end (top of the circle, pointing along the spin).
+            // Arrowhead at the arc's end: flat base square across the end of the ring,
+            // the ring's centerline hitting the exact middle of the base, tip pointing
+            // along the spin. The base sits one cap-radius back so the ring's round end
+            // is swallowed smoothly. (1.3.0's head sat crooked off the shaft.)
             val cx = w / 2; val r = (w - inset * 2) / 2
+            val strokeW = w * 0.09f
             val endAngle = Math.toRadians((120.0 + 285.0))
             val ex = cx + r * Math.cos(endAngle).toFloat()
             val ey = cx + r * Math.sin(endAngle).toFloat()
-            val s = w * 0.16f
+            val tx = -Math.sin(endAngle).toFloat(); val ty = Math.cos(endAngle).toFloat()
+            val nx = Math.cos(endAngle).toFloat(); val ny = Math.sin(endAngle).toFloat()
+            val tipLen = w * 0.15f; val halfW = strokeW * 1.25f; val bury = strokeW / 2
+            val bx = ex - tx * bury; val by = ey - ty * bury
             val head = Path().apply {
-                moveTo(ex, ey - s * 0.7f)
-                lineTo(ex + s, ey + s * 0.1f)
-                lineTo(ex - s * 0.2f, ey + s * 0.75f)
+                moveTo(ex + tx * tipLen, ey + ty * tipLen)
+                lineTo(bx + nx * halfW, by + ny * halfW)
+                lineTo(bx - nx * halfW, by - ny * halfW)
                 close()
             }
             drawPath(head, ringColor)
