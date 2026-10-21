@@ -106,6 +106,19 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
+      - name: Render the window for layout review (CI only)
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
+          $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
+          & helper/shot/BingeMoteHelper.exe --window-shot
+
+      - name: Upload the window shot
+        uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-PC-window
+          path: helper/window.png
+          if-no-files-found: error
+
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
         run: pwsh -File scripts/helper-e2e.ps1
 
