@@ -43,7 +43,10 @@ internal static class NetworkCheck
             "Open those settings now?",
             "BingeMote Helper",
             MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning);
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button1,
+            // At login other windows can cover an ownerless box; keep it visible.
+            MessageBoxOptions.DefaultDesktopOnly);
         if (answer != DialogResult.Yes) return;
         try
         {
