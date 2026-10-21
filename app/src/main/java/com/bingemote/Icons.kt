@@ -1,12 +1,16 @@
 package com.bingemote
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -16,6 +20,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
@@ -42,26 +47,50 @@ fun CursorIcon(color: Color, size: Dp = 21.dp) {
     }
 }
 
-/** Speaker with sound waves. waves: 1 (low) or 2 (high). */
+/** Speaker body, shared by the volume icons. */
+private fun DrawScope.drawSpeaker(color: Color, w: Float, h: Float) {
+    val p = Path().apply {
+        moveTo(w * 0.08f, h * 0.38f)
+        lineTo(w * 0.26f, h * 0.38f)
+        lineTo(w * 0.50f, h * 0.18f)
+        lineTo(w * 0.50f, h * 0.82f)
+        lineTo(w * 0.26f, h * 0.62f)
+        lineTo(w * 0.08f, h * 0.62f)
+        close()
+    }
+    drawPath(p, color)
+}
+
+/** Volume down: speaker with a minus. */
 @Composable
-fun SpeakerIcon(color: Color, waves: Int, size: Dp = 22.dp) {
+fun VolumeDownIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
-        val p = Path().apply {
-            moveTo(w * 0.10f, h * 0.38f)
-            lineTo(w * 0.28f, h * 0.38f)
-            lineTo(w * 0.52f, h * 0.18f)
-            lineTo(w * 0.52f, h * 0.82f)
-            lineTo(w * 0.28f, h * 0.62f)
-            lineTo(w * 0.10f, h * 0.62f)
-            close()
-        }
-        drawPath(p, color)
-        val stroke = Stroke(width = w * 0.07f, cap = StrokeCap.Round)
-        drawArc(color, 215f, 110f, false, topLeft = Offset(w * 0.50f, h * 0.30f), size = Size(w * 0.34f, h * 0.40f), style = stroke)
-        if (waves > 1) {
-            drawArc(color, 215f, 110f, false, topLeft = Offset(w * 0.56f, h * 0.14f), size = Size(w * 0.52f, h * 0.72f), style = stroke)
-        }
+        drawSpeaker(color, w, h)
+        drawRoundRect(
+            color,
+            topLeft = Offset(w * 0.58f, h * 0.455f), size = Size(w * 0.34f, h * 0.09f),
+            cornerRadius = CornerRadius(w * 0.045f),
+        )
+    }
+}
+
+/** Volume up: speaker with a plus. */
+@Composable
+fun VolumeUpIcon(color: Color, size: Dp = 22.dp) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width; val h = this.size.height
+        drawSpeaker(color, w, h)
+        drawRoundRect(
+            color,
+            topLeft = Offset(w * 0.58f, h * 0.455f), size = Size(w * 0.34f, h * 0.09f),
+            cornerRadius = CornerRadius(w * 0.045f),
+        )
+        drawRoundRect(
+            color,
+            topLeft = Offset(w * 0.705f, h * 0.33f), size = Size(w * 0.09f, h * 0.34f),
+            cornerRadius = CornerRadius(w * 0.045f),
+        )
     }
 }
 
@@ -156,14 +185,20 @@ fun PauseIcon(color: Color, size: Dp = 40.dp) {
 
 /**
  * Circular skip arrow with the value in the middle. The ring is a 300-degree arc
- * with an arrowhead; forward spins clockwise, back is mirrored. While [pressed],
- * the ring turns orange and rotates ~30 degrees; the number stays put.
+ * with an arrowhead; forward spins clockwise, back is mirrored. On each tap the ring
+ * does one full turn (Ezzy's ask: "I want it to fully rotate"); the number stays put.
  */
 @Composable
 fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, size: Dp = 34.dp) {
-    val rotation by animateFloatAsState(
-        if (pressed) (if (forward) 30f else -30f) else 0f, label = "skipSpin"
-    )
+    val spin = remember { Animatable(0f) }
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            spin.snapTo(0f)
+            spin.animateTo(if (forward) 360f else -360f, tween(420, easing = FastOutSlowInEasing))
+            spin.snapTo(0f)
+        }
+    }
+    val rotation = spin.value
     val ringColor = if (pressed) Orange else tint
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation; scaleX = if (forward) 1f else -1f }) {

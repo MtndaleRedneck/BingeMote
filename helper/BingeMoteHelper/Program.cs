@@ -28,6 +28,8 @@ internal static class Program
     private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
 
     internal static string? Token;
+    /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
+    internal static string? MoviesFolder;
     internal static string? PairCode;
     /// <summary>A newer published helper version, found by the background update check.</summary>
     internal static string? AvailableUpdate;
@@ -208,13 +210,14 @@ internal static class Program
             if (!File.Exists(ConfigPath)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
             Token = doc.RootElement.GetProperty("token").GetString();
+            MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
         }
-        catch { Token = null; }
+        catch { Token = null; MoviesFolder = null; }
     }
 
     internal static void SaveConfig()
     {
-        var json = JsonSerializer.Serialize(new { token = Token });
+        var json = JsonSerializer.Serialize(new { token = Token, moviesFolder = MoviesFolder });
         File.WriteAllText(ConfigPath, json);
     }
 
@@ -248,88 +251,157 @@ internal static class Program
     }
 }
 
-/// <summary>The pairing window: shows the current 6-digit code and connection status, sits in the tray.</summary>
+using WinForms = System.Windows.Forms;
+
+/// <summary>The helper window: status, the movies folder, and pairing controls. Sits in the tray;
+/// follows the Windows dark/light mode setting, repainting live when it changes.</summary>
 internal sealed class HelperWindow : Form
 {
+    // The app's palette: dark mode uses the app's colors, light mode their light counterparts.
+    private static readonly Color Orange = Color.FromArgb(255, 149, 0);
+    private static readonly Color OnOrange = Color.FromArgb(27, 27, 30);
+    private static readonly Color DarkBg = Color.FromArgb(27, 27, 30);
+    private static readonly Color DarkCard = Color.FromArgb(38, 38, 44);
+    private static readonly Color DarkText = Color.FromArgb(235, 235, 240);
+    private static readonly Color DarkMuted = Color.FromArgb(150, 150, 160);
+    private static readonly Color LightBg = Color.FromArgb(243, 243, 243);
+    private static readonly Color LightCard = Color.White;
+    private static readonly Color LightText = Color.FromArgb(26, 26, 26);
+    private static readonly Color LightMuted = Color.FromArgb(110, 110, 110);
+
     private bool _allowShow;
     private bool _updateAnnounced;
     private bool _hideHintShown;
-    private readonly Label _code;
+    private readonly Label _title;
     private readonly Label _status;
+    private readonly Label _moviesLabel;
+    private readonly TextBox _folderBox;
+    private readonly Button _browse;
+    private readonly Label _folderHint;
+    private readonly Panel _sep1;
+    private readonly Label _pairingHeader;
+    private readonly Label _codeCaption;
+    private readonly Label _code;
+    private readonly Label _codeNote;
+    private readonly Button _newCode;
+    private readonly Button _resetPairing;
+    private readonly Panel _sep2;
+    private readonly Label _footer;
+    private readonly Button _quit;
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly ContextMenuStrip _menu;
 
     public HelperWindow()
     {
         Text = "BingeMote Helper";
-        Width = 500; Height = 270;
+        Width = 620; Height = 460;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
+        try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { }
 
-        var title = new Label
+        _title = new Label
         {
             Text = "BingeMote Helper",
             Font = new Font("Segoe UI", 14, FontStyle.Bold),
             AutoSize = true, Left = 20, Top = 16,
         };
+        _status = new Label
+        {
+            Text = "",
+            Font = new Font("Segoe UI", 9),
+            AutoSize = true, Left = 20, Top = 48,
+        };
+        _moviesLabel = new Label
+        {
+            Text = "Movies folder (what the phone's Movies tab opens):",
+            Font = new Font("Segoe UI", 9),
+            AutoSize = true, Left = 20, Top = 88,
+        };
+        _folderBox = new TextBox
+        {
+            ReadOnly = true,
+            Left = 20, Top = 110, Width = 410,
+            BorderStyle = BorderStyle.FixedSingle,
+            Font = new Font("Segoe UI", 9),
+        };
+        _browse = MakeButton("Browse...", 440, 108, 110);
+        _browse.Click += (_, _) => PickFolder();
+        _folderHint = new Label
+        {
+            Text = "The normal Windows folder picker - no typing.",
+            Font = new Font("Segoe UI", 8),
+            AutoSize = true, Left = 20, Top = 140,
+        };
+        _sep1 = new Panel { Left = 20, Top = 168, Width = 545, Height = 1 };
+        _pairingHeader = new Label
+        {
+            Text = "Pairing",
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            AutoSize = true, Left = 20, Top = 182,
+        };
+        _codeCaption = new Label
+        {
+            Text = "Pairing code:",
+            Font = new Font("Segoe UI", 9),
+            AutoSize = true, Left = 20, Top = 214,
+        };
         _code = new Label
         {
             Text = Program.PairCode ?? "------",
-            Font = new Font("Consolas", 32, FontStyle.Bold),
-            ForeColor = Color.DarkOrange,
-            AutoSize = true, Left = 20, Top = 52,
+            Font = new Font("Consolas", 24, FontStyle.Bold),
+            ForeColor = Orange,
+            AutoSize = true, Left = 130, Top = 204,
         };
-        var hint = new Label
+        _codeNote = new Label
         {
-            Text = "Enter this code in the BingeMote app to pair. It works once, for 10 minutes.",
-            Font = new Font("Segoe UI", 9),
-            ForeColor = Color.DimGray,
-            AutoSize = false, Width = 450, Height = 40, Left = 20, Top = 108,
+            Text = "A code only shows while no phone is paired, or after New/Reset. It works once, for 10 minutes.",
+            Font = new Font("Segoe UI", 8),
+            AutoSize = true, Left = 20, Top = 248,
         };
-        _status = new Label
+        _newCode = MakeButton("New pairing code", 20, 274, 150);
+        _newCode.Click += (_, _) => NewPairingCode();
+        _resetPairing = MakeButton("Reset pairing...", 180, 274, 130);
+        _resetPairing.Click += (_, _) => ResetPairing();
+        _sep2 = new Panel { Left = 20, Top = 322, Width = 545, Height = 1 };
+        _footer = new Label
         {
-            Text = "Listening on port " + Program.HttpPort,
-            Font = new Font("Segoe UI", 9),
-            ForeColor = Color.DimGray,
-            AutoSize = true, Left = 20, Top = 150,
+            Text = "Runs in the tray by the clock and starts with Windows.",
+            Font = new Font("Segoe UI", 8),
+            AutoSize = true, Left = 20, Top = 336,
         };
-        Controls.Add(title); Controls.Add(_code); Controls.Add(hint); Controls.Add(_status);
+        _quit = MakeButton("Quit", 475, 330, 90);
+        _quit.Click += (_, _) => { Program.Log("Quit from the window."); Application.Exit(); };
 
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Show pairing code", null, (_, _) => ShowFromTray());
-        menu.Items.Add("New pairing code", null, (_, _) =>
+        Controls.AddRange(new Control[]
         {
-            Program.PairCode = Program.NewPairCode();
-            Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-            Program.PairFailures = 0;
-            Program.Log("New pairing code from the tray menu.");
-            ShowFromTray();
+            _title, _status, _moviesLabel, _folderBox, _browse, _folderHint, _sep1,
+            _pairingHeader, _codeCaption, _code, _codeNote, _newCode, _resetPairing,
+            _sep2, _footer, _quit,
         });
-        menu.Items.Add("Reset pairing...", null, (_, _) =>
-        {
-            var sure = MessageBox.Show(
-                "Forget the paired phone and show a new pairing code? Pair the phone again with the new code to reconnect it.",
-                "BingeMote Helper", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            if (sure != DialogResult.Yes) return;
-            Program.Token = null;
-            Program.SaveConfig();
-            Program.PairCode = Program.NewPairCode();
-            Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-            Program.PairFailures = 0;
-            Program.Log("Pairing reset from the tray menu - new code shown.");
-            ShowFromTray();
-        });
-        menu.Items.Add("Quit BingeMote Helper", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
+
+        _menu = new ContextMenuStrip();
+        _menu.Items.Add("Show BingeMote Helper", null, (_, _) => ShowFromTray());
+        _menu.Items.Add("New pairing code", null, (_, _) => NewPairingCode());
+        _menu.Items.Add("Reset pairing...", null, (_, _) => ResetPairing());
+        _menu.Items.Add("Quit BingeMote Helper", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
         _tray = new NotifyIcon
         {
             Text = "BingeMote Helper",
-            Icon = SystemIcons.Application,
+            Icon = Icon,
             Visible = true,
-            ContextMenuStrip = menu,
+            ContextMenuStrip = _menu,
         };
         _tray.DoubleClick += (_, _) => ShowFromTray();
         _tray.BalloonTipClicked += (_, _) => OpenUpdatePage();
+
+        // Follow the Windows dark/light mode setting, live.
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
+        {
+            try { BeginInvoke(new Action(ApplyTheme)); } catch { }
+        };
+        ApplyTheme();
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
@@ -343,7 +415,7 @@ internal sealed class HelperWindow : Form
             if (Program.AvailableUpdate != null && !_updateAnnounced)
             {
                 _updateAnnounced = true;
-                menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
+                _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
                 _tray.BalloonTipTitle = "BingeMote Helper update";
                 _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
                 _tray.ShowBalloonTip(8000);
@@ -359,6 +431,95 @@ internal sealed class HelperWindow : Form
                 : "Listening on port " + Program.HttpPort + " - paired";
         };
         _timer.Start();
+    }
+
+    private static Button MakeButton(string text, int left, int top, int width) => new()
+    {
+        Text = text,
+        Left = left, Top = top, Width = width, Height = 30,
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 8.5f),
+    };
+
+    private static bool IsDarkMode()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return ((int)(key?.GetValue("AppsUseLightTheme") ?? 1)) == 0;
+        }
+        catch { return true; }
+    }
+
+    private void ApplyTheme()
+    {
+        var dark = IsDarkMode();
+        var bg = dark ? DarkBg : LightBg;
+        var card = dark ? DarkCard : LightCard;
+        var text = dark ? DarkText : LightText;
+        var muted = dark ? DarkMuted : LightMuted;
+        BackColor = bg;
+        ForeColor = text;
+        _title.ForeColor = text;
+        _status.ForeColor = muted;
+        _moviesLabel.ForeColor = text;
+        _folderBox.BackColor = card;
+        _folderBox.ForeColor = muted;
+        _folderHint.ForeColor = muted;
+        _sep1.BackColor = card;
+        _sep2.BackColor = card;
+        _pairingHeader.ForeColor = text;
+        _codeCaption.ForeColor = text;
+        _code.ForeColor = Orange;
+        _codeNote.ForeColor = muted;
+        _footer.ForeColor = muted;
+        foreach (var b in new[] { _browse, _newCode, _resetPairing, _quit })
+        {
+            b.BackColor = card;
+            b.ForeColor = text;
+            b.FlatAppearance.BorderColor = muted;
+        }
+    }
+
+    private void PickFolder()
+    {
+        using var dlg = new FolderBrowserDialog
+        {
+            Description = "Pick the folder the phone's Movies tab opens.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+            InitialDirectory = Directory.Exists(Program.MoviesFolder) ? Program.MoviesFolder! : "",
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        Program.MoviesFolder = dlg.SelectedPath;
+        Program.SaveConfig();
+        _folderBox.Text = Program.MoviesFolder;
+        Program.Log("Movies folder set on the PC: " + Program.MoviesFolder);
+    }
+
+    private void NewPairingCode()
+    {
+        Program.PairCode = Program.NewPairCode();
+        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
+        Program.PairFailures = 0;
+        Program.Log("New pairing code from the tray menu.");
+        ShowFromTray();
+    }
+
+    private void ResetPairing()
+    {
+        var sure = MessageBox.Show(
+            "Forget the paired phone and show a new pairing code? Pair the phone again with the new code to reconnect it.",
+            "BingeMote Helper", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (sure != DialogResult.Yes) return;
+        Program.Token = null;
+        Program.SaveConfig();
+        Program.PairCode = Program.NewPairCode();
+        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
+        Program.PairFailures = 0;
+        Program.Log("Pairing reset - new code shown.");
+        ShowFromTray();
     }
 
     /// <summary>Bring the window up from the tray (menu, double-click, or a second launch of the exe).</summary>

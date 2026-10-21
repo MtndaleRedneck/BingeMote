@@ -131,7 +131,18 @@ class RemoteState(
         }
     }
 
-    fun togglePause() = fire { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) }
+    fun togglePause() {
+        // Flip the icon at once; the next status poll (about a second out) confirms or corrects it.
+        val s = status
+        if (s != null) {
+            status = when (s.state.lowercase()) {
+                "playing" -> s.copy(state = "paused")
+                "paused" -> s.copy(state = "playing")
+                else -> s
+            }
+        }
+        fire { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) }
+    }
     fun toggleFullscreen() = fire { Vlc.toggleFullscreen(store.host, store.vlcPort, store.vlcPassword) }
     fun skip(seconds: Int) = fire { Vlc.skip(store.host, store.vlcPort, store.vlcPassword, seconds) }
     fun seekTo(seconds: Long) = fire { Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword, seconds) }

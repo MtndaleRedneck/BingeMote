@@ -88,7 +88,15 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(Unit) { load(if (root.isNotEmpty()) root else path) }
+    // The PC's setting wins when the helper has one; the phone's copy is the fallback.
+    LaunchedEffect(Unit) {
+        val fromPc = withContext(Dispatchers.IO) {
+            if (remote.store.helperToken.isBlank()) null
+            else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+        }
+        if (!fromPc.isNullOrBlank()) remote.store.moviesPath = fromPc
+        load(remote.store.moviesPath.trim().ifBlank { path })
+    }
 
     // Inside a folder, Back goes up one level first (never above the assigned folder).
     BackHandler(enabled = root.isNotEmpty() && !atRoot(path)) { upOne() }

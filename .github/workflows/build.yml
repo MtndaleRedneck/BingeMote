@@ -79,6 +79,17 @@ jobs:
           name: BingeMoteHelper-exe
           path: BingeMoteHelper-v*.exe
 
+      - name: Build the installer (Inno Setup)
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
+          Move-Item helper/Output/BingeMoteHelper-Setup-*.exe .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BingeMoteHelper-Setup
+          path: BingeMoteHelper-Setup-*.exe
+
   helper-e2e:
     runs-on: windows-latest
     steps:

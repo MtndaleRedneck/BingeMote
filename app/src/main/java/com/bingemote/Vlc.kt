@@ -21,7 +21,7 @@ data class VlcStatus(
     val fullscreen: Boolean,
     val subtitleTracks: List<SubTrack>,
 ) {
-    val playing: Boolean get() = state == "playing"
+    val playing: Boolean get() = state.equals("playing", ignoreCase = true)
     val volumePct: Int get() = Math.round(volumeRaw * 100f / 256f)
     val remainingSec: Long get() = (lengthSec - timeSec).coerceAtLeast(0)
 }
