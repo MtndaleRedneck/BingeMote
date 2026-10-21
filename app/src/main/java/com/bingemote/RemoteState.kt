@@ -29,6 +29,8 @@ class RemoteState(
 
     /** VLC didn't answer but the helper did: the PC is fine, VLC just isn't open. */
     var vlcClosed by mutableStateOf(false)
+    /** The helper just started VLC: hide the error card while it comes up. */
+    var expectingVlc by mutableStateOf(false)
         private set
     var connecting by mutableStateOf(false)
         private set
@@ -85,6 +87,7 @@ class RemoteState(
             unreachable = false
             vlcClosed = false
             connecting = false
+            expectingVlc = false
         } catch (e: Vlc.BadAuth) {
             failures = 2
             unreachable = true

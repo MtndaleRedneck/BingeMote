@@ -40,11 +40,52 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
+    // VLC closed? The helper (always in the tray) lists and plays instead. In helper mode
+    // paths are relative to the movies folder.
+    var viaHelper by remember { mutableStateOf(false) }
 
-    fun atRoot(p: String) = root.isNotEmpty() &&
-        p.trimEnd('\\', '/').equals(root.trimEnd('\\', '/'), ignoreCase = true)
+    fun atRoot(p: String) =
+        if (viaHelper) p.isEmpty()
+        else root.isNotEmpty() && p.trimEnd('\\', '/').equals(root.trimEnd('\\', '/'), ignoreCase = true)
+
+    fun show(raw: List<BrowseItem>, dir: String, helperAtRoot: Boolean) {
+        // Locked to the assigned folder: no "up" once we are standing on it. The helper's
+        // listing has no ".." row of its own, so make one from the relative path.
+        val up = when {
+            atRoot(dir) || helperAtRoot -> emptyList()
+            viaHelper -> listOf(BrowseItem(name = "..", isDir = true, path = dir.substringBeforeLast('\\', ""), uri = "", sizeBytes = 0L))
+            else -> raw.filter { it.name == ".." }
+        }
+        val dirs = raw.filter { it.isDir && it.name != ".." }
+        val files = raw.filter { !it.isDir && isVideoFile(it.name) }
+        items = up + dirs + files
+        selected = if (up.isNotEmpty()) 1.coerceAtMost(items.size - 1) else 0
+        path = dir
+        loading = false
+        listState.scrollToItem(0)
+    }
+
+    fun loadHelper(rel: String) {
+        loading = true
+        error = null
+        scope.launch {
+            try {
+                val raw = withContext(Dispatchers.IO) {
+                    HelperClient.listMovies(remote.store.host, remote.store.helperPort, remote.store.helperToken, rel)
+                }
+                val rows = raw.map { (name, dir) ->
+                    BrowseItem(name = name, isDir = dir, path = if (rel.isEmpty()) name else "$rel\\$name", uri = "", sizeBytes = 0L)
+                }
+                show(rows, rel, rel.isEmpty())
+            } catch (e: Exception) {
+                loading = false
+                error = e.message ?: "Couldn't open that folder on the PC."
+            }
+        }
+    }
 
     fun load(dir: String) {
+        if (viaHelper) { loadHelper(dir); return }
         loading = true
         error = null
         scope.launch {
@@ -52,33 +93,52 @@ fun MoviesScreen(remote: RemoteState, onBack: () -> Unit) {
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
-                // Locked to the assigned folder: no "up" once we are standing on it.
-                val up = if (atRoot(dir)) emptyList() else raw.filter { it.name == ".." }
-                val dirs = raw.filter { it.isDir && it.name != ".." }
-                val files = raw.filter { !it.isDir && isVideoFile(it.name) }
-                items = up + dirs + files
-                selected = if (up.isNotEmpty()) 1.coerceAtMost(items.size - 1) else 0
-                path = dir
-                loading = false
-                listState.scrollToItem(0)
+                show(raw, dir, false)
             } catch (e: Exception) {
-                loading = false
-                error = if (root.isEmpty())
-                    "Couldn't open that folder. Pick a Movies folder in Settings, and check the PC is on."
-                else
-                    "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
+                if (remote.store.helperToken.isNotBlank()) {
+                    // VLC is closed - the helper takes over, relative to the movies folder.
+                    viaHelper = true
+                    loadHelper("")
+                } else {
+                    loading = false
+                    error = "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
+                }
             }
         }
     }
 
     fun upOne() {
+        if (viaHelper) {
+            val parent = path.substringBeforeLast('\\', "")
+            loadHelper(parent)
+            return
+        }
         val parent = path.trimEnd('\\', '/').substringBeforeLast('\\', "")
         if (parent.isNotBlank()) load(parent)
     }
 
     fun open(item: BrowseItem) {
         when {
-            item.isDir -> load(item.path)
+            item.isDir -> if (viaHelper) loadHelper(item.path) else load(item.path)
+            viaHelper -> {
+                scope.launch(Dispatchers.IO) {
+                    val failed = HelperClient.playMovie(
+                        remote.store.host, remote.store.helperPort, remote.store.helperToken, item.path,
+                        remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true,
+                    )
+                    if (failed == null) {
+                        remote.expectingVlc = true
+                        remote.retry()
+                        scope.launch {
+                            kotlinx.coroutines.delay(20000)
+                            remote.expectingVlc = false
+                        }
+                        withContext(Dispatchers.Main) { onBack() }
+                    } else {
+                        withContext(Dispatchers.Main) { error = failed }
+                    }
+                }
+            }
             else -> {
                 scope.launch(Dispatchers.IO) {
                     try { Vlc.playUri(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, item.uri) } catch (e: Exception) { }
