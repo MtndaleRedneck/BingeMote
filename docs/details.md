@@ -73,5 +73,5 @@ release downloads, to tell them apart from the phone app.
 `KEYSTORE_B64` / `KEYSTORE_PASSWORD` repository secrets, and publishes BingeMote PC.
 Android and PC release separately: `android-vX.Y.Z` (latest) ships
 `BingeMote-Android-X.Y.Z.apk`, `pc-vX.Y.Z` (never latest) ships the
-`BingeMote-PC-Setup-X.Y.Z.exe` installer. Publishing is a manual workflow dispatch with
+`BingeMote-PC-X.Y.Z.exe` installer. Publishing is a manual workflow dispatch with
 `publish=true` and a target, after review signs off on the exact commit.

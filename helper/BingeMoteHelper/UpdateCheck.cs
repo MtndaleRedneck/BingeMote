@@ -53,7 +53,7 @@ internal static class UpdateCheck
                     foreach (var a in assets.EnumerateArray())
                     {
                         var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                        if (name.StartsWith("BingeMote-PC-Setup-") && name.EndsWith(".exe"))
+                        if (name.StartsWith("BingeMote-PC") && name.EndsWith(".exe"))
                             return (version, ReleasePage);
                     }
                 }

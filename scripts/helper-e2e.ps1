@@ -7,7 +7,7 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
 # --- Part 0: the installer owns the firewall rule now: silent install, verify, silent uninstall ---
 Write-Host "== installer firewall setup =="
-$setup = Get-ChildItem "helper/Output/BingeMote-PC-Setup-*.exe" | Select-Object -First 1
+$setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
