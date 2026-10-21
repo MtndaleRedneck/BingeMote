@@ -1,3 +1,10 @@
+## v1.3.0
+
+- The window lists your paired phones by name: remove one or all, and pair a new phone by typing its name and tapping Pair
+- The tray menu is now just Show and Quit - pairing lives in the window
+- If Windows treats your Wi-Fi as "Public" (which blocks the phone), a popup offers to mark it Private in one click, open Settings, or not ask again for that Wi-Fi
+- Already-paired phones carry over and show as "Phone 1", "Phone 2" and so on
+
 ## v1.2.0
 
 **BingeMote-PC** (the installer) installs it with a Start menu entry and an optional desktop shortcut. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
@@ -6,14 +13,14 @@
 - New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer. Install over the top of 1.x; it replaces the old copy and removes the old autostart entry, shortcuts and firewall rule.
 - Friendlier setup messages, and the Wi-Fi help now says plainly what to click when Windows calls your home network Public
 - When BingeMote starts VLC for you, VLC's remote-control port listens only on the address your phone used - not on every network
-- Pair more than one phone: each phone pairs with its own code (tray menu, "New pairing code"). "Reset pairing" now forgets every phone
+- Pair more than one phone: each phone pairs with its own code, and pairing can be reset to forget every phone (in 1.2.0 these lived in the tray menu; from 1.3.0 they are in the window)
 - The status window refreshes every second while it is open - a pairing code shows the moment it exists - and sleeps while tucked in the tray
 - Movies without VLC running: BingeMote lists the folder and starts the movie in VLC itself
 
 - The window is now a small settings app: status, the movies folder with the usual Windows folder picker, pairing controls, and Quit - and it follows Windows dark/light mode
 - Opening the helper while it is already running brings its window up instead of doing nothing
 - Updating takes over from the running copy on its own. From 1.0.0 or 1.0.1: quit the old copy by hand first (right-click its tray icon, Quit)
-- New "Reset pairing" in the tray menu: forgets the phone and shows a fresh code
+- Pairing can be reset: forgets the phone and shows a fresh code
 - Keeps a small log file (%LocalAppData%\BingeMoteHelper\helper.log) to help with setup problems
 
 ## v1.0.1

@@ -39,6 +39,10 @@ internal static class Program
 
     /// <summary>One entry per paired phone. Pairing adds one; Remove takes one out.</summary>
     internal static readonly List<PairedPhone> Phones = new();
+    /// <summary>Guards Phones: the window mutates it on the UI thread while listener threads enumerate it.</summary>
+    internal static readonly object PhonesLock = new();
+    internal static PairedPhone[] PhonesSnapshot() { lock (PhonesLock) { return Phones.ToArray(); } }
+    internal static int PhonesCount { get { lock (PhonesLock) { return Phones.Count; } } }
     /// <summary>The name typed for the phone that is about to pair; consumed by a successful pairing.</summary>
     internal static string? PendingPhoneName;
     /// <summary>The window re-reads the phone list on the UI thread when this fires (any thread).</summary>
@@ -47,7 +51,7 @@ internal static class Program
     internal static readonly List<string> DeclinedNetworks = new();
     /// <summary>More phones than this on one PC is a mistake, not a household.</summary>
     internal const int MaxPhones = 8;
-    internal static bool Paired => Phones.Count > 0;
+    internal static bool Paired => PhonesCount > 0;
     /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
     internal static string? MoviesFolder;
     internal static string? PairCode;
@@ -129,7 +133,7 @@ internal static class Program
 
         Directory.CreateDirectory(DataDir);
         LoadConfig();
-        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + Phones.Count + (Phones.Count == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
+        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
 
         if (!File.Exists(FirewallMarker))
@@ -253,6 +257,8 @@ internal static class Program
         {
             if (!File.Exists(ConfigPath)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
+            lock (PhonesLock)
+            {
             Phones.Clear();
             DeclinedNetworks.Clear();
             if (doc.RootElement.TryGetProperty("phones", out var ps))
@@ -283,15 +289,16 @@ internal static class Program
                     if (!string.IsNullOrWhiteSpace(v)) DeclinedNetworks.Add(v);
                 }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
+            }
         }
-        catch { Phones.Clear(); DeclinedNetworks.Clear(); MoviesFolder = null; }
+        catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); MoviesFolder = null; }
     }
 
     internal static void SaveConfig()
     {
         var json = JsonSerializer.Serialize(new
         {
-            phones = Phones.Select(p => new { token = p.Token, name = p.Name }).ToArray(),
+            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name }).ToArray(),
             moviesFolder = MoviesFolder,
             declinedNetworks = DeclinedNetworks.ToArray(),
         });
@@ -537,7 +544,7 @@ internal sealed class HelperWindow : Form
         var text = dark ? DarkText : LightText;
         var muted = dark ? DarkMuted : LightMuted;
         _phoneList.Controls.Clear();
-        foreach (var ph in Program.Phones.ToArray())
+        foreach (var ph in Program.PhonesSnapshot())
         {
             var row = new Panel { Width = 525, Height = 34, Margin = new Padding(0, 0, 0, 6), BackColor = card };
             var name = new Label
@@ -560,7 +567,7 @@ internal sealed class HelperWindow : Form
             row.Controls.Add(remove);
             _phoneList.Controls.Add(row);
         }
-        _removeAll.Visible = Program.Phones.Count > 0;
+        _removeAll.Visible = Program.PhonesCount > 0;
     }
 
     private void RemovePhone(Program.PairedPhone ph)
@@ -568,19 +575,19 @@ internal sealed class HelperWindow : Form
         if (!ConfirmDialog.Ask(this,
                 "Remove " + ph.Name + "? It stops controlling this PC right away. You can pair it again any time with a new code.",
                 "Remove")) return;
-        Program.Phones.Remove(ph);
+        lock (Program.PhonesLock) { Program.Phones.Remove(ph); }
         Program.SaveConfig();
-        Program.Log("Phone removed: " + ph.Name + " (" + Program.Phones.Count + " left).");
+        Program.Log("Phone removed: " + ph.Name + " (" + Program.PhonesCount + " left).");
         RefreshPhones();
     }
 
     private void RemoveAllPhones()
     {
-        if (Program.Phones.Count == 0) return;
+        if (Program.PhonesCount == 0) return;
         if (!ConfirmDialog.Ask(this,
                 "Remove all phones? Every phone stops controlling this PC right away. Pair them again with new codes.",
                 "Remove all")) return;
-        Program.Phones.Clear();
+        lock (Program.PhonesLock) { Program.Phones.Clear(); }
         Program.SaveConfig();
         Program.Log("All phones removed.");
         RefreshPhones();
