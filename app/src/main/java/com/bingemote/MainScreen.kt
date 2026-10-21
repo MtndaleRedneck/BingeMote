@@ -59,6 +59,10 @@ fun MainScreen(
             }
 
             // Now playing
+            // When the PC is unreachable the card itself says so; no overlay, no Retry.
+            // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
+            val vlcOut = remote.vlcClosed && !remote.expectingVlc
+            val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
             Box(
                 Modifier
                     .padding(horizontal = 16.dp)
@@ -69,15 +73,15 @@ fun MainScreen(
                     .padding(horizontal = 18.dp, vertical = 16.dp),
             ) {
                 Column {
-                    // When the PC is unreachable the card itself says so; no overlay, no Retry.
-                    val lost = remote.unreachable && !remote.expectingVlc
                     Text(
-                        if (lost) "Can't reach your PC" else s?.title?.ifBlank { "Nothing playing" } ?: "Nothing playing",
+                        if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
+                        else s?.title?.ifBlank { "Nothing playing" } ?: "Nothing playing",
                         color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
                         maxLines = 2,
                     )
                     Text(
                         if (lost) "Trying to reconnect"
+                        else if (vlcOut) "Pick a film in Movies - it starts by itself"
                         else when (s?.state) {
                             "playing" -> "Playing"
                             "paused" -> "Paused"
@@ -88,17 +92,45 @@ fun MainScreen(
                 }
             }
 
+            if (lost) {
+                Spacer(Modifier.height(14.dp))
+                Column(
+                    Modifier
+                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Card)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text("Phone blocked?", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Windows may have marked the PC's Wi-Fi as Public. Open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
+                        color = TextC, fontSize = 13.sp,
+                    )
+                }
+            }
             Spacer(Modifier.height(20.dp))
             SeekBlock(remote)
             Spacer(Modifier.height(18.dp))
             VolumeRow(remote)
             if (remote.helperDown) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "BingeMote isn't running on the PC - using VLC's volume. Mouse mode needs BingeMote.",
-                    color = Muted, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
+                Spacer(Modifier.height(10.dp))
+                Column(
+                    Modifier
+                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Card)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text("Can't reach BingeMote on the PC", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Mouse, keyboard and Windows volume are off - using VLC's volume. If the PC's Wi-Fi is marked Public, open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
+                        color = TextC, fontSize = 13.sp,
+                    )
+                }
             }
             Spacer(Modifier.height(18.dp))
             SkipRow(remote)

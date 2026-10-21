@@ -1,3 +1,8 @@
+## v1.4.0
+
+- Clearer connection cards: they say exactly what's wrong (phone cut off, PC program off, or VLC closed) and point at the fix
+- Keyboard: arrows sit in a cross, no Tab key
+
 ## v1.3.3
 
 - Fix a crash opening Settings or Movies when a Movies folder was already set
