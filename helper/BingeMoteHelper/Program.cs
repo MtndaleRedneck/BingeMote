@@ -39,6 +39,10 @@ internal static class Program
             return FirewallSetup.RunElevated(FirewallMarker);
         }
 
+        // One copy at a time: a second launch just exits, no confusing error box.
+        using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var onlyCopy);
+        if (!onlyCopy) return 0;
+
         Directory.CreateDirectory(DataDir);
         LoadConfig();
         RegisterAutostart();
@@ -49,17 +53,29 @@ internal static class Program
             FirewallSetup.ExplainAndRelaunch();
         }
 
-        // Test hook: CI sets BINGEMOTE_PAIR_CODE so it can drive the pairing flow.
-        // Anyone who can set this machine's environment variables already owns the PC.
+        // A live pairing code is a way in, so one exists only when this PC still needs
+        // pairing. After pairing, a new code comes only from the tray menu.
         var overrideCode = Environment.GetEnvironmentVariable("BINGEMOTE_PAIR_CODE");
-        PairCode = overrideCode is { Length: 6 } && overrideCode.All(char.IsDigit) ? overrideCode : NewPairCode();
-        PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
+#if !PAIR_CODE_HOOK
+        // Shipped builds never honor a fixed code. CI defines PAIR_CODE_HOOK for its own copy.
+        overrideCode = null;
+#endif
+        if (overrideCode is { Length: 6 } && overrideCode.All(char.IsDigit))
+        {
+            PairCode = overrideCode;
+            PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
+        }
+        else if (Token == null)
+        {
+            PairCode = NewPairCode();
+            PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
+        }
 
         using var http = new HttpServer();
         using var discovery = new DiscoveryResponder();
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
-            MessageBox.Show("Could not start the helper. Check the firewall setup completed and no other copy is running.\n\n" + ex.Message,
+            MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the helper's port.\n\n" + ex.Message,
                 "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -108,6 +124,7 @@ internal static class Program
 /// <summary>The pairing window: shows the current 6-digit code and connection status, sits in the tray.</summary>
 internal sealed class HelperWindow : Form
 {
+    private bool _allowShow;
     private readonly Label _code;
     private readonly Label _status;
     private readonly NotifyIcon _tray;
@@ -151,7 +168,7 @@ internal sealed class HelperWindow : Form
         Controls.Add(title); Controls.Add(_code); Controls.Add(hint); Controls.Add(_status);
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Show pairing code", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
+        menu.Items.Add("Show pairing code", null, (_, _) => { _allowShow = true; Show(); WindowState = FormWindowState.Normal; Activate(); });
         menu.Items.Add("New pairing code", null, (_, _) =>
         {
             Program.PairCode = Program.NewPairCode();
@@ -166,7 +183,7 @@ internal sealed class HelperWindow : Form
             Visible = true,
             ContextMenuStrip = menu,
         };
-        _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
+        _tray.DoubleClick += (_, _) => { _allowShow = true; Show(); WindowState = FormWindowState.Normal; Activate(); };
 
         // Keep the status line and an expired code fresh.
         _timer = new System.Windows.Forms.Timer { Interval = 2000 };
@@ -183,6 +200,28 @@ internal sealed class HelperWindow : Form
                 : "Listening on port " + Program.HttpPort + " - paired";
         };
         _timer.Start();
+    }
+
+    // Paired PCs get no popup at login: the helper starts tucked in the tray.
+    protected override void SetVisibleCore(bool value)
+    {
+        if (!_allowShow && Program.Token != null) value = false;
+        base.SetVisibleCore(value);
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        // Public Wi-Fi silently blocks the phone; check off the UI thread, warn on it.
+        Task.Run(() =>
+        {
+            try
+            {
+                if (NetworkCheck.AnyPublicProfile())
+                    BeginInvoke(new Action(NetworkCheck.WarnIfPublic));
+            }
+            catch { /* a skipped warning never stops the helper */ }
+        });
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

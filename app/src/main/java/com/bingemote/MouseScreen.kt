@@ -75,17 +75,20 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                 .padding(bottom = 190.dp, end = 40.dp)
                 .pointerInput(host, port, token) {
                     var accX = 0f; var accY = 0f
+                    val accLock = Any()
                     var dragLatched = false
                     var sender: Job? = null
                     fun startSender() {
                         if (sender?.isActive == true) return
-                        sender = scope.launch(Dispatchers.IO) {
+                        sender = scope.launch {
                             while (isActive) {
                                 delay(40)
-                                val dx = accX; val dy = accY
+                                // Moves ride the same channel as buttons and scrolls, so a
+                                // drag can never start before its button-down reaches the PC.
+                                val dx: Float; val dy: Float
+                                synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f }
                                 if (dx != 0f || dy != 0f) {
-                                    accX = 0f; accY = 0f
-                                    try { HelperClient.move(host, port, token, dx * 2.2f, dy * 2.2f) } catch (e: Exception) { helperOk = false }
+                                    fire { HelperClient.move(host, port, token, dx * 2.2f, dy * 2.2f) }
                                 }
                             }
                         }
@@ -154,7 +157,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                                 val delta = ch.positionChange()
                                 if (delta != Offset.Zero) {
                                     if (abs(delta.x) + abs(delta.y) > 2f) moved = true
-                                    accX += delta.x; accY += delta.y
+                                    synchronized(accLock) { accX += delta.x; accY += delta.y }
                                     ch.consume()
                                 }
                             }
@@ -162,8 +165,8 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         }
                         lpJob.cancel()
                         sender?.cancel()
-                        val lastX = accX; val lastY = accY
-                        accX = 0f; accY = 0f
+                        val lastX: Float; val lastY: Float
+                        synchronized(accLock) { lastX = accX; lastY = accY; accX = 0f; accY = 0f }
                         if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * 2.2f, lastY * 2.2f) }
 
                         val duration = System.currentTimeMillis() - downTime

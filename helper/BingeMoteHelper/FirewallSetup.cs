@@ -68,10 +68,10 @@ internal static class FirewallSetup
         }
         catch
         {
-            // The user said no at the UAC prompt. The helper still runs; the phone just
-            // won't reach it until the rule exists. We ask again on next launch.
+            // The user said no at the UAC prompt. Without the rule and listen permission
+            // the helper cannot accept connections, so it will close and offer again next launch.
             MessageBox.Show(
-                "No firewall rule was added. The phone app will not find this PC until it is. BingeMote Helper will offer again next time it starts.",
+                "No firewall rule was added. Without it the helper cannot listen for your phone, so it will now close. It will offer to set up again next time you start it.",
                 "BingeMote Helper setup",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);

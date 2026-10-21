@@ -82,8 +82,8 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Publish helper exe
-        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - name: Publish helper exe (with the CI-only pairing hook)
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK" -o helper/out
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
         run: pwsh -File scripts/helper-e2e.ps1
