@@ -17,8 +17,9 @@ internal static class UpdateCheck
     public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases";
 
     /// <summary>The published version if it is newer than [current] and ships the installer, else null. Never throws.
-    /// The automatic background checks use this one.</summary>
-    public static (string Version, string Url)? LatestNewerThan(string current)
+    /// The automatic background checks use this one. Carries the installer's download URL
+    /// and the release's SHA-256 digest (when GitHub has one) so the update can verify itself.</summary>
+    public static (string Version, string ExeUrl, string? Sha256)? LatestNewerThan(string current)
     {
         try { return LatestNewerThanOrThrow(current); }
         catch { return null; }
@@ -26,7 +27,7 @@ internal static class UpdateCheck
 
     /// <summary>Same as [LatestNewerThan] but lets failures reach the caller, so the manual
     /// "Check for updates" button can tell a failed check apart from "no newer version".</summary>
-    public static (string Version, string Url)? LatestNewerThanOrThrow(string current)
+    public static (string Version, string ExeUrl, string? Sha256)? LatestNewerThanOrThrow(string current)
     {
             using var http = new HttpClient();
             http.DefaultRequestHeaders.UserAgent.ParseAdd("BingeMotePC");
@@ -61,7 +62,16 @@ internal static class UpdateCheck
                     {
                         var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
                         if (name.StartsWith("BingeMote-PC") && name.EndsWith(".exe"))
-                            return (version, ReleasePage);
+                        {
+                            var url = a.TryGetProperty("browser_download_url", out var u) ? u.GetString() ?? "" : "";
+                            string? sha = null;
+                            if (a.TryGetProperty("digest", out var dg))
+                            {
+                                var dsv = dg.GetString() ?? "";
+                                if (dsv.StartsWith("sha256:") && dsv.Length == 71) sha = dsv.Substring(7).ToLowerInvariant();
+                            }
+                            if (url.Length > 0) return (version, url, sha);
+                        }
                     }
                 }
             }

@@ -1,3 +1,10 @@
+## v1.4.0
+
+- The Public Wi-Fi warning now sits in the window until fixed, re-checks every 30 seconds, and a home network is never buried by Not now
+- Pairing is clearer: a first-run pointer to the phone app, tighter buttons, plainer code wording
+- Updates: one click downloads the installer (checked against the release's SHA-256) and opens it - Windows still asks for permission
+- Crisp program icon at every size (the old file topped out at 128px)
+
 ## v1.3.1
 
 - New-look window: smaller, rounded, follows Windows dark mode

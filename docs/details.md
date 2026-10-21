@@ -1,5 +1,7 @@
 # BingeMote - technical details
 
+Runs on Android 12 or newer and 64-bit Windows 10/11.
+
 ## Architecture
 
 ```

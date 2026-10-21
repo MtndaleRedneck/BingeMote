@@ -427,19 +427,22 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    listOf("enter" to "Enter", "backspace" to "Backspace", "escape" to "Esc", "space" to "Space", "tab" to "Tab").forEach { (k, label) ->
+                    listOf("enter" to "Enter", "backspace" to "Backspace", "escape" to "Esc", "space" to "Space").forEach { (k, label) ->
                         TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 13.sp) }
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                // Inverted-T arrow cluster.
+                // Cross arrow cluster: up over down, left and right flanking.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     TextButton(onClick = { onKey("up") }) { Text("↑", color = Orange, fontSize = 16.sp) }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     TextButton(onClick = { onKey("left") }) { Text("←", color = Orange, fontSize = 16.sp) }
-                    TextButton(onClick = { onKey("down") }) { Text("↓", color = Orange, fontSize = 16.sp) }
+                    Spacer(Modifier.width(48.dp))
                     TextButton(onClick = { onKey("right") }) { Text("→", color = Orange, fontSize = 16.sp) }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { onKey("down") }) { Text("↓", color = Orange, fontSize = 16.sp) }
                 }
             }
         }

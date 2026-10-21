@@ -11,7 +11,7 @@ A couch remote for VLC on your Windows PC, with a movie browser and a mouse-and-
 3. The installer asks for Windows permission once - it adds the firewall rule (home networks only) so the phone can reach the PC.
 4. Open the Android app and follow setup: find the PC, enter its pairing code, then configure VLC's web interface.
 
-Android 12+ and Windows x64. Keep both devices on the same trusted private network.
+Keep both devices on the same trusted private network.
 
 ## Controls
 

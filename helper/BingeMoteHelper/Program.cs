@@ -49,6 +49,9 @@ internal static class Program
     internal static Action? PhonesChanged;
     /// <summary>Wi-Fi names where he chose "Not now" on the public-network prompt; not asked again.</summary>
     internal static readonly List<string> DeclinedNetworks = new();
+    /// <summary>Wi-Fi names he marked as home. A home network is never buried by "Not now":
+    /// if it shows as Public again, it is asked about again.</summary>
+    internal static readonly List<string> HomeNetworks = new();
     /// <summary>More phones than this on one PC is a mistake, not a household.</summary>
     internal const int MaxPhones = 8;
     internal static bool Paired => PhonesCount > 0;
@@ -56,7 +59,7 @@ internal static class Program
     internal static string? MoviesFolder;
     internal static string? PairCode;
     /// <summary>A newer published helper version, found by the background update check.</summary>
-    internal static string? AvailableUpdate;
+    internal static (string Version, string ExeUrl, string? Sha256)? AvailableUpdate;
     internal static DateTime PairCodeExpires = DateTime.MinValue;
     internal static int PairFailures;
     internal const int MaxPairFailures = 5;
@@ -261,6 +264,7 @@ internal static class Program
             {
             Phones.Clear();
             DeclinedNetworks.Clear();
+            HomeNetworks.Clear();
             if (doc.RootElement.TryGetProperty("phones", out var ps))
                 foreach (var p in ps.EnumerateArray())
                 {
@@ -288,10 +292,16 @@ internal static class Program
                     var v = n.GetString();
                     if (!string.IsNullOrWhiteSpace(v)) DeclinedNetworks.Add(v);
                 }
+            if (doc.RootElement.TryGetProperty("homeNetworks", out var hn))
+                foreach (var n in hn.EnumerateArray())
+                {
+                    var v = n.GetString();
+                    if (!string.IsNullOrWhiteSpace(v)) HomeNetworks.Add(v);
+                }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
             }
         }
-        catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); MoviesFolder = null; }
+        catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
     }
 
     internal static void SaveConfig()
@@ -301,6 +311,7 @@ internal static class Program
             phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name }).ToArray(),
             moviesFolder = MoviesFolder,
             declinedNetworks = DeclinedNetworks.ToArray(),
+            homeNetworks = HomeNetworks.ToArray(),
         });
         File.WriteAllText(ConfigPath, json);
     }
@@ -326,7 +337,7 @@ internal static class Program
             {
                 var current = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
                 var newer = UpdateCheck.LatestNewerThan(current);
-                if (newer != null) Program.AvailableUpdate = newer.Value.Version;
+                if (newer != null) Program.AvailableUpdate = newer.Value;
             }
             catch { /* a failed check is invisible */ }
         });
@@ -386,6 +397,17 @@ internal sealed class HelperWindow : Form
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly ContextMenuStrip _menu;
+    private readonly LinkLabel _firstRun;
+    private readonly Panel _wifiBorder;
+    private readonly Label _wifiNote;
+    private readonly Button _wifiBtn;
+    private NetProfile? _wifiProfile;
+    private bool _wifiStripVisible;
+    private bool _wifiDialogOpen;
+    private readonly System.Windows.Forms.Timer _wifiTimer;
+    private readonly Dictionary<Control, int> _baseTops = new();
+    private int _baseHeight;
+    private bool _downloading;
 
     public HelperWindow()
     {
@@ -400,15 +422,28 @@ internal sealed class HelperWindow : Form
         var y = margin;
 
         _pairHeader = Header("Pair new phone", margin, y); y += 20 + 12;
+        _firstRun = new LinkLabel
+        {
+            Text = "New here? Get the BingeMote app on your phone, then give the phone a name and tap Pair.",
+            Font = new Font("Segoe UI", 8f),
+            AutoSize = true, Left = margin, Top = y,
+            LinkColor = Orange, ActiveLinkColor = Orange, VisitedLinkColor = Orange,
+        };
+        _firstRun.Links.Add(18, 13, "https://mtndaleredneck.github.io/BingeMote/");
+        _firstRun.LinkClicked += (_, e) =>
+        {
+            try { Process.Start(new ProcessStartInfo((string)e.Link!.LinkData!) { UseShellExecute = true }); } catch { }
+        };
+        y += 18;
         _nameBox = new TextBox
         {
-            Left = margin, Top = y + 3, Width = contentW - 76 - 8,
+            Left = margin, Top = y + 3, Width = contentW - 60 - 8,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Segoe UI", 10),
             PlaceholderText = "Phone name",
         };
         Round(_nameBox, 4);
-        _pair = MakeButton("Pair", margin + contentW - 76, y, 76);
+        _pair = MakeButton("Pair", margin + contentW - 60, y, 60);
         _pair.Height = 32;
         _pair.Enabled = false;
         StylePrimary(_pair);
@@ -431,7 +466,7 @@ internal sealed class HelperWindow : Form
         y += 28 + 6;
         _codeNote = new Label
         {
-            Text = "Type it on the phone. Works once, for 10 minutes.",
+            Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
             AutoSize = true, Left = margin, Top = y,
         };
@@ -490,12 +525,47 @@ internal sealed class HelperWindow : Form
 
         ClientSize = new Size(490, y);
 
+        // The public-Wi-Fi strip: sits at the top of the window while the network is
+        // public, so the fix is never buried. The 30s poll keeps it in sync.
+        _wifiBorder = new Panel
+        {
+            Left = margin, Top = margin, Width = contentW, Height = 62,
+            BackColor = Orange, Visible = false, Padding = new Padding(1),
+        };
+        var wifiCard = new Panel { Dock = DockStyle.Fill };
+        var wifiText = new Label
+        {
+            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone.",
+            Font = new Font("Segoe UI", 9f),
+            Left = 12, Top = 8, Width = contentW - 12 - 160 - 16, Height = 62 - 16,
+        };
+        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10, 7, 160);
+        _wifiBtn.Height = 28;
+        StylePrimary(_wifiBtn);
+        _wifiBtn.Click += (_, _) => FixHomeWifi();
+        _wifiNote = new Label
+        {
+            Text = "(Windows will ask for permission)",
+            Font = new Font("Segoe UI", 7.5f),
+            Width = 160, TextAlign = ContentAlignment.TopCenter,
+            Left = contentW - 160 - 10, Top = 40, Height = 16,
+        };
+        wifiCard.Controls.Add(wifiText);
+        wifiCard.Controls.Add(_wifiBtn);
+        wifiCard.Controls.Add(_wifiNote);
+        _wifiBorder.Controls.Add(wifiCard);
+        Round(wifiCard, 7);
+        Round(_wifiBorder, 8);
+
         Controls.AddRange(new Control[]
         {
-            _pairHeader, _nameBox, _pair, _codeCaption, _code, _codeNote,
+            _wifiBorder,
+            _pairHeader, _firstRun, _nameBox, _pair, _codeCaption, _code, _codeNote,
             _phonesHeader, _phoneList, _removeAll,
             _aboutHeader, _feedbackCard, _updatesCard,
         });
+        foreach (Control c in Controls) _baseTops[c] = c.Top;
+        _baseHeight = y;
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Show BingeMote", null, (_, _) => ShowFromTray());
@@ -508,7 +578,7 @@ internal sealed class HelperWindow : Form
             ContextMenuStrip = _menu,
         };
         _tray.DoubleClick += (_, _) => ShowFromTray();
-        _tray.BalloonTipClicked += (_, _) => OpenUpdatePage();
+        _tray.BalloonTipClicked += (_, _) => { ShowFromTray(); StartUpdateDownload(); };
 
         // The server adds and drops phones off-thread; repaint the list when that happens.
         Program.PhonesChanged = () =>
@@ -516,17 +586,23 @@ internal sealed class HelperWindow : Form
             try { BeginInvoke(new Action(() => { RefreshPhones(); TickStatus(); })); } catch { }
         };
 
-        // Public Wi-Fi silently blocks the phone: check at launch and whenever the network
-        // changes, asking at most once per Wi-Fi name.
+        // Public Wi-Fi silently blocks the phone: an in-window strip with the one-click fix
+        // stays up while the network is public, and the popup still asks at launch and on
+        // network changes (at most once per Wi-Fi name, except home networks, which re-ask).
         Action<NetProfile> showWifi = p =>
         {
-            try { BeginInvoke(new Action(() => ShowPublicWifiDialog(p))); } catch { }
+            try { BeginInvoke(new Action(() => { _wifiProfile = p; SetWifiStripVisible(true); ShowPublicWifiDialog(p); })); } catch { }
         };
         Task.Run(() => { try { NetworkCheck.CheckNow(showWifi); } catch { /* never stop startup */ } });
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += (_, _) =>
         {
             try { NetworkCheck.QueueCheck(showWifi); } catch { }
         };
+        // A profile flipped to Private in Windows Settings raises no network event, so the
+        // strip re-checks every 30 seconds. The same poll re-asks for a home network.
+        _wifiTimer = new System.Windows.Forms.Timer { Interval = 30000 };
+        _wifiTimer.Tick += (_, _) => ProbeWifi();
+        _wifiTimer.Start();
 
         // Follow the Windows dark/light mode setting, live.
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, _) =>
@@ -554,6 +630,92 @@ internal sealed class HelperWindow : Form
         _timer.Tick += (_, _) => TickStatus();
         // First launch with the window already on screen (unpaired PCs): start ticking now.
         if (Visible) { TickStatus(); _timer.Start(); }
+    }
+
+    private const int StripH = 74;
+    private const int FirstRunH = 18;
+
+    /// <summary>Base layout + the two optional blocks (Wi-Fi strip on top, first-run line
+    /// under the pair header): everything below a visible block shifts down.</summary>
+    private void ApplyLayout()
+    {
+        if (_baseHeight == 0 || _firstRun == null || _wifiBorder == null) return;
+        var stripDy = _wifiStripVisible ? StripH : 0;
+        var firstRunDy = _firstRun.Visible ? 0 : -FirstRunH;
+        var frTop = _baseTops[_firstRun];
+        foreach (Control c in Controls)
+        {
+            if (c == _wifiBorder) { c.Top = _baseTops[c]; continue; }
+            var dy = stripDy;
+            if (_baseTops[c] > frTop) dy += firstRunDy;
+            c.Top = _baseTops[c] + dy;
+        }
+        ClientSize = new Size(490, _baseHeight + stripDy + firstRunDy);
+    }
+
+    private void SetWifiStripVisible(bool show)
+    {
+        if (show == _wifiStripVisible) return;
+        _wifiStripVisible = show;
+        _wifiBorder.Visible = show;
+        ApplyLayout();
+    }
+
+    /// <summary>The 30-second profile re-check: sync the strip with reality (a network fixed
+    /// in Windows Settings raises no event), and re-ask when a home network shows Public.</summary>
+    private void ProbeWifi()
+    {
+        if (_wifiDialogOpen) return;
+        Task.Run(() =>
+        {
+            var p = NetworkCheck.DefaultRouteProfile();
+            var isPublic = p != null && p.Category.Equals("Public", StringComparison.OrdinalIgnoreCase);
+            try { BeginInvoke(new Action(() =>
+            {
+                _wifiProfile = isPublic ? p : null;
+                SetWifiStripVisible(isPublic);
+                if (isPublic && p != null)
+                {
+                    var declined = Program.DeclinedNetworks.Any(n => string.Equals(n, p.Name, StringComparison.OrdinalIgnoreCase));
+                    var knownHome = Program.HomeNetworks.Any(n => string.Equals(n, p.Name, StringComparison.OrdinalIgnoreCase));
+                    if (!declined || knownHome) ShowPublicWifiDialog(p);
+                }
+            })); } catch { }
+        });
+    }
+
+    /// <summary>The strip's one-click fix: mark this Wi-Fi Private (one elevated Windows prompt).</summary>
+    private void FixHomeWifi()
+    {
+        var profile = _wifiProfile;
+        if (profile == null) return;
+        _wifiBtn.Enabled = false;
+        Task.Run(() =>
+        {
+            var ok = NetworkCheck.MarkPrivate(profile);
+            try { BeginInvoke(new Action(() =>
+            {
+                _wifiBtn.Enabled = true;
+                if (ok)
+                {
+                    Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                    if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
+                        Program.HomeNetworks.Add(profile.Name);
+                    Program.SaveConfig();
+                    Program.Log("Network \"" + profile.Name + "\" marked Private from the window strip.");
+                    _wifiProfile = null;
+                    SetWifiStripVisible(false);
+                    NoteDialog.Show(this,
+                        "\u2713 Done. Your phone can reach this PC now.\n\nThis Wi-Fi is now marked Private in Windows, and Windows remembers it.");
+                }
+                else
+                {
+                    NoteDialog.Show(this,
+                        "The change did not go through. Opening the Windows setting so you can switch this Wi-Fi to Private by hand.");
+                    OpenWifiSettings();
+                }
+            })); } catch { }
+        });
     }
 
     /// <summary>Roll an expired pairing code (window-visible work).</summary>
@@ -586,14 +748,14 @@ internal sealed class HelperWindow : Form
             {
                 Text = ph.Name,
                 AutoEllipsis = true, AutoSize = false,
-                Left = 14, Top = 13, Width = rowWidth - 14 - 84 - 10 - 10, Height = 22,
+                Left = 14, Top = 13, Width = rowWidth - 14 - 64 - 10 - 10, Height = 22,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 10.5f),
                 ForeColor = text, BackColor = card,
             };
             var remove = new Button
             {
-                Text = "Remove", Width = 84, Height = 30, Left = rowWidth - 84 - 10, Top = 9,
+                Text = "Remove", Width = 64, Height = 30, Left = rowWidth - 64 - 10, Top = 9,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
                 BackColor = btnBg, ForeColor = text,
             };
@@ -606,6 +768,8 @@ internal sealed class HelperWindow : Form
             _phoneList.Controls.Add(row);
         }
         _removeAll.Visible = Program.PhonesCount > 0;
+        _firstRun.Visible = Program.PhonesCount == 0;
+        ApplyLayout();
     }
 
     private void RemovePhone(Program.PairedPhone ph)
@@ -649,9 +813,10 @@ internal sealed class HelperWindow : Form
     {
         if (Program.AvailableUpdate == null || _updateAnnounced) return;
         _updateAnnounced = true;
-        _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
+        var v = Program.AvailableUpdate.Value.Version;
+        _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + v, null, (_, _) => { ShowFromTray(); StartUpdateDownload(); }));
         _tray.BalloonTipTitle = "BingeMote update";
-        _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
+        _tray.BalloonTipText = "Version " + v + " is available. Click here to download it.";
         _tray.ShowBalloonTip(8000);
     }
 
@@ -702,6 +867,24 @@ internal sealed class HelperWindow : Form
         _code.ForeColor = Orange;
         _codeNote.ForeColor = muted;
         _phoneList.BackColor = bg;
+        _firstRun.BackColor = bg;
+        _firstRun.ForeColor = muted;
+        _firstRun.LinkColor = Orange;
+        _firstRun.ActiveLinkColor = Orange;
+        _firstRun.VisitedLinkColor = Orange;
+        _wifiBorder.BackColor = Orange;
+        if (_wifiBorder.Controls.Count > 0)
+        {
+            var wc = _wifiBorder.Controls[0];
+            wc.BackColor = card;
+            foreach (Control c in wc.Controls)
+            {
+                if (c is Button) continue;
+                c.BackColor = card;
+                c.ForeColor = c == _wifiNote ? muted : text;
+            }
+        }
+        Round(_wifiBorder, 8);
         _feedbackCard.BackColor = card;
         _updatesCard.BackColor = card;
         foreach (Control c in _feedbackCard.Controls) { c.BackColor = c is Button ? cardBtn : card; c.ForeColor = text; }
@@ -772,12 +955,12 @@ internal sealed class HelperWindow : Form
     /// <summary>The Updates card's manual check: result shows inline, never a tray balloon.</summary>
     private void ManualUpdateCheck()
     {
-        if (_manualDownload) { OpenUpdatePage(); return; }
+        if (_manualDownload) { StartUpdateDownload(); return; }
         _checkUpdates.Enabled = false;
         _updatesCaption.Text = "Checking...";
         Task.Run(() =>
         {
-            (string Version, string Url)? newer;
+            (string Version, string ExeUrl, string? Sha256)? newer;
             try { newer = UpdateCheck.LatestNewerThanOrThrow(Program.VersionText); }
             catch
             {
@@ -792,7 +975,7 @@ internal sealed class HelperWindow : Form
             {
                 if (newer != null)
                 {
-                    Program.AvailableUpdate = newer.Value.Version;
+                    Program.AvailableUpdate = newer.Value;
                     _updatesCaption.Text = "Version " + newer.Value.Version + " is available.";
                     _manualDownload = true;
                     _checkUpdates.Text = "Download";
@@ -808,9 +991,49 @@ internal sealed class HelperWindow : Form
         });
     }
 
+    /// <summary>Download the update's installer, check it against the release's SHA-256, and
+    /// open it. Nothing installs on its own: the installer still shows and Windows asks once.</summary>
+    private void StartUpdateDownload()
+    {
+        var u = Program.AvailableUpdate;
+        if (u == null || _downloading) return;
+        _downloading = true;
+        _checkUpdates.Enabled = false;
+        _updatesCaption.Text = "Downloading version " + u.Value.Version + "...";
+        var upd = u.Value;
+        Task.Run(async () =>
+        {
+            try
+            {
+                var path = await SelfUpdate.Download(upd.Version, upd.ExeUrl, upd.Sha256);
+                Program.Log("Update " + upd.Version + " downloaded and verified; opening the installer.");
+                try { BeginInvoke(new Action(() =>
+                {
+                    _updatesCaption.Text = "Checked. Opening the installer - Windows will ask for permission.";
+                })); } catch { }
+                await Task.Delay(1500);
+                SelfUpdate.LaunchAndQuit(path);
+            }
+            catch
+            {
+                Program.Log("Update download failed or failed its check.");
+                try { BeginInvoke(new Action(() =>
+                {
+                    _updatesCaption.Text = "The download didn't check out. Try again.";
+                    _checkUpdates.Enabled = true;
+                    _downloading = false;
+                })); } catch { }
+            }
+        });
+    }
+
     /// <summary>The public-Wi-Fi popup: names the network, one click marks it Private.</summary>
     private void ShowPublicWifiDialog(NetProfile profile)
     {
+        if (_wifiDialogOpen) return;
+        _wifiDialogOpen = true;
+        try
+        {
         using var dlg = new WifiDialog(profile);
         switch (dlg.ShowDialog(this))
         {
@@ -818,7 +1041,11 @@ internal sealed class HelperWindow : Form
                 if (NetworkCheck.MarkPrivate(profile))
                 {
                     Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                    if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
+                        Program.HomeNetworks.Add(profile.Name);
                     Program.SaveConfig();
+                    _wifiProfile = null;
+                    SetWifiStripVisible(false);
                     Program.Log("Network \"" + profile.Name + "\" marked Private from the popup.");
                     NoteDialog.Show(this,
                         "\u2713 Done. Your phone can reach this PC now.\n\nThis Wi-Fi is now marked Private in Windows, and Windows remembers it.");
@@ -835,10 +1062,14 @@ internal sealed class HelperWindow : Form
                 break;
             case WifiDialog.Result.NotNow:
                 Program.DeclinedNetworks.Add(profile.Name);
+                // Saying "Not now" on a network once marked home means it is not home after all.
+                Program.HomeNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
                 Program.SaveConfig();
                 Program.Log("Public-network popup declined for \"" + profile.Name + "\" - not asking again.");
                 break;
         }
+        }
+        finally { _wifiDialogOpen = false; }
     }
 
     private static void OpenWifiSettings()
@@ -864,15 +1095,6 @@ internal sealed class HelperWindow : Form
     {
         if (!_allowShow && Program.Paired) value = false;
         base.SetVisibleCore(value);
-    }
-
-    private static void OpenUpdatePage()
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(UpdateCheck.ReleasePage) { UseShellExecute = true });
-        }
-        catch { /* he can open the page from the app's About link too */ }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

@@ -1,0 +1,65 @@
+using System.Diagnostics;
+using System.Net.Http;
+using System.Security.Cryptography;
+
+namespace BingeMoteHelper;
+
+/// <summary>
+/// Downloads the installer for an available update, checks it against the release's
+/// SHA-256, then hands it to Windows. Only GitHub hosts are followed. Nothing installs
+/// on its own: the installer still shows and Windows asks for permission once.
+/// </summary>
+internal static class SelfUpdate
+{
+    private static readonly HttpClient Http = new();
+
+    /// <summary>Fetch the installer to the temp folder and verify its SHA-256 when the
+    /// release published one. Returns the local path; throws on any failure.</summary>
+    public static async Task<string> Download(string version, string exeUrl, string? sha256)
+    {
+        var current = exeUrl;
+        for (var hops = 0; ; hops++)
+        {
+            var host = new Uri(current).Host;
+            if (!host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+                !host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The download address was not trusted: " + host);
+            using var req = new HttpRequestMessage(HttpMethod.Get, current);
+            req.Headers.UserAgent.ParseAdd("BingeMotePC");
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            var code = (int)resp.StatusCode;
+            if (code is >= 300 and < 400)
+            {
+                var loc = resp.Headers.Location ?? throw new InvalidOperationException("The download could not start.");
+                current = new Uri(new Uri(current), loc).ToString();
+                if (hops >= 5) throw new InvalidOperationException("The download redirected too many times.");
+                continue;
+            }
+            resp.EnsureSuccessStatusCode();
+            var dest = Path.Combine(Path.GetTempPath(), "BingeMote-PC-" + version + ".exe");
+            await using (var fs = File.Create(dest))
+                await resp.Content.CopyToAsync(fs);
+            if (sha256 != null)
+            {
+                using var sha = SHA256.Create();
+                await using var rs = File.OpenRead(dest);
+                var hex = Convert.ToHexString(await sha.ComputeHashAsync(rs)).ToLowerInvariant();
+                if (!hex.Equals(sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    try { File.Delete(dest); } catch { }
+                    throw new InvalidOperationException("The download did not match the release's SHA-256.");
+                }
+            }
+            return dest;
+        }
+    }
+
+    /// <summary>Open the downloaded installer (it asks Windows for permission once) and
+    /// quit so it can replace the running exe.</summary>
+    public static void LaunchAndQuit(string path)
+    {
+        Program.Log("Opening the downloaded installer, quitting for the update.");
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        System.Windows.Forms.Application.Exit();
+    }
+}
