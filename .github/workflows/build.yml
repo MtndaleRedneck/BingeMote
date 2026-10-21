@@ -107,6 +107,13 @@ jobs:
       - name: Install VLC (for the movies launch test)
         run: choco install vlc --no-progress -y
 
+      - name: Build the installer from the test build (for the install/uninstall test)
+        run: |
+          choco install innosetup --no-progress -y
+          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
         run: pwsh -File scripts/helper-e2e.ps1
 

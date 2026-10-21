@@ -85,7 +85,8 @@ internal sealed class HttpServer : IDisposable
                             rr.GetProperty("path").GetString() ?? "",
                             rr.TryGetProperty("httpPort", out var hp) ? hp.GetInt32() : 8080,
                             rr.TryGetProperty("httpPassword", out var pw) ? pw.GetString() ?? "" : "",
-                            rr.TryGetProperty("fullscreen", out var fs) && fs.GetBoolean());
+                            rr.TryGetProperty("fullscreen", out var fs) && fs.GetBoolean(),
+                            req.LocalEndPoint.Address);
                         Reply(res, answer.Contains("\"error\"") ? 400 : 200, answer);
                     }
                     return;

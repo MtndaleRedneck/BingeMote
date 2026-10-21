@@ -46,8 +46,8 @@ internal static class FirewallSetup
     public static void ExplainAndRelaunch()
     {
         var answer = MessageBox.Show(
-            "BingeMote needs to open its port on your home network so the phone can reach it.\n\n" +
-            "Windows will now ask for administrator permission (the UAC prompt). It is used only to add one firewall rule, for Private networks only. Click Yes.",
+            "One Windows permission, then setup is done.\n\n" +
+            "BingeMote needs to let your phone reach this PC on your home network. Windows will now ask for administrator permission once - it is used only to add one firewall rule, for home (Private) networks only. Click Yes.",
             "BingeMote setup",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Information);
@@ -72,7 +72,7 @@ internal static class FirewallSetup
             // The user said no at the UAC prompt. Without the rule and listen permission
             // the helper cannot accept connections, so it will close and offer again next launch.
             MessageBox.Show(
-                "No firewall rule was added. Without it BingeMote cannot listen for your phone, so it will now close. It will offer to set up again next time you start it.",
+                "No firewall rule was added, so the phone cannot reach this PC yet. BingeMote will now close and offer to set up again next time you open it.",
                 "BingeMote setup",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -86,7 +86,7 @@ internal static class FirewallSetup
         if (code != 0) throw new InvalidOperationException($"netsh add rule exited {code}");
     }
 
-    private static bool UrlAclExists()
+    internal static bool UrlAclExists()
     {
         var psi = new ProcessStartInfo("netsh", "http show urlacl")
         {

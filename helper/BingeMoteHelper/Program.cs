@@ -121,8 +121,16 @@ internal static class Program
 
         if (!File.Exists(FirewallMarker))
         {
-            // One-time elevated step: add the Private-network-only firewall rule, then come back.
-            FirewallSetup.ExplainAndRelaunch();
+            // The Setup download adds the rule and listen permission during install; a
+            // first run of the plain exe adds them here with one admin prompt.
+            if (FirewallSetup.RuleExists() && FirewallSetup.UrlAclExists())
+            {
+                try { File.WriteAllText(FirewallMarker, DateTime.UtcNow.ToString("O")); } catch { }
+            }
+            else
+            {
+                FirewallSetup.ExplainAndRelaunch();
+            }
         }
 
         // A live pairing code is a way in, so one exists only when this PC still needs

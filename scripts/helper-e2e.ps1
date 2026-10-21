@@ -5,6 +5,26 @@ $ErrorActionPreference = 'Stop'
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
+# --- Part 0: the installer owns the firewall rule now: silent install, verify, silent uninstall ---
+Write-Host "== installer firewall setup =="
+$setup = Get-ChildItem "helper/Output/BingeMote-PC-Setup-*.exe" | Select-Object -First 1
+if (-not $setup) { throw "installer exe missing in helper/Output" }
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
+$rule = netsh advfirewall firewall show rule name="BingeMote"
+if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
+$acl = netsh http show urlacl
+if (-not ($acl | Select-String ':8488/')) { throw "installer did not add the listen permission" }
+Write-Host "ok: installer added the firewall rule and listen permission"
+$unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
+& $unins /VERYSILENT /NORESTART | Out-Null
+Start-Sleep -Seconds 3
+try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
+if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind" }
+try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
+if ($acl -match ':8488/') { throw "uninstaller left the listen permission behind" }
+Write-Host "ok: uninstaller removed the firewall rule and listen permission"
+
 # --- Part 1: the one-time elevated setup, run as-is (CI runners are already admin) ---
 Write-Host "== install-firewall =="
 # The helper is a WinExe, so `&` returns immediately and $LASTEXITCODE stays empty.

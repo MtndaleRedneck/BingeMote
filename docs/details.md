@@ -58,11 +58,12 @@ release downloads, to tell them apart from the phone app.
 - Input playback is `SendInput`, serialized behind one lock so two phones tapping at the
   same instant cannot interleave a gesture: relative mouse moves, button down/up, wheel
   for scroll, Ctrl+wheel for zoom, unicode key events for typed text.
-- First run elevates once (UAC) to add the firewall rule (Private profile only, TCP 8488
-  and UDP 8489) and the HTTP listen permission, verifies both with `netsh`, and writes a
-  marker file so it never asks again. Saying no leaves it running but unreachable
-  until it offers again on next launch. The 1.x rule ("BingeMote Helper") is removed in
-  favor of "BingeMote".
+- Firewall: the installer (admin) adds the Private-profile rule (TCP 8488, UDP 8489) and
+  the HTTP listen permission during install, and removes both on uninstall; the 1.x rule
+  ("BingeMote Helper") is removed in favor of "BingeMote". The plain exe does the same
+  setup itself on first run with one UAC prompt, verifies both with `netsh`, and writes a
+  marker file so it never asks again. A launch that finds the rule already present just
+  writes the marker - no prompt.
 - Autostart is an `HKCU\...\Run` entry ("BingeMote"; the 1.x "BingeMoteHelper" entry is
   removed); it lives in the tray.
 
