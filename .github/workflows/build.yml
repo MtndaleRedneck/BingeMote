@@ -9,6 +9,11 @@ on:
         description: Publish only after review and verification
         type: boolean
         default: false
+      target:
+        description: Which side to publish (app and helper version separately)
+        type: choice
+        options: [app, helper]
+        default: helper
 
 permissions:
   contents: write
@@ -63,10 +68,10 @@ jobs:
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
 
-      - name: Name the exe
+      - name: Name the exe (helper versions separately from the app)
         run: |
-          $v = Select-String -Path app/build.gradle.kts -Pattern 'versionName = "([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
-          echo "VERSION=$v" >> $env:GITHUB_ENV
+          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
+          echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
           Copy-Item helper/out/BingeMoteHelper.exe "BingeMoteHelper-v$v.exe"
 
       - uses: actions/upload-artifact@v4
@@ -134,7 +139,14 @@ jobs:
       - name: Publish reviewed build
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target }}
         run: |
-          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          [[ "$V" != 0.* ]]
-          gh release create "v$V" "artifacts/BingeMote-v$V.apk" "artifacts/BingeMoteHelper-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote v$V" --notes-file release-notes.md
+          set -e
+          if [ "$TARGET" = "app" ]; then
+            V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+            [[ "$V" != 0.* ]]
+            gh release create "app-v$V" "artifacts/BingeMote-v$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote app v$V" --notes-file release-notes-app.md
+          else
+            V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
+            gh release create "helper-v$V" "artifacts/BingeMoteHelper-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote Helper v$V" --notes-file release-notes-helper.md
+          fi

@@ -11,8 +11,10 @@ namespace BingeMoteHelper;
 /// </summary>
 internal static class UpdateCheck
 {
-    private const string Api = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases/latest";
-    public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases/latest";
+    private const string Api = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases?per_page=30";
+    /// <summary>App and helper release separately; this checker only ever looks at helper-v* tags.</summary>
+    private const string TagPrefix = "helper-v";
+    public const string ReleasePage = "https://github.com/MtndaleRedneck/BingeMote/releases";
 
     /// <summary>The published version if it is newer than [current] and ships a helper exe, else null. Never throws.</summary>
     public static (string Version, string Url)? LatestNewerThan(string current)
@@ -25,28 +27,35 @@ internal static class UpdateCheck
             http.Timeout = TimeSpan.FromSeconds(8);
             var json = http.GetStringAsync(Api).GetAwaiter().GetResult();
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("draft", out var d) && d.GetBoolean()) return null;
-            if (root.TryGetProperty("prerelease", out var p) && p.GetBoolean()) return null;
-            var tag = (root.TryGetProperty("tag_name", out var t) ? t.GetString() : null) ?? "";
-            var remote = Parse(tag);
             var local = Parse(current);
-            if (remote == null || local == null) return null;
-            for (var i = 0; i < Math.Max(remote.Length, local.Length); i++)
+            if (local == null) return null;
+            // Newest first; the first helper-v* release that beats us and ships an exe wins.
+            foreach (var root in doc.RootElement.EnumerateArray())
             {
-                var a = i < remote.Length ? remote[i] : 0;
-                var b = i < local.Length ? local[i] : 0;
-                if (a != b) { if (a < b) return null; break; }
-                if (i == Math.Max(remote.Length, local.Length) - 1) return null; // identical
-            }
-            // Only nag when the release actually carries a helper exe.
-            if (root.TryGetProperty("assets", out var assets))
-            {
-                foreach (var a in assets.EnumerateArray())
+                if (root.TryGetProperty("draft", out var d) && d.GetBoolean()) continue;
+                if (root.TryGetProperty("prerelease", out var p) && p.GetBoolean()) continue;
+                var tag = (root.TryGetProperty("tag_name", out var t) ? t.GetString() : null) ?? "";
+                if (!tag.StartsWith(TagPrefix)) continue;
+                var version = tag[TagPrefix.Length..];
+                var remote = Parse(version);
+                if (remote == null) continue;
+                var newer = false;
+                for (var i = 0; i < Math.Max(remote.Length, local.Length); i++)
                 {
-                    var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                    if (name.StartsWith("BingeMoteHelper") && name.EndsWith(".exe"))
-                        return (tag.TrimStart('v', 'V'), ReleasePage);
+                    var a = i < remote.Length ? remote[i] : 0;
+                    var b = i < local.Length ? local[i] : 0;
+                    if (a != b) { newer = a > b; break; }
+                }
+                if (!newer) continue;
+                // Only nag when the release actually carries a helper exe.
+                if (root.TryGetProperty("assets", out var assets))
+                {
+                    foreach (var a in assets.EnumerateArray())
+                    {
+                        var name = a.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                        if (name.StartsWith("BingeMoteHelper") && name.EndsWith(".exe"))
+                            return (version, ReleasePage);
+                    }
                 }
             }
             return null;
