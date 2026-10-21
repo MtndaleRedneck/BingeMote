@@ -307,6 +307,16 @@ internal static class Program
 
     internal static string MachineLabel() => Environment.MachineName;
 
+    /// <summary>"1.3.1" - the running build, for the Updates card and feedback reports.</summary>
+    internal static string VersionText
+    {
+        get
+        {
+            var v = typeof(Program).Assembly.GetName().Version;
+            return v == null ? "0.0.0" : v.Major + "." + v.Minor + "." + v.Build;
+        }
+    }
+
     /// <summary>Background update check: on launch, and the window re-runs it daily.</summary>
     internal static void CheckForUpdate()
     {
@@ -346,6 +356,7 @@ internal sealed class HelperWindow : Form
     internal static readonly Color OnOrange = Color.FromArgb(27, 27, 30);
     internal static readonly Color DarkBg = Color.FromArgb(27, 27, 30);
     internal static readonly Color DarkCard = Color.FromArgb(38, 38, 44);
+    internal static readonly Color DarkCard2 = Color.FromArgb(46, 46, 54);
     internal static readonly Color DarkText = Color.FromArgb(235, 235, 240);
     internal static readonly Color DarkMuted = Color.FromArgb(150, 150, 160);
     internal static readonly Color LightBg = Color.FromArgb(243, 243, 243);
@@ -356,21 +367,22 @@ internal sealed class HelperWindow : Form
     private bool _allowShow;
     private bool _updateAnnounced;
     private bool _hideHintShown;
-    private readonly Label _title;
-    private readonly Label _moviesLabel;
-    private readonly TextBox _folderBox;
-    private readonly Button _browse;
-    private readonly Panel _sep1;
-    private readonly Label _phonesHeader;
-    private readonly FlowLayoutPanel _phoneList;
-    private readonly Button _removeAll;
-    private readonly Panel _sep2;
+    private bool _manualDownload;
     private readonly Label _pairHeader;
     private readonly TextBox _nameBox;
     private readonly Button _pair;
     private readonly Label _codeCaption;
     private readonly Label _code;
     private readonly Label _codeNote;
+    private readonly Label _phonesHeader;
+    private readonly FlowLayoutPanel _phoneList;
+    private readonly Button _removeAll;
+    private readonly Label _aboutHeader;
+    private readonly Panel _feedbackCard;
+    private readonly Button _feedbackBtn;
+    private readonly Panel _updatesCard;
+    private readonly Label _updatesCaption;
+    private readonly Button _checkUpdates;
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly ContextMenuStrip _menu;
@@ -378,91 +390,111 @@ internal sealed class HelperWindow : Form
     public HelperWindow()
     {
         Text = "BingeMote";
-        Width = 620; Height = 500;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         try { Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!); } catch { }
 
-        _title = new Label
-        {
-            Text = "BingeMote",
-            Font = new Font("Segoe UI", 14, FontStyle.Bold),
-            AutoSize = true, Left = 20, Top = 14,
-        };
-        _moviesLabel = new Label
-        {
-            Text = "Movies folder (what the phone's Movies tab opens):",
-            Font = new Font("Segoe UI", 9),
-            AutoSize = true, Left = 20, Top = 52,
-        };
-        _folderBox = new TextBox
-        {
-            ReadOnly = true,
-            Left = 20, Top = 74, Width = 410,
-            BorderStyle = BorderStyle.FixedSingle,
-            Font = new Font("Segoe UI", 9),
-        };
-        _browse = MakeButton("Browse...", 440, 72, 110);
-        _browse.Click += (_, _) => PickFolder();
-        _sep1 = new Panel { Left = 20, Top = 110, Width = 545, Height = 1 };
-        _phonesHeader = new Label
-        {
-            Text = "Paired phones",
-            Font = new Font("Segoe UI", 10, FontStyle.Bold),
-            AutoSize = true, Left = 20, Top = 122,
-        };
-        _phoneList = new FlowLayoutPanel
-        {
-            Left = 20, Top = 148, Width = 545, Height = 108,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoScroll = true,
-        };
-        _removeAll = MakeButton("Remove all phones...", 20, 264, 170);
-        _removeAll.Click += (_, _) => RemoveAllPhones();
-        _sep2 = new Panel { Left = 20, Top = 308, Width = 545, Height = 1 };
-        _pairHeader = new Label
-        {
-            Text = "Pair new phone",
-            Font = new Font("Segoe UI", 10, FontStyle.Bold),
-            AutoSize = true, Left = 20, Top = 320,
-        };
+        const int margin = 24;
+        const int contentW = 490 - margin * 2;
+        var y = margin;
+
+        _pairHeader = Header("Pair new phone", margin, y); y += 20 + 12;
         _nameBox = new TextBox
         {
-            Left = 20, Top = 346, Width = 280,
+            Left = margin, Top = y + 3, Width = contentW - 76 - 8,
             BorderStyle = BorderStyle.FixedSingle,
-            Font = new Font("Segoe UI", 9),
+            Font = new Font("Segoe UI", 10),
+            PlaceholderText = "Phone name",
         };
-        _pair = MakeButton("Pair", 312, 344, 90);
+        Round(_nameBox, 4);
+        _pair = MakeButton("Pair", margin + contentW - 76, y, 76);
+        _pair.Height = 32;
         _pair.Enabled = false;
+        StylePrimary(_pair);
         _pair.Click += (_, _) => StartPairing();
         _nameBox.TextChanged += (_, _) => _pair.Enabled = _nameBox.Text.Trim().Length > 0;
+        y += 32 + 12;
         _codeCaption = new Label
         {
             Text = "Pairing code:",
             Font = new Font("Segoe UI", 9),
-            AutoSize = true, Left = 20, Top = 392,
+            AutoSize = true, Left = margin, Top = y + 8,
         };
         _code = new Label
         {
             Text = Program.PairCode ?? "------",
-            Font = new Font("Consolas", 24, FontStyle.Bold),
+            Font = new Font("Consolas", 15, FontStyle.Bold),
             ForeColor = Orange,
-            AutoSize = true, Left = 130, Top = 382,
+            AutoSize = true, Left = margin + 118, Top = y,
         };
+        y += 28 + 6;
         _codeNote = new Label
         {
             Text = "Type it on the phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
-            AutoSize = true, Left = 20, Top = 428,
+            AutoSize = true, Left = margin, Top = y,
         };
+        y += 16 + 24;
+
+        _phonesHeader = Header("Paired phones", margin, y); y += 20 + 12;
+        _phoneList = new FlowLayoutPanel
+        {
+            Left = margin, Top = y, Width = contentW, Height = 3 * 52,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+        };
+        y += 3 * 52 + 8;
+        _removeAll = MakeButton("Remove all phones...", margin, y, 150);
+        _removeAll.Height = 32;
+        _removeAll.Click += (_, _) => RemoveAllPhones();
+        y += 32 + 24;
+
+        _aboutHeader = Header("About", margin, y); y += 20 + 12;
+        _feedbackCard = new Panel { Left = margin, Top = y, Width = contentW, Height = 48 };
+        Round(_feedbackCard, 8);
+        var feedbackLabel = new Label
+        {
+            Text = "Feedback & bugs",
+            Font = new Font("Segoe UI", 10.5f),
+            AutoSize = true, Left = 14, Top = 14,
+        };
+        _feedbackBtn = MakeButton("Send feedback...", contentW - 130 - 10, 9, 130);
+        _feedbackBtn.Height = 30;
+        _feedbackBtn.Click += (_, _) => { using var dlg = new FeedbackDialog(); dlg.ShowDialog(this); };
+        _feedbackCard.Controls.Add(feedbackLabel);
+        _feedbackCard.Controls.Add(_feedbackBtn);
+        y += 48 + 4;
+        _updatesCard = new Panel { Left = margin, Top = y, Width = contentW, Height = 48 };
+        Round(_updatesCard, 8);
+        var updatesLabel = new Label
+        {
+            Text = "Updates",
+            Font = new Font("Segoe UI", 10.5f),
+            AutoSize = true, Left = 14, Top = 6,
+        };
+        _updatesCaption = new Label
+        {
+            Text = "Version " + Program.VersionText,
+            Font = new Font("Segoe UI", 8),
+            AutoSize = true, Left = 14, Top = 26,
+        };
+        _checkUpdates = MakeButton("Check for updates", contentW - 140 - 10, 9, 140);
+        _checkUpdates.Height = 30;
+        _checkUpdates.Click += (_, _) => ManualUpdateCheck();
+        _updatesCard.Controls.Add(updatesLabel);
+        _updatesCard.Controls.Add(_updatesCaption);
+        _updatesCard.Controls.Add(_checkUpdates);
+        y += 48 + margin;
+
+        ClientSize = new Size(490, y);
 
         Controls.AddRange(new Control[]
         {
-            _title, _moviesLabel, _folderBox, _browse, _sep1,
-            _phonesHeader, _phoneList, _removeAll, _sep2,
             _pairHeader, _nameBox, _pair, _codeCaption, _code, _codeNote,
+            _phonesHeader, _phoneList, _removeAll,
+            _aboutHeader, _feedbackCard, _updatesCard,
         });
 
         _menu = new ContextMenuStrip();
@@ -536,31 +568,37 @@ internal sealed class HelperWindow : Form
         _code.Text = Program.PairCode ?? "------";
     }
 
-    /// <summary>Rebuild the paired-phones list from the current config.</summary>
+    /// <summary>Rebuild the paired-phones list from the current config. Each phone is one
+    /// settings-style card: name on the left, Remove inside at the right.</summary>
     private void RefreshPhones()
     {
         var dark = IsDarkMode();
         var card = dark ? DarkCard : LightCard;
+        var btnBg = dark ? DarkCard2 : LightBg;
         var text = dark ? DarkText : LightText;
-        var muted = dark ? DarkMuted : LightMuted;
         _phoneList.Controls.Clear();
+        var rowWidth = Program.PhonesCount > 3 ? 442 - 17 : 442; // leave room for the scroll bar
         foreach (var ph in Program.PhonesSnapshot())
         {
-            var row = new Panel { Width = 525, Height = 34, Margin = new Padding(0, 0, 0, 6), BackColor = card };
+            var row = new Panel { Width = rowWidth, Height = 48, Margin = new Padding(0, 0, 0, 4), BackColor = card };
+            Round(row, 8);
             var name = new Label
             {
                 Text = ph.Name,
-                AutoSize = true, Left = 10, Top = 8,
-                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                AutoEllipsis = true, AutoSize = false,
+                Left = 14, Top = 13, Width = rowWidth - 14 - 84 - 10 - 10, Height = 22,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font("Segoe UI", 10.5f),
                 ForeColor = text, BackColor = card,
             };
             var remove = new Button
             {
-                Text = "Remove", Width = 90, Height = 26, Left = 425, Top = 4,
+                Text = "Remove", Width = 84, Height = 30, Left = rowWidth - 84 - 10, Top = 9,
                 FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
-                BackColor = card, ForeColor = text,
+                BackColor = btnBg, ForeColor = text,
             };
-            remove.FlatAppearance.BorderColor = muted;
+            remove.FlatAppearance.BorderSize = 0;
+            Round(remove, 4);
             var phone = ph;
             remove.Click += (_, _) => RemovePhone(phone);
             row.Controls.Add(name);
@@ -649,47 +687,125 @@ internal sealed class HelperWindow : Form
         var dark = IsDarkMode();
         var bg = dark ? DarkBg : LightBg;
         var card = dark ? DarkCard : LightCard;
+        var btnBg = dark ? DarkCard : LightCard;
+        var cardBtn = dark ? DarkCard2 : LightBg;
         var text = dark ? DarkText : LightText;
         var muted = dark ? DarkMuted : LightMuted;
         BackColor = bg;
         ForeColor = text;
-        _title.ForeColor = text;
-        _moviesLabel.ForeColor = text;
-        _folderBox.BackColor = card;
-        _folderBox.ForeColor = muted;
-        _sep1.BackColor = card;
-        _sep2.BackColor = card;
-        _phonesHeader.ForeColor = text;
-        _phoneList.BackColor = bg;
         _pairHeader.ForeColor = text;
+        _phonesHeader.ForeColor = text;
+        _aboutHeader.ForeColor = text;
         _nameBox.BackColor = card;
         _nameBox.ForeColor = text;
         _codeCaption.ForeColor = text;
         _code.ForeColor = Orange;
         _codeNote.ForeColor = muted;
-        foreach (var b in new[] { _browse, _removeAll, _pair })
+        _phoneList.BackColor = bg;
+        _feedbackCard.BackColor = card;
+        _updatesCard.BackColor = card;
+        foreach (Control c in _feedbackCard.Controls) { c.BackColor = c is Button ? cardBtn : card; c.ForeColor = text; }
+        foreach (Control c in _updatesCard.Controls) { if (c is Button) continue; c.BackColor = card; c.ForeColor = c == _updatesCaption ? muted : text; }
+        _feedbackBtn.FlatAppearance.BorderSize = 0;
+        _checkUpdates.FlatAppearance.BorderSize = 0;
+        foreach (var b in new[] { _removeAll })
         {
-            b.BackColor = card;
+            b.BackColor = btnBg;
             b.ForeColor = text;
             b.FlatAppearance.BorderColor = muted;
         }
+        StylePrimary(_pair);
+        if (_manualDownload) StylePrimary(_checkUpdates); else { _checkUpdates.BackColor = cardBtn; _checkUpdates.ForeColor = text; }
+        Round(_feedbackCard, 8);
+        Round(_updatesCard, 8);
         RefreshPhones();
+        ApplyTitleBarTheme();
     }
 
-    private void PickFolder()
+    /// <summary>The window's title bar follows the Windows dark/light setting (immersive dark mode).</summary>
+    internal void ApplyTitleBarTheme()
     {
-        using var dlg = new FolderBrowserDialog
+        if (!IsHandleCreated) return;
+        var dark = IsDarkMode() ? 1 : 0;
+        try { DwmSetWindowAttribute(Handle, 20, ref dark, 4); } catch { /* older Windows */ }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyTitleBarTheme();
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    /// <summary>4px on buttons and boxes, 8px on cards - the Win11 corner radii.</summary>
+    internal static void Round(Control c, int radius)
+    {
+        if (c.Width <= 0 || c.Height <= 0) return;
+        var d = radius * 2;
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(c.Width - d - 1, 0, d, d, 270, 90);
+        path.AddArc(c.Width - d - 1, c.Height - d - 1, d, d, 0, 90);
+        path.AddArc(0, c.Height - d - 1, d, d, 90, 90);
+        path.CloseFigure();
+        c.Region = new Region(path);
+    }
+
+    /// <summary>The one orange button: the window's primary action.</summary>
+    internal static void StylePrimary(Button b)
+    {
+        b.BackColor = Orange;
+        b.ForeColor = OnOrange;
+        b.FlatAppearance.BorderSize = 0;
+        Round(b, 4);
+    }
+
+    private static Label Header(string text, int x, int y) => new()
+    {
+        Text = text,
+        Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
+        AutoSize = true, Left = x, Top = y,
+    };
+
+    /// <summary>The Updates card's manual check: result shows inline, never a tray balloon.</summary>
+    private void ManualUpdateCheck()
+    {
+        if (_manualDownload) { OpenUpdatePage(); return; }
+        _checkUpdates.Enabled = false;
+        _updatesCaption.Text = "Checking...";
+        Task.Run(() =>
         {
-            Description = "Pick the folder the phone's Movies tab opens.",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = true,
-            InitialDirectory = Directory.Exists(Program.MoviesFolder) ? Program.MoviesFolder! : "",
-        };
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-        Program.MoviesFolder = dlg.SelectedPath;
-        Program.SaveConfig();
-        _folderBox.Text = Program.MoviesFolder;
-        Program.Log("Movies folder set on the PC: " + Program.MoviesFolder);
+            (string Version, string Url)? newer;
+            try { newer = UpdateCheck.LatestNewerThanOrThrow(Program.VersionText); }
+            catch
+            {
+                try { BeginInvoke(new Action(() =>
+                {
+                    _updatesCaption.Text = "Couldn't check right now. Try again later.";
+                    _checkUpdates.Enabled = true;
+                })); } catch { }
+                return;
+            }
+            try { BeginInvoke(new Action(() =>
+            {
+                if (newer != null)
+                {
+                    Program.AvailableUpdate = newer.Value.Version;
+                    _updatesCaption.Text = "Version " + newer.Value.Version + " is available.";
+                    _manualDownload = true;
+                    _checkUpdates.Text = "Download";
+                    _checkUpdates.Enabled = true;
+                    StylePrimary(_checkUpdates);
+                }
+                else
+                {
+                    _updatesCaption.Text = "You're up to date. Nothing installs on its own.";
+                    _checkUpdates.Enabled = true;
+                }
+            })); } catch { }
+        });
     }
 
     /// <summary>The public-Wi-Fi popup: names the network, one click marks it Private.</summary>
@@ -935,3 +1051,142 @@ internal static class NoteDialog
         dlg.ShowDialog(owner);
     }
 }
+
+/// <summary>The Feedback & bugs dialog. Sends through the same two channels as the phone's
+/// feedback page: a public GitHub issue or a private form. The preview shows exactly what goes out.</summary>
+internal sealed class FeedbackDialog : Form
+{
+    private const string RepoIssues = "https://github.com/MtndaleRedneck/BingeMote/issues/new";
+    private const string BugFormUrl = "https://docs.google.com/forms/d/e/1FAIpQLSeD1ytVTxoA0GgftLr5wSu2kZm1yxRwCHcOV4Pb100Lm6hLcQ/viewform";
+
+    private readonly TextBox _message;
+    private readonly Label _preview;
+    private readonly Button _issue;
+    private readonly Button _form;
+
+    public FeedbackDialog()
+    {
+        Text = "BingeMote";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(440, 420);
+        Font = new Font("Segoe UI", 9.5f);
+
+        var title = new Label { Text = "Feedback & bugs", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 16 };
+        _message = new TextBox
+        {
+            Multiline = true, Left = 24, Top = 44, Width = 392, Height = 96,
+            PlaceholderText = "Your message", BorderStyle = BorderStyle.FixedSingle,
+            ScrollBars = ScrollBars.Vertical,
+        };
+        var whatHeader = new Label { Text = "What will be sent", Font = new Font("Segoe UI", 9f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 152 };
+        _preview = new Label
+        {
+            Left = 24, Top = 172, Width = 392, Height = 176,
+            Font = new Font("Segoe UI", 8.5f), AutoEllipsis = false,
+        };
+        _issue = new Button { Text = "Open GitHub issue", Width = 130, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _form = new Button { Text = "Open private form", Width = 130, Height = 32, Left = 440 - 24 - 130, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+
+        _message.TextChanged += (_, _) => RefreshPreview();
+        _issue.Click += (_, _) => OpenUrl(IssueUrl());
+        _form.Click += (_, _) => OpenUrl(FormUrl());
+
+        Controls.Add(title);
+        Controls.Add(_message);
+        Controls.Add(whatHeader);
+        Controls.Add(_preview);
+        Controls.Add(_issue);
+        Controls.Add(_form);
+        ApplyTheme();
+        RefreshPreview();
+    }
+
+    private void ApplyTheme()
+    {
+        var dark = HelperWindow.IsDarkMode();
+        var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
+        var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
+        var cardBtn = dark ? HelperWindow.DarkCard2 : HelperWindow.LightBg;
+        var text = dark ? HelperWindow.DarkText : HelperWindow.LightText;
+        var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
+        BackColor = bg;
+        ForeColor = text;
+        foreach (Control c in Controls) { c.ForeColor = text; }
+        _message.BackColor = card;
+        _message.ForeColor = text;
+        _preview.ForeColor = muted;
+        _issue.BackColor = cardBtn;
+        _issue.ForeColor = text;
+        _issue.FlatAppearance.BorderSize = 0;
+        HelperWindow.StylePrimary(_form);
+        HelperWindow.Round(_issue, 4);
+        TitleBarTheme();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        TitleBarTheme();
+    }
+
+    private void TitleBarTheme()
+    {
+        if (!IsHandleCreated) return;
+        var dark = HelperWindow.IsDarkMode() ? 1 : 0;
+        try { DwmSetWindowAttribute(Handle, 20, ref dark, 4); } catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    private void RefreshPreview()
+    {
+        var msg = Clean(_message.Text, 3000);
+        _preview.Text = msg + "\n\nBingeMote PC version: " + Program.VersionText +
+            "\nWindows version: " + OsVersion() +
+            "\n\nNothing else. No PC name, user name, Wi-Fi, phones, or paths.";
+        var has = !string.IsNullOrWhiteSpace(msg);
+        _issue.Enabled = has;
+        _form.Enabled = has;
+    }
+
+    private static string OsVersion()
+    {
+        var v = Environment.OSVersion.Version;
+        return v.Build >= 22000 ? $"Windows 11 (build {v.Build})" : $"Windows 10 (build {v.Build})";
+    }
+
+    private static string Clean(string s, int max)
+    {
+        s = s.Trim();
+        return s.Length <= max ? s : s.Substring(0, max);
+    }
+
+    private string IssueUrl()
+    {
+        var msg = Clean(_message.Text, 3000);
+        var title = "Feedback: " + (msg.Length <= 60 ? msg : msg.Substring(0, 57) + "...");
+        var body = msg + "\n\nBingeMote PC version: " + Program.VersionText + "\nWindows version: " + OsVersion();
+        var url = RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(body);
+        return url.Length <= 8000 ? url : RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(Clean(body, 4500));
+    }
+
+    private string FormUrl()
+    {
+        var msg = Clean(_message.Text, 3000);
+        return BugFormUrl +
+            "?entry.1980878269=" + Uri.EscapeDataString(msg) +
+            "&entry.857472167=" + Uri.EscapeDataString("PC") +
+            "&entry.2017214675=" + Uri.EscapeDataString(OsVersion()) +
+            "&entry.446486963=" + Uri.EscapeDataString(Program.VersionText);
+    }
+
+    private static void OpenUrl(string url)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
+}
+

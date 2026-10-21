@@ -98,20 +98,12 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    /** Volume buttons: steer the movie list there, control VLC volume everywhere else. */
+    /** Volume buttons control VLC volume (the movie list is touch only). */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (!::remote.isInitialized || !store.setupDone) return super.onKeyDown(keyCode, event)
         return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                if (screen?.value == "movies") MoviesKeyHandler.onKey(MoviesKeyHandler.Key.UP)
-                else remote.volumeStep(true)
-                true
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                if (screen?.value == "movies") MoviesKeyHandler.onKey(MoviesKeyHandler.Key.DOWN)
-                else remote.volumeStep(false)
-                true
-            }
+            KeyEvent.KEYCODE_VOLUME_UP -> { remote.volumeStep(true); true }
+            KeyEvent.KEYCODE_VOLUME_DOWN -> { remote.volumeStep(false); true }
             else -> super.onKeyDown(keyCode, event)
         }
     }

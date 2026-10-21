@@ -43,8 +43,8 @@ class Store(context: Context) {
         set(v) = prefs.edit().putFloat("mouseSpeed", v).apply()
 
     var moviesPath: String
-        get() = prefs.getString("moviesPath", "") ?: ""
-        set(v) = prefs.edit().putString("moviesPath", v).apply()
+        get() = normalizeWinPath(prefs.getString("moviesPath", "") ?: "")
+        set(v) = prefs.edit().putString("moviesPath", normalizeWinPath(v)).apply()
 
     var skipMainSec: Int
         // A stored value that is no longer offered falls back to the default.
@@ -83,3 +83,7 @@ class Store(context: Context) {
     val isConfigured: Boolean
         get() = setupDone && host.isNotBlank() && vlcPassword.isNotBlank()
 }
+
+/** VLC sometimes hands back mixed separators ("Desktop\/Movies"); store and show one clean form. Keeps a leading "\\" (network share) intact. */
+private fun normalizeWinPath(p: String): String =
+    p.trim().replace('/', '\\').replace(Regex("(?<=.)\\\\{2,}"), "\\")

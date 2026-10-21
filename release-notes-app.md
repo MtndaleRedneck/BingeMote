@@ -1,3 +1,10 @@
+## v1.3.2
+
+- The Movies tab is touch only now: tap a folder to open it, tap Up one folder to go back. The old direction pad is gone
+- Settings: the Assigned Movies folder can't be typed by hand anymore - Browse PC folders sets it, and a garbled path from before cleans itself up
+- Settings: your PC's network addresses are no longer shown, just its name
+- Settings: Feedback & bugs now sits above Updates, matching the PC program
+
 ## v1.3.1
 
 - The app always stays upright, and the top bar fits on every phone - the name shrinks before anything gets pushed off screen

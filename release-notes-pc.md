@@ -1,3 +1,11 @@
+## v1.3.1
+
+- New-look window: smaller, rounded, follows Windows dark mode
+- Feedback & bugs: send a note straight from the window
+- Updates section with a Check for updates button
+- The movies folder is set only from the phone app's Settings
+- New program icon
+
 ## v1.3.0
 
 - The window lists your paired phones by name: remove one or all, and pair a new phone by typing its name and tapping Pair
