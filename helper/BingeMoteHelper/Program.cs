@@ -28,7 +28,11 @@ internal static class Program
     private const string ShowEventName = @"Local\BingeMoteHelper.ShowWindow";
     private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
 
-    internal static string? Token;
+    /// <summary>One token per paired phone. Pairing adds one; reset forgets them all.</summary>
+    internal static readonly HashSet<string> Tokens = new();
+    /// <summary>More phones than this on one PC is a mistake, not a household.</summary>
+    internal const int MaxPhones = 8;
+    internal static bool Paired => Tokens.Count > 0;
     /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
     internal static string? MoviesFolder;
     internal static string? PairCode;
@@ -110,7 +114,7 @@ internal static class Program
 
         Directory.CreateDirectory(DataDir);
         LoadConfig();
-        Log("Started. " + (Token == null ? "Not paired - showing a pairing code." : "Paired - starting tucked in the tray."));
+        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + Tokens.Count + (Tokens.Count == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
 
         if (!File.Exists(FirewallMarker))
@@ -131,7 +135,7 @@ internal static class Program
             PairCode = overrideCode;
             PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
         }
-        else if (Token == null)
+        else if (!Paired)
         {
             PairCode = NewPairCode();
             PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
@@ -227,15 +231,27 @@ internal static class Program
         {
             if (!File.Exists(ConfigPath)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
-            Token = doc.RootElement.GetProperty("token").GetString();
+            Tokens.Clear();
+            if (doc.RootElement.TryGetProperty("tokens", out var ts))
+                foreach (var t in ts.EnumerateArray())
+                {
+                    var v = t.GetString();
+                    if (v != null) Tokens.Add(v);
+                }
+            // 1.0/1.1 configs stored one token; keep that phone paired.
+            if (Tokens.Count == 0 && doc.RootElement.TryGetProperty("token", out var old))
+            {
+                var v = old.GetString();
+                if (v != null) Tokens.Add(v);
+            }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
         }
-        catch { Token = null; MoviesFolder = null; }
+        catch { Tokens.Clear(); MoviesFolder = null; }
     }
 
     internal static void SaveConfig()
     {
-        var json = JsonSerializer.Serialize(new { token = Token, moviesFolder = MoviesFolder });
+        var json = JsonSerializer.Serialize(new { tokens = Tokens.ToArray(), moviesFolder = MoviesFolder });
         File.WriteAllText(ConfigPath, json);
     }
 
@@ -434,7 +450,7 @@ internal sealed class HelperWindow : Form
         // The status line and pairing-code countdown only matter while the window is on
         // screen, so this timer sleeps whenever the window is tucked in the tray: with the
         // window hidden the helper wakes only for the phone or the daily update check.
-        _timer = new System.Windows.Forms.Timer { Interval = 10000 };
+        _timer = new System.Windows.Forms.Timer { Interval = 1000 };
         _timer.Tick += (_, _) => TickStatus();
         // First launch with the window already on screen (unpaired PCs): start ticking now.
         if (Visible) { TickStatus(); _timer.Start(); }
@@ -449,9 +465,9 @@ internal sealed class HelperWindow : Form
             Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
         }
         _code.Text = Program.PairCode ?? "------";
-        _status.Text = Program.Token == null
+        _status.Text = !Program.Paired
             ? "Listening on port " + Program.HttpPort + " - not paired yet"
-            : "Listening on port " + Program.HttpPort + " - paired";
+            : "Listening on port " + Program.HttpPort + " - paired (" + Program.Tokens.Count + (Program.Tokens.Count == 1 ? " phone" : " phones") + ")";
     }
 
     private void AnnounceUpdateIfNeeded()
@@ -549,10 +565,10 @@ internal sealed class HelperWindow : Form
     private void ResetPairing()
     {
         var sure = MessageBox.Show(
-            "Forget the paired phone and show a new pairing code? Pair the phone again with the new code to reconnect it.",
+            "Forget every paired phone and show a new pairing code? Pair each phone again with the new code to reconnect it.",
             "BingeMote Helper", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (sure != DialogResult.Yes) return;
-        Program.Token = null;
+        Program.Tokens.Clear();
         Program.SaveConfig();
         Program.PairCode = Program.NewPairCode();
         Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
@@ -573,7 +589,7 @@ internal sealed class HelperWindow : Form
     // Paired PCs get no popup at login: the helper starts tucked in the tray.
     protected override void SetVisibleCore(bool value)
     {
-        if (!_allowShow && Program.Token != null) value = false;
+        if (!_allowShow && Program.Paired) value = false;
         base.SetVisibleCore(value);
     }
 

@@ -105,7 +105,7 @@ internal sealed class HttpServer : IDisposable
     private static bool Authorized(HttpListenerRequest req)
     {
         var token = req.Headers["X-BingeMote-Token"];
-        return Program.Token != null && token != null && ConstantTimeEq(token, Program.Token);
+        return token != null && Program.Tokens.Any(t => ConstantTimeEq(token, t));
     }
 
     private static readonly object PairLock = new();
@@ -133,12 +133,19 @@ internal sealed class HttpServer : IDisposable
             Reply(res, 403, "{\"error\":\"bad code\"}");
             return;
         }
-        Program.Token = Program.NewToken();
+        if (Program.Tokens.Count >= Program.MaxPhones)
+        {
+            Program.Log("Pairing refused - already " + Program.MaxPhones + " phones paired.");
+            Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Reset pairing on the PC to start over.\"}");
+            return;
+        }
+        var token = Program.NewToken();
+        Program.Tokens.Add(token);
         Program.PairCode = null;
         Program.PairFailures = 0;
         Program.SaveConfig();
-        Program.Log("Phone paired.");
-        Reply(res, 200, JsonSerializer.Serialize(new { token = Program.Token, name = Program.MachineLabel() }));
+        Program.Log("Phone paired (" + Program.Tokens.Count + " total).");
+        Reply(res, 200, JsonSerializer.Serialize(new { token = token, name = Program.MachineLabel() }));
     }
 
     /// <summary>GET returns the shared settings; POST writes them. Only the movies folder so far.</summary>
