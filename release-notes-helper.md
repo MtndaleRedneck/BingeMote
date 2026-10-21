@@ -1,7 +1,10 @@
 ## v1.0.2
 
+Two downloads: **BingeMoteHelper-Setup** (recommended) installs it with a Start menu entry and an optional desktop shortcut; the plain **BingeMoteHelper.exe** runs without installing.
+
+- The window is now a small settings app: status, the movies folder with the usual Windows folder picker, pairing controls, and Quit - and it follows Windows dark/light mode
 - Opening the helper while it is already running brings its window up instead of doing nothing
-- The window explains it is still running in the tray the first time you close it
+- Updating takes over from the running copy on its own. From 1.0.0 or 1.0.1: quit the old copy by hand first (right-click its tray icon, Quit)
 - New "Reset pairing" in the tray menu: forgets the phone and shows a fresh code
 - Keeps a small log file (%LocalAppData%\BingeMoteHelper\helper.log) to help with setup problems
 

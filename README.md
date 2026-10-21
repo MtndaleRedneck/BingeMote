@@ -25,4 +25,6 @@ Android 12+ and Windows x64. Keep both devices on the same trusted private netwo
 
 The helper requires pairing and accepts private-network addresses only. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
 
+Uninstalling the helper removes the program and its start-with-Windows entry. The one-time firewall rule and HTTP-listener permission stay behind (removing them needs administrator rights; they are inert without the helper). To remove them, run as administrator: `netsh advfirewall firewall delete rule name="BingeMote Helper"` and `netsh http delete urlacl url=http://+:8488/`.
+
 More setup, build and protocol details are in [docs/details.md](docs/details.md).

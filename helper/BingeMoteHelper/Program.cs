@@ -54,10 +54,30 @@ internal static class Program
         using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var onlyCopy);
         if (!onlyCopy)
         {
-            if (RunningCopyIsThisExe())
+            var runningPath = RunningCopyPath();
+            var selfPath = Environment.ProcessPath;
+            var sameExe = runningPath != null && selfPath != null &&
+                string.Equals(runningPath, selfPath, StringComparison.OrdinalIgnoreCase);
+            // A different exe is an update only when this launch is the same or a newer
+            // version; an older exe (e.g. left in Downloads) must not downgrade the running copy.
+            var isDowngrade = false;
+            if (!sameExe && runningPath != null && selfPath != null)
+            {
+                try
+                {
+                    var mine = FileVersionInfo.GetVersionInfo(selfPath).FileVersion;
+                    var theirs = FileVersionInfo.GetVersionInfo(runningPath).FileVersion;
+                    if (mine != null && theirs != null &&
+                        new Version(mine).CompareTo(new Version(theirs)) < 0) isDowngrade = true;
+                }
+                catch { /* cannot tell versions - treat as an update, as before */ }
+            }
+            if (sameExe || isDowngrade)
             {
                 try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
-                Log("Launched while already running - asked the running copy to show its window.");
+                Log(isDowngrade
+                    ? "An older exe launched while a newer copy ran - showed the running copy's window."
+                    : "Launched while already running - asked the running copy to show its window.");
                 return 0;
             }
             EventWaitHandle? oldQuit = null;
@@ -163,23 +183,20 @@ internal static class Program
     }
 
     /// <summary>True when the copy holding the mutex runs from the same exe file as this launch.</summary>
-    private static bool RunningCopyIsThisExe()
+    /// <summary>The exe path of the other running copy, or null when there is none or it cannot be read.</summary>
+    private static string? RunningCopyPath()
     {
         try
         {
-            var self = Environment.ProcessPath;
             var me = Environment.ProcessId;
             foreach (var proc in Process.GetProcessesByName("BingeMoteHelper"))
             {
                 if (proc.Id == me) continue;
-                string? other = null;
-                try { other = proc.MainModule?.FileName; } catch { }
-                if (other == null || self == null) return false; // cannot tell - treat as a different exe
-                return string.Equals(other, self, StringComparison.OrdinalIgnoreCase);
+                try { return proc.MainModule?.FileName; } catch { return null; }
             }
         }
         catch { }
-        return false;
+        return null;
     }
 
     internal static string NewPairCode() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
