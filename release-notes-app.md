@@ -1,3 +1,10 @@
+## v1.5.1
+
+- Bigger remote buttons: bottom row and the 30-second skip buttons
+- New Subtitles icon: a cleaner speech bubble
+- Keyboard: bolder arrows, a wider box, bold keys
+- Settings: skip choices without the extra labels
+
 ## v1.5.0
 
 - Icons only on the remote: volume, skip and bottom buttons lose their text labels

@@ -58,8 +58,14 @@ internal static class SelfUpdate
     /// quit so it can replace the running exe.</summary>
     public static void LaunchAndQuit(string path)
     {
-        Program.Log("Opening the downloaded installer, quitting for the update.");
-        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        Program.Log("Starting the downloaded installer silently, quitting for the update.");
+        // One Windows permission prompt, a small progress bar, done: no wizard pages,
+        // and it keeps the choices from the first install. The installer relaunches the app.
+        Process.Start(new ProcessStartInfo(path)
+        {
+            UseShellExecute = true,
+            Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
+        });
         System.Windows.Forms.Application.Exit();
     }
 }
