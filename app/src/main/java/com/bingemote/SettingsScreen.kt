@@ -182,7 +182,7 @@ fun SettingsScreen(
                 Text(result, color = Muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
             Spacer(Modifier.height(8.dp))
-            Text("Version ${BuildConfig.VERSION_NAME}", color = Dimmed, fontSize = 12.sp)
+            Text("Version ${BuildConfig.VERSION_NAME}", color = TextC, fontSize = 12.sp)
         }
         // Bottom gap = the screen's own 16.dp padding, same as the sides (the old
         // extra 28.dp spacer left a visibly bigger gap under the last card).
