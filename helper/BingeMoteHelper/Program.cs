@@ -753,6 +753,9 @@ internal sealed class HelperWindow : Form
 
     /// <summary>CI-only: show the window offscreen, let layout settle, and save a PNG of it.
     /// DrawToBitmap renders in memory, so no visible desktop is needed.</summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
     internal void ShowOffscreenAndCapture(string path)
     {
         StartPosition = FormStartPosition.Manual;
@@ -763,7 +766,19 @@ internal sealed class HelperWindow : Form
         System.Threading.Thread.Sleep(400);
         Application.DoEvents();
         using var bmp = new Bitmap(Width, Height);
-        DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+        using (var g = Graphics.FromImage(bmp))
+        {
+            // PW_RENDERFULLCONTENT (2): captures the composed window, so cue
+            // banners and LinkLabel text that WM_PRINT (DrawToBitmap) drops still show.
+            IntPtr hdc = g.GetHdc();
+            bool captured = PrintWindow(Handle, hdc, 2);
+            g.ReleaseHdc(hdc);
+            if (!captured)
+            {
+                g.Clear(BackColor);
+                DrawToBitmap(bmp, new Rectangle(0, 0, Width, Height));
+            }
+        }
         bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
         Close();
     }
