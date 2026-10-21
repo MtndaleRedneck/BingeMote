@@ -767,6 +767,11 @@ internal sealed class HelperWindow : Form
         Activate();
         Application.DoEvents();
         System.Threading.Thread.Sleep(600);
+        // Re-assert the final first-run state and re-run layout right before the shot:
+        // whatever order the strip/phones events landed in, this is the settled state
+        // a real desktop reaches after OnLoad.
+        _firstRun.Visible = Program.PhonesCount == 0;
+        ApplyLayout();
         Application.DoEvents();
         // Capture 1: DWM-composed (PW_RENDERFULLCONTENT) so cue banners and
         // LinkLabel text that WM_PRINT (DrawToBitmap) drops still show.
@@ -792,6 +797,7 @@ internal sealed class HelperWindow : Form
                 System.IO.Path.GetDirectoryName(path) ?? ".", "window-diag.txt");
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("DeviceDpi=" + DeviceDpi);
+            foreach (var kv in _baseTops) sb.AppendLine("base " + kv.Key.Name + "=" + kv.Value);
             sb.AppendLine("AutoScaleMode=" + AutoScaleMode + " AutoScaleDimensions=" + CurrentAutoScaleDimensions);
             foreach (var (n, c) in new (string, Control)[] {
                 ("firstRun", _firstRun), ("nameBox", _nameBox), ("pair", _pair),
