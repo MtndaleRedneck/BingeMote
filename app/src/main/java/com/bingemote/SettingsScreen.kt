@@ -8,6 +8,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -103,6 +105,19 @@ fun SettingsScreen(remote: RemoteState, onBack: () -> Unit, onRepair: () -> Unit
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Feel") {
+            var speed by remember { mutableStateOf(store.mouseSpeed) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Pointer speed", color = TextC, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Text("%.1fx".format(speed), color = Muted, fontSize = 14.sp)
+            }
+            Slider(
+                value = speed,
+                onValueChange = { speed = it; store.mouseSpeed = it },
+                valueRange = 0.5f..3.0f,
+                colors = SliderDefaults.colors(thumbColor = Orange, activeTrackColor = Orange, inactiveTrackColor = TrackGray),
+            )
+            Text("Lower is slower. If the pointer feels jumpy, bring this down.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
             ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
             ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
         }
