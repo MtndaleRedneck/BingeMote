@@ -119,6 +119,7 @@ jobs:
           path: |
             helper/window.png
             helper/window-screen.png
+            helper/window-diag.txt
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
