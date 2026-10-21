@@ -1,3 +1,12 @@
+## v1.0.2
+
+- The Movies tab is locked to your folder, rows respond to touch, and the d-pad scrolls the list; the folder picker in Settings browses the PC's folders with a Set button
+- Volume buttons match the approved design: speaker with sound waves (one for down, three for up)
+- The big play/pause button flips instantly on tap
+- Skip buttons do a full spin per tap
+- New pointer-speed slider in Settings
+- Launcher icon: the couch no longer gets cut off, and no black corners on square-icon phones
+
 ## v1.0.1
 
 - Setup is now a real step-by-step flow: one step on screen at a time, with Back working on every step

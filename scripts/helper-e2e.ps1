@@ -133,6 +133,28 @@ try {
     $udp.Close()
     Assert ($reply -like 'BINGEMOTE_HERE_V1|*') "discovery reply: $reply"
 
+    # A copy launched from a different folder (an "installed" copy vs a Downloads copy)
+    # takes over: the running copy quits, the new one serves the same token.
+    Write-Host "== update takeover across paths =="
+    $dir2 = Join-Path $env:TEMP "bingemote-e2e-takeover"
+    New-Item -ItemType Directory -Force $dir2 | Out-Null
+    Copy-Item $exe $dir2 -Force
+    $exe2 = Join-Path $dir2 "BingeMoteHelper.exe"
+    $p2 = Start-Process $exe2 -PassThru
+    $oldExited = $p.WaitForExit(25000)
+    Assert $oldExited "running copy quits when a copy from another folder launches"
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "taking-over copy did not start listening on 8488" }
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "taking-over copy serves the saved token"
+    $p = $p2
+
     Write-Host "HELPER E2E PASSED"
 } finally {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
