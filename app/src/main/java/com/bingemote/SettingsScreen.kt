@@ -184,7 +184,8 @@ fun SettingsScreen(
             Spacer(Modifier.height(8.dp))
             Text("Version ${BuildConfig.VERSION_NAME}", color = Dimmed, fontSize = 12.sp)
         }
-        Spacer(Modifier.height(28.dp))
+        // Bottom gap = the screen's own 16.dp padding, same as the sides (the old
+        // extra 28.dp spacer left a visibly bigger gap under the last card).
     }
 }
 
