@@ -72,14 +72,6 @@ jobs:
         run: |
           $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
-          Copy-Item "helper/out/BingeMote.exe" "BingeMote-PC-$v.exe"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BingeMote-PC-exe
-          path: |
-            BingeMote-PC-*.exe
-            !BingeMote-PC-Setup-*.exe
 
       - name: Build the installer (Inno Setup)
         run: |
@@ -173,5 +165,5 @@ jobs:
           else
             V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
             # Helper releases never take "latest" - the installed app's updater reads it.
-            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" "artifacts/BingeMote-PC-Setup-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file release-notes-pc.md --latest=false
+            gh release create "pc-v$V" "artifacts/BingeMote-PC-Setup-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file release-notes-pc.md --latest=false
           fi
