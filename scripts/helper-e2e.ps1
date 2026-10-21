@@ -176,7 +176,7 @@ try {
 
     # Movies: the folder is jailed, listed, and a real launch starts VLC.
     Write-Host "== movies =="
-    choco install vlc --no-progress -y | Out-Null
+    Assert ((Test-Path 'C:\Program Files\VideoLAN\VLC\vlc.exe') -or (Get-Command vlc.exe -ErrorAction SilentlyContinue)) "VLC installed by the workflow step"
     $movies = Join-Path $env:TEMP 'bingemote-e2e-movies'
     New-Item -ItemType Directory -Force $movies | Out-Null
     New-Item -ItemType Directory -Force (Join-Path $movies 'Sub') | Out-Null
