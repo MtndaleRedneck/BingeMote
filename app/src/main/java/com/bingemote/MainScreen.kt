@@ -86,7 +86,7 @@ fun MainScreen(
             if (remote.helperDown) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Helper isn't running on the PC - using VLC's volume. Mouse mode needs the helper.",
+                    "BingeMote PC isn't running on the PC - using VLC's volume. Mouse mode needs BingeMote PC.",
                     color = Muted, fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -545,7 +545,7 @@ private fun ErrorCard(vlcClosed: Boolean, onRetry: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Text(
                 if (vlcClosed) "VLC isn't open on the PC. Open VLC and tap Retry."
-                else "The PC may be off, asleep, or the helper program isn't running.",
+                else "The PC may be off, asleep, or BingeMote PC isn't running.",
                 color = TextC, fontSize = 14.sp,
             )
             Spacer(Modifier.height(14.dp))

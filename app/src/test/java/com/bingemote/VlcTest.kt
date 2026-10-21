@@ -102,11 +102,11 @@ class UpdaterTest {
     }
 
     @Test
-    fun only_app_releases_count() {
-        val apk = "https://github.com/MtndaleRedneck/BingeMote/releases/download/app-v1.0.1/BingeMote-v1.0.1.apk"
-        val appRel = """{"tag_name":"app-v1.0.1","draft":false,"prerelease":false,"body":"- newer app","assets":[{"name":"BingeMote-v1.0.1.apk","browser_download_url":"$apk","size":1000}]}"""
-        val helperRel = """{"tag_name":"helper-v1.0.2","draft":false,"prerelease":false,"body":"- newer helper","assets":[{"name":"BingeMoteHelper-v1.0.2.exe","browser_download_url":"https://github.com/MtndaleRedneck/BingeMote/releases/download/helper-v1.0.2/BingeMoteHelper-v1.0.2.exe","size":1000}]}"""
-        // A helper release never prompts the app, even with a higher number.
+    fun only_android_releases_count() {
+        val apk = "https://github.com/MtndaleRedneck/BingeMote/releases/download/android-v1.0.1/BingeMote-Android-1.0.1.apk"
+        val appRel = """{"tag_name":"android-v1.0.1","draft":false,"prerelease":false,"body":"- newer app","assets":[{"name":"BingeMote-Android-1.0.1.apk","browser_download_url":"$apk","size":1000}]}"""
+        val helperRel = """{"tag_name":"pc-v1.0.2","draft":false,"prerelease":false,"body":"- newer PC","assets":[{"name":"BingeMote-PC-1.0.2.exe","browser_download_url":"https://github.com/MtndaleRedneck/BingeMote/releases/download/pc-v1.0.2/BingeMote-PC-1.0.2.exe","size":1000}]}"""
+        // A PC release never prompts the app, even with a higher number.
         assertEquals(null, Updater.parseRelease(helperRel, "1.0.0"))
         // An app release with an APK does.
         val info = Updater.parseRelease(appRel, "1.0.0")

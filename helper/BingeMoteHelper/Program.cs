@@ -18,7 +18,9 @@ internal static class Program
     internal const int DiscoveryPort = 8489;
     internal const string DiscoverMagic = "BINGEMOTE_DISCOVER_V1";
     internal const string ReplyMagic = "BINGEMOTE_HERE_V1";
-    internal const string FirewallRule = "BingeMote Helper";
+    internal const string FirewallRule = "BingeMote PC";
+    /// <summary>The 1.x rule name, removed by the firewall setup so upgrades do not leave it behind.</summary>
+    internal const string LegacyFirewallRule = "BingeMote Helper";
 
     internal static readonly string DataDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BingeMoteHelper");
@@ -88,10 +90,10 @@ internal static class Program
             try { oldQuit = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
             if (oldQuit == null)
             {
-                Log("An older helper (before 1.1.0) is running - asked him to quit it by hand.");
+                Log("An older copy (before 1.1.0) is running - asked him to quit it by hand.");
                 MessageBox.Show(
-                    "An older BingeMote Helper is already running. Right-click its icon by the clock (click the ^ arrow if you don't see it) and choose Quit, then open this one again.",
-                    "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    "An older BingeMote PC is already running. Right-click its icon by the clock (click the ^ arrow if you don't see it) and choose Quit, then open this one again.",
+                    "BingeMote PC", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return 0;
             }
             Log("Update launched while an older copy ran - asked it to quit, taking over.");
@@ -106,8 +108,8 @@ internal static class Program
             {
                 Log("The older copy did not exit in time - giving up.");
                 MessageBox.Show(
-                    "The older BingeMote Helper is still closing. Open this one again in a few seconds.",
-                    "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    "The older BingeMote PC is still closing. Open this one again in a few seconds.",
+                    "BingeMote PC", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return 0;
             }
         }
@@ -149,8 +151,8 @@ internal static class Program
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
             Log("Could not start listening: " + ex.Message);
-            MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the helper's port.\n\n" + ex.Message,
-                "BingeMote Helper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the port.\n\n" + ex.Message,
+                "BingeMote PC", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
 
@@ -193,7 +195,7 @@ internal static class Program
         try
         {
             var me = Environment.ProcessId;
-            foreach (var proc in Process.GetProcessesByName("BingeMoteHelper"))
+            foreach (var proc in Process.GetProcessesByName("BingeMote PC").Concat(Process.GetProcessesByName("BingeMoteHelper")))
             {
                 if (proc.Id == me) continue;
                 try { return proc.MainModule?.FileName; } catch { return null; }
@@ -279,7 +281,8 @@ internal static class Program
         {
             using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            key?.SetValue("BingeMoteHelper", "\"" + Environment.ProcessPath + "\"");
+            key?.DeleteValue("BingeMoteHelper", false); // the 1.x entry name
+            key?.SetValue("BingeMotePC", "\"" + Environment.ProcessPath + "\"");
         }
         catch { /* autostart is a convenience, not a requirement */ }
     }
@@ -327,7 +330,7 @@ internal sealed class HelperWindow : Form
 
     public HelperWindow()
     {
-        Text = "BingeMote Helper";
+        Text = "BingeMote PC";
         Width = 620; Height = 460;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -336,7 +339,7 @@ internal sealed class HelperWindow : Form
 
         _title = new Label
         {
-            Text = "BingeMote Helper",
+            Text = "BingeMote PC",
             Font = new Font("Segoe UI", 14, FontStyle.Bold),
             AutoSize = true, Left = 20, Top = 16,
         };
@@ -415,13 +418,13 @@ internal sealed class HelperWindow : Form
         });
 
         _menu = new ContextMenuStrip();
-        _menu.Items.Add("Show BingeMote Helper", null, (_, _) => ShowFromTray());
+        _menu.Items.Add("Show BingeMote PC", null, (_, _) => ShowFromTray());
         _menu.Items.Add("New pairing code", null, (_, _) => NewPairingCode());
         _menu.Items.Add("Reset pairing...", null, (_, _) => ResetPairing());
-        _menu.Items.Add("Quit BingeMote Helper", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
+        _menu.Items.Add("Quit BingeMote PC", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
         _tray = new NotifyIcon
         {
-            Text = "BingeMote Helper",
+            Text = "BingeMote PC",
             Icon = Icon,
             Visible = true,
             ContextMenuStrip = _menu,
@@ -475,7 +478,7 @@ internal sealed class HelperWindow : Form
         if (Program.AvailableUpdate == null || _updateAnnounced) return;
         _updateAnnounced = true;
         _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + Program.AvailableUpdate, null, (_, _) => OpenUpdatePage()));
-        _tray.BalloonTipTitle = "BingeMote Helper update";
+        _tray.BalloonTipTitle = "BingeMote PC update";
         _tray.BalloonTipText = "Version " + Program.AvailableUpdate + " is available. Click here to download it.";
         _tray.ShowBalloonTip(8000);
     }
@@ -566,7 +569,7 @@ internal sealed class HelperWindow : Form
     {
         var sure = MessageBox.Show(
             "Forget every paired phone and show a new pairing code? Pair each phone again with the new code to reconnect it.",
-            "BingeMote Helper", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            "BingeMote PC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
         if (sure != DialogResult.Yes) return;
         Program.Tokens.Clear();
         Program.SaveConfig();

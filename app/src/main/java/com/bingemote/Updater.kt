@@ -25,8 +25,8 @@ data class UpdateInfo(
  */
 object Updater {
     const val API = "https://api.github.com/repos/MtndaleRedneck/BingeMote/releases?per_page=30"
-    /** App and helper release separately; this updater only ever looks at app-v* tags. */
-    const val TAG_PREFIX = "app-v"
+    /** Android and PC release separately; this updater only ever looks at android-v* tags. */
+    const val TAG_PREFIX = "android-v"
     private const val DOWNLOAD_PREFIX = "https://github.com/MtndaleRedneck/BingeMote/releases/download/"
     private const val MAX_APK = 150L * 1024 * 1024
 

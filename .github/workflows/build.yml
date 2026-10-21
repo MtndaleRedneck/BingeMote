@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       target:
-        description: Which side to publish (app and helper version separately)
+        description: Which side to publish (Android and PC version separately)
         type: choice
         options: [app, helper]
         default: helper
@@ -48,12 +48,12 @@ jobs:
         run: |
           V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           echo "VERSION=$V" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/app-release.apk BingeMote-v$V.apk
+          cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BingeMote-apk
-          path: BingeMote-v*.apk
+          name: BingeMote-Android-apk
+          path: BingeMote-Android-*.apk
 
 
   helper:
@@ -72,23 +72,25 @@ jobs:
         run: |
           $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
-          Copy-Item helper/out/BingeMoteHelper.exe "BingeMoteHelper-v$v.exe"
+          Copy-Item "helper/out/BingeMote PC.exe" "BingeMote-PC-$v.exe"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BingeMoteHelper-exe
-          path: BingeMoteHelper-v*.exe
+          name: BingeMote-PC-exe
+          path: |
+            BingeMote-PC-*.exe
+            !BingeMote-PC-Setup-*.exe
 
       - name: Build the installer (Inno Setup)
         run: |
           choco install innosetup --no-progress -y
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
-          Move-Item helper/Output/BingeMoteHelper-Setup-*.exe .
+          Move-Item helper/Output/BingeMote-PC-Setup-*.exe .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BingeMoteHelper-Setup
-          path: BingeMoteHelper-Setup-*.exe
+          name: BingeMote-PC-Setup
+          path: BingeMote-PC-Setup-*.exe
 
   helper-e2e:
     runs-on: windows-latest
@@ -156,9 +158,9 @@ jobs:
           if [ "$TARGET" = "app" ]; then
             V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
             [[ "$V" != 0.* ]]
-            gh release create "app-v$V" "artifacts/BingeMote-v$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote app v$V" --notes-file release-notes-app.md
+            gh release create "android-v$V" "artifacts/BingeMote-Android-$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote Android v$V" --notes-file release-notes-app.md
           else
             V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
             # Helper releases never take "latest" - the installed app's updater reads it.
-            gh release create "helper-v$V" "artifacts/BingeMoteHelper-v$V.exe" "artifacts/BingeMoteHelper-Setup-v$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote Helper v$V" --notes-file release-notes-helper.md --latest=false
+            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" "artifacts/BingeMote-PC-Setup-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file release-notes-pc.md --latest=false
           fi
