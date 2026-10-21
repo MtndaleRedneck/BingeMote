@@ -158,12 +158,18 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           set -e
+          # Release pages show ONLY their own version's notes (Ezzy's rule, Oct 2026):
+          # extract the "## v$V" section from the running notes file.
           if [ "$TARGET" = "app" ]; then
             V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
             [[ "$V" != 0.* ]]
-            gh release create "android-v$V" "artifacts/BingeMote-Android-$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote Android v$V" --notes-file release-notes-app.md
+            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if($0==v){f=1}else if(f){exit} } f' release-notes-app.md > /tmp/notes.md
+            [[ -s /tmp/notes.md ]]
+            gh release create "android-v$V" "artifacts/BingeMote-Android-$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote Android v$V" --notes-file /tmp/notes.md
           else
             V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
             # Helper releases never take "latest" - the installed app's updater reads it.
-            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file release-notes-pc.md --latest=false
+            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if($0==v){f=1}else if(f){exit} } f' release-notes-pc.md > /tmp/notes.md
+            [[ -s /tmp/notes.md ]]
+            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file /tmp/notes.md --latest=false
           fi
