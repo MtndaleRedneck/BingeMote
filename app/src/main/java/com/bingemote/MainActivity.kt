@@ -51,7 +51,11 @@ class MainActivity : ComponentActivity() {
             screen = current
             BingeMoteTheme {
                 when (current.value) {
-                    "setup" -> SetupScreen(remote) { remote.start(); current.value = "main" }
+                    "setup" -> SetupScreen(
+                        remote,
+                        onDone = { remote.start(); current.value = "main" },
+                        onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
+                    )
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
                     "movies" -> MoviesScreen(remote) { current.value = "main" }
                     "settings" -> SettingsScreen(

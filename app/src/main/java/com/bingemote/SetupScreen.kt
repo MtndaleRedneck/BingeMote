@@ -11,6 +11,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -27,7 +28,7 @@ import kotlinx.coroutines.withContext
  * continued or discarded - nobody gets stuck between steps.
  */
 @Composable
-fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
+fun SetupScreen(remote: RemoteState, onDone: () -> Unit, onCancel: (() -> Unit)? = null) {
     val store = remote.store
     val scope = rememberCoroutineScope()
 
@@ -47,9 +48,10 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
 
     fun say(text: String, isError: Boolean) { message = text; messageIsError = isError }
 
-    BackHandler(enabled = step > 1) {
-        step -= 1
-        say("", false)
+    // Back walks the steps, and on step 1 leaves setup entirely when there is a
+    // pairing to fall back on (re-entry from Settings offers Cancel).
+    BackHandler(enabled = step > 1 || onCancel != null) {
+        if (step > 1) { step -= 1; say("", false) } else onCancel?.invoke()
     }
 
     fun scan() {
@@ -128,7 +130,13 @@ fun SetupScreen(remote: RemoteState, onDone: () -> Unit) {
         Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).padding(20.dp),
     ) {
         Spacer(Modifier.height(24.dp))
-        Text("Set up BingeMote", color = TextC, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Set up BingeMote", color = TextC, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            if (onCancel != null) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onCancel) { Text("Cancel", color = Orange) }
+            }
+        }
         Spacer(Modifier.height(6.dp))
         Text(
             "Step $step of 3",
