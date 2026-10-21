@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.sp
 
 const val REPO_ISSUES = "https://github.com/MtndaleRedneck/BingeMote/issues"
 /** A plain Google Form, like BumpLog's: the app opens it pre-filled, he reviews and submits in the browser. */
-const val BUG_FORM_URL = "https://docs.google.com/forms/d/e/FORM_ID_PENDING/viewform"
+const val BUG_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeD1ytVTxoA0GgftLr5wSu2kZm1yxRwCHcOV4Pb100Lm6hLcQ/viewform"
 private const val MAX_TEXT = 3000
 private const val MAX_ENCODED = 4500
 
@@ -50,8 +50,8 @@ object Feedback {
     }
 
     fun formUrl(text: String, c: FeedbackContext): String =
-        "$BUG_FORM_URL?usp=pp_url&entry.2115677078=${enc(clean(text) + (if (c.display.isBlank()) "" else "\n\nDisplay: ${c.display}"))}&entry.2070006552=${enc(c.phoneModel)}" +
-            "&entry.1192035271=${enc(c.androidVersion)}&entry.1144301841=${enc(c.appVersion)}"
+        "$BUG_FORM_URL?usp=pp_url&entry.1980878269=${enc(clean(text) + (if (c.display.isBlank()) "" else "\n\nDisplay: ${c.display}"))}&entry.857472167=${enc(c.phoneModel)}" +
+            "&entry.2017214675=${enc(c.androidVersion)}&entry.446486963=${enc(c.appVersion)}"
 
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
