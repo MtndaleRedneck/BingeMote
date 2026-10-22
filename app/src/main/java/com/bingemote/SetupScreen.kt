@@ -70,7 +70,14 @@ fun SetupScreen(
     }
 
     fun pair() {
-        val target = chosen ?: DiscoveredHelper(manualHost.trim(), HelperClient.DEFAULT_PORT, "PC")
+        // A typed "host:port" keeps its own port instead of getting the default glued on.
+        val manual = manualHost.trim()
+        val target = chosen ?: run {
+            val h = manual.substringBeforeLast(':', "")
+            val p = manual.substringAfterLast(':', "").toIntOrNull()
+            if (h.isNotBlank() && p != null) DiscoveredHelper(h, p, "PC")
+            else DiscoveredHelper(manual, HelperClient.DEFAULT_PORT, "PC")
+        }
         if (target.host.isBlank()) { say("Enter your PC's address or pick it above.", true); return }
         if (code.length != 6) { say("Enter the 6-digit code BingeMote is showing on your PC.", true); return }
         pairing = true
@@ -223,7 +230,11 @@ fun SetupScreen(
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,
-                        onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                        onValueChange = {
+                            code = it.filter(Char::isDigit).take(6)
+                            // One less tap: a full 6th digit pairs right away (needs a picked or typed PC).
+                            if (code.length == 6 && !pairing && (chosen != null || manualHost.isNotBlank())) pair()
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         placeholder = { Text("6-digit code", color = Muted) },
