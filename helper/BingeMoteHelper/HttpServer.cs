@@ -76,6 +76,16 @@ internal sealed class HttpServer : IDisposable
                     HandleConfig(req, res);
                     return;
 
+                // The phone's Finish step hands over the VLC web-remote password (T36):
+                // write it into vlcrc so a hand-opened VLC has the remote too.
+                case "/vlc/setup":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    {
+                        var pw = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("password").GetString() ?? "";
+                        Reply(res, 200, VlcSetup.WriteVlcrc(pw));
+                    }
+                    return;
+
                 case "/movies/list":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {
