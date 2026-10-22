@@ -15,10 +15,11 @@ internal static class SelfUpdate
 
     /// <summary>Fetch the installer to the temp folder and verify its SHA-256 when the
     /// release published one. Returns the local path; throws on any failure. A download that
-    /// stalls for 3 minutes is canceled so the button never sits on "Downloading..." forever.</summary>
+    /// stalls for 60 seconds is canceled so the button never sits on "Downloading..." forever.
+    /// Slow connections may take as long as they need: only silence counts.</summary>
     public static async Task<string> Download(string version, string exeUrl, string? sha256, IProgress<int>? progress = null)
     {
-        using var stall = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var stall = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var current = exeUrl;
         for (var hops = 0; ; hops++)
         {
@@ -50,6 +51,9 @@ internal static class SelfUpdate
                 {
                     await fs.WriteAsync(buf.AsMemory(0, n), stall.Token);
                     got += n;
+                    // Every arrived chunk proves the download is alive: the 60 seconds only
+                    // ever count silence.
+                    stall.CancelAfter(TimeSpan.FromSeconds(60));
                     if (total > 0) progress?.Report((int)(got * 100 / total));
                 }
             }

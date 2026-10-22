@@ -1634,7 +1634,7 @@ internal sealed class HelperWindow : Form
             }
             catch (OperationCanceledException)
             {
-                Program.Log("Update download stalled (3 minutes) - canceled so it cannot sit on Downloading forever.");
+                Program.Log("Update download stalled (60 seconds of silence) - canceled so it cannot sit on Downloading forever.");
                 try { BeginInvoke(new Action(() =>
                 {
                     _updatesResult.Text = "The download stopped. Try again.";

@@ -89,6 +89,7 @@ fun SetupScreen(
                 store.helperPort = target.port
                 store.helperToken = token
                 store.pcName = name.ifBlank { target.name }
+                remote.publishAddress(target.host, target.port, token)
                 pairing = false
                 say("", false)
                 step = 3
@@ -106,6 +107,7 @@ fun SetupScreen(
         store.host = ""
         store.helperToken = ""
         store.pcName = ""
+        remote.publishAddress("", HelperClient.DEFAULT_PORT, "")
         code = ""
         chosen = null
         manualHost = ""

@@ -11,7 +11,7 @@ internal static class VlcSetup
 {
     public static string WriteVlcrc(string password)
     {
-        if (password.Length == 0 || password.Length > 200)
+        if (password.Length == 0 || password.Length > 200 || password.Contains('\r') || password.Contains('\n'))
             return JsonSerializer.Serialize(new { ok = false, reason = "bad password" });
         if (Process.GetProcessesByName("vlc").Length > 0)
         {
@@ -45,8 +45,11 @@ internal static class VlcSetup
     private static string MergeValue(string? existing, string wanted)
     {
         if (string.IsNullOrEmpty(existing)) return wanted;
-        var parts = existing.Split(',').Select(p => p.Trim()).ToList();
-        if (parts.Contains(wanted)) return existing;
+        // VLC's own preferences writer separates with ':' ("rc:http") and its loader also
+        // takes space and ','; "luahttp" is its old name for the same interface.
+        var parts = existing.Split(new[] { ',', ':', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(p => p.Trim()).ToList();
+        if (parts.Contains(wanted) || (wanted == "http" && parts.Contains("luahttp"))) return existing;
         parts.Add(wanted);
         return string.Join(",", parts);
     }
