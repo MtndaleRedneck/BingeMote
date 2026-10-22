@@ -76,9 +76,9 @@ try {
     Write-Host "right-code pair -> $($r.code): $($r.body)"
     if ($r.code -ne 200) {
         Get-Process | Where-Object { $_.ProcessName -like '*BingeMote*' } | ForEach-Object { Write-Host "process: $($_.ProcessName) pid=$($_.Id) path=$($_.Path)" }
-        $logf = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log'
+        $logf = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
         if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf }
-        $cfgf = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\config.json'
+        $cfgf = Join-Path $env:LOCALAPPDATA 'BingeMote\config.json'
         if (Test-Path $cfgf) { Write-Host "== config.json =="; Get-Content $cfgf -Raw }
     }
     Assert ($r.code -eq 200) "pair with right code is 200"
@@ -87,7 +87,7 @@ try {
     Assert ($token.Length -eq 64) "token is 64 hex chars"
     Write-Host "paired with machine: $($paired.name)"
     # Paired phones get stored with a name; a code made outside the window pairs as "Phone N".
-    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper/config.json'
+    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMote/config.json'
     $cfgText = Get-Content $cfg -Raw
     Assert ($cfgText -match '"name":"Phone 1"') "first paired phone gets a default name: $cfgText"
 
@@ -190,7 +190,7 @@ try {
     Stop-Process -Id $p.Id -Force
     Start-Sleep -Seconds 1
     Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
-    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper/config.json'
+    $cfg = Join-Path $env:LOCALAPPDATA 'BingeMote/config.json'
     Set-Content $cfg ('{"token":"' + $token + '","moviesFolder":null}')
     $p = Start-Process $exe -PassThru
     $up = $false

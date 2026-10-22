@@ -51,6 +51,6 @@ Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait po
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
-Filename: "schtasks"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
