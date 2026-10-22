@@ -63,6 +63,19 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
     val port = remote.store.helperPort
     val token = remote.store.helperToken
 
+    // The live mouse connection: frames while it is open, plain HTTP when it is not.
+    val live = remember(host, port, token) { LiveWs(host, port, token) }
+    LaunchedEffect(live) {
+        HelperClient.live = live
+        live.connect()
+    }
+    DisposableEffect(live) {
+        onDispose {
+            if (HelperClient.live === live) HelperClient.live = null
+            live.close()
+        }
+    }
+
     val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(256) }
     LaunchedEffect(commands) {
         var failedInARow = 0

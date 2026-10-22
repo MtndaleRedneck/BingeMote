@@ -32,6 +32,10 @@ object HelperClient {
     /** The PC could not be connected to at all (off, sleeping, new address). */
     class ConnectTimeout(val msg: String) : Exception(msg)
 
+    /** The mouse screen's live connection: while it is open, move/scroll/zoom/button go
+     * out as fire-and-forget frames on it and the HTTP request below never happens. */
+    @Volatile var live: LiveWs? = null
+
     private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
@@ -228,19 +232,28 @@ object HelperClient {
         return out.toList()
     }
 
-    fun move(host: String, port: Int, token: String, dx: Float, dy: Float) =
+    fun move(host: String, port: Int, token: String, dx: Float, dy: Float) {
+        if (live?.send(JSONObject().put("cmd", "move").put("dx", dx.toDouble()).put("dy", dy.toDouble())) == true) return
         post(host, port, "/mouse/move", JSONObject().put("dx", dx.toDouble()).put("dy", dy.toDouble()), token, 2500)
+    }
 
-    /** button: "left" or "right". down=true presses, down=false releases. */
-    fun button(host: String, port: Int, token: String, button: String, down: Boolean) =
+    /** button: "left" or "right". down=true presses, down=false releases. Frames are
+     * ordered, so a click sent after moves on the live connection lands after them. */
+    fun button(host: String, port: Int, token: String, button: String, down: Boolean) {
+        if (live?.send(JSONObject().put("cmd", "button").put("button", button).put("down", down)) == true) return
         post(host, port, "/mouse/button", JSONObject().put("button", button).put("down", down), token)
+    }
 
-    fun scroll(host: String, port: Int, token: String, dy: Float) =
+    fun scroll(host: String, port: Int, token: String, dy: Float) {
+        if (live?.send(JSONObject().put("cmd", "scroll").put("dy", dy.toDouble())) == true) return
         post(host, port, "/mouse/scroll", JSONObject().put("dy", dy.toDouble()), token, 2500)
+    }
 
     /** Pinch zoom, sent to the PC as Ctrl + mouse wheel. delta > 0 zooms in. */
-    fun zoom(host: String, port: Int, token: String, delta: Float) =
+    fun zoom(host: String, port: Int, token: String, delta: Float) {
+        if (live?.send(JSONObject().put("cmd", "zoom").put("delta", delta.toDouble())) == true) return
         post(host, port, "/mouse/zoom", JSONObject().put("delta", delta.toDouble()), token, 2500)
+    }
 
     /** Windows system volume, 0-100, and mute. Throws Unreachable when the helper does not answer. */
     fun volumeGet(host: String, port: Int, token: String): Pair<Int, Boolean> {
