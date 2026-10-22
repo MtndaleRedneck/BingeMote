@@ -46,6 +46,7 @@ fun SettingsScreen(
     var mainSkip by remember { mutableStateOf(store.skipMainSec) }
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
+    var flash by remember { mutableStateOf(store.buttonFlash) }
     var reconnect by remember { mutableStateOf(store.autoReconnect) }
     var pickingMovies by remember { mutableStateOf(false) }
     if (pickingMovies) {
@@ -120,6 +121,14 @@ fun SettingsScreen(
 
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
+            Spacer(Modifier.height(14.dp))
+            Text("Button flash", color = TextC, fontSize = 14.sp)
+            Spacer(Modifier.height(10.dp))
+            ChoiceRow(
+                options = listOf(0 to "Skip rings only", 1 to "All buttons"),
+                selected = flash,
+            ) { flash = it; store.buttonFlash = it }
+            Spacer(Modifier.height(14.dp))
             ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
         }
         Spacer(Modifier.height(14.dp))

@@ -42,6 +42,7 @@ fun MainScreen(
     startSubtitlesOpen: Boolean = false,
 ) {
     val s = remote.status
+    val flashAll = remote.store.buttonFlash == 1
     var subtitlesOpen by remember { mutableStateOf(startSubtitlesOpen) }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
@@ -95,7 +96,7 @@ fun MainScreen(
             Spacer(Modifier.height(20.dp))
             SeekBlock(remote)
             Spacer(Modifier.height(18.dp))
-            VolumeRow(remote)
+            VolumeRow(remote, flashAll)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
                 Column(
@@ -115,17 +116,11 @@ fun MainScreen(
                 }
             }
             Spacer(Modifier.height(18.dp))
-            SkipRow(remote)
+            SkipRow(remote, flashAll)
             Spacer(Modifier.height(12.dp))
             SecondarySkipRow(remote)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Hold a skip button to keep skipping",
-                color = Muted, fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
             Spacer(Modifier.weight(1f))
-            BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
+            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
         }
 
@@ -302,7 +297,7 @@ private fun Modifier.graphicsLayoutX(fraction: Float, thumbSize: androidx.compos
     })
 
 @Composable
-private fun VolumeRow(remote: RemoteState) {
+private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
     val s = remote.status
     val muted = remote.muted
     Row(
@@ -315,8 +310,8 @@ private fun VolumeRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
             desc = "Volume down",
-        ) {
-            VolumeDownIcon(TextC, size = 30.dp)
+        ) { pressed ->
+            VolumeDownIcon(if (pressed && flashAll) Orange else TextC, size = 30.dp, extraWave = pressed && flashAll)
         }
         Spacer(Modifier.width(12.dp))
         // Percent readout: tap toggles mute. Muted: dimmed 0% + MUTED, thin red strike corner to corner.
@@ -325,13 +320,13 @@ private fun VolumeRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.width(108.dp).height(84.dp), // same width as Play/Pause, so the columns line up
             desc = "Mute",
-        ) {
+        ) { pressed ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 // Approved layout: block sits 3dp low of center; VOL hugs the number 4dp tighter than default spacing.
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.offset(y = 3.dp)) {
                     Text(
                         if (muted) "0%" else "${remote.winVolume ?: (s?.volumePct ?: 0)}%",
-                        color = if (muted) Dimmed else TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                        color = if (muted) Dimmed else if (pressed && flashAll) Orange else TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                     )
                     Text(
                         if (muted) "MUTED" else "VOL",
@@ -358,14 +353,14 @@ private fun VolumeRow(remote: RemoteState) {
             hapticsOn = remote.store.haptics,
             modifier = Modifier.weight(1f).height(84.dp),
             desc = "Volume up",
-        ) {
-            VolumeUpIcon(TextC, size = 30.dp)
+        ) { pressed ->
+            VolumeUpIcon(if (pressed && flashAll) Orange else TextC, size = 30.dp, extraWave = pressed && flashAll)
         }
     }
 }
 
 @Composable
-private fun SkipRow(remote: RemoteState) {
+private fun SkipRow(remote: RemoteState, flashAll: Boolean) {
     val label = formatSkip(remote.store.skipMainSec)
     val playing = remote.status?.playing == true
     Row(
@@ -382,7 +377,7 @@ private fun SkipRow(remote: RemoteState) {
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
         }
         Spacer(Modifier.width(12.dp))
-        PlayPauseButton(remote, playing)
+        PlayPauseButton(remote, playing, flashAll)
         Spacer(Modifier.width(12.dp))
         PressTile(
             onTap = { remote.skip(remote.store.skipMainSec) },
@@ -397,7 +392,7 @@ private fun SkipRow(remote: RemoteState) {
 }
 
 @Composable
-private fun PlayPauseButton(remote: RemoteState, playing: Boolean) {
+private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boolean) {
     PressTile(
         onTap = { remote.togglePause() },
         hapticsOn = remote.store.haptics,
@@ -405,7 +400,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean) {
         background = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Card2, Card)),
         modifier = Modifier.size(108.dp),
         corner = 54.dp,
-    ) {
+    ) { pressed ->
         Box(
             Modifier
                 .fillMaxSize()
@@ -418,7 +413,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean) {
             contentAlignment = Alignment.Center,
         ) {
             androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                drawCircle(Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+                drawCircle(if (pressed && flashAll) TextC else Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
             }
             if (playing) PauseIcon(Orange, 40.dp) else PlayIcon(Orange, 40.dp)
         }
@@ -452,23 +447,23 @@ private fun SecondarySkipRow(remote: RemoteState) {
 }
 
 @Composable
-private fun BottomRow(remote: RemoteState, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit) {
+private fun BottomRow(remote: RemoteState, flashAll: Boolean, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit) {
     // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Movies") {
-            FolderIcon(TextC, size = 47.5.dp)
+        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Movies") { pressed ->
+            FolderIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Subtitles") {
-            SubtitleIcon(TextC, size = 47.5.dp)
+        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Subtitles") { pressed ->
+            SubtitleIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Fullscreen") {
-            FullscreenIcon(TextC, size = 47.5.dp)
+        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Fullscreen") { pressed ->
+            FullscreenIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp, pressed = pressed && flashAll)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Mouse") {
-            CursorIcon(TextC, size = 46.dp)
+        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Mouse") { pressed ->
+            CursorIcon(if (pressed && flashAll) Orange else TextC, size = 46.dp)
         }
     }
 }

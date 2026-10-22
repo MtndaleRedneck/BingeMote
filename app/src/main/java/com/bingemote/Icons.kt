@@ -97,32 +97,44 @@ private fun DrawScope.drawWave(color: Color, w: Float, h: Float, radius: Float, 
 /** Volume down (approved v4): speaker with Vol up's inner wave alone - down reads
  * as "up minus the outer two rings", a matched pair with VolumeUpIcon. */
 @Composable
-fun VolumeDownIcon(color: Color, size: Dp = 22.dp) {
+fun VolumeDownIcon(color: Color, size: Dp = 22.dp, extraWave: Boolean = false) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
         drawWave(color, w, h, radius = w * 0.24f, stroke = w * 0.08f)
+        if (extraWave) drawWave(color, w, h, radius = w * 0.36f, stroke = w * 0.08f)
     }
 }
 
 /** Volume up: speaker with three sound waves (the approved render's look). */
 @Composable
-fun VolumeUpIcon(color: Color, size: Dp = 22.dp) {
+fun VolumeUpIcon(color: Color, size: Dp = 22.dp, extraWave: Boolean = false) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
         drawSpeaker(color, w, h)
-        // Approved 1.3.1 render: slimmer waves, wider spacing; outer edge ends exactly
-        // at the icon's right edge (0.48 + 0.48 + 0.04 = 1.0), nothing clipped.
-        drawWave(color, w, h, radius = w * 0.24f, stroke = w * 0.08f)
-        drawWave(color, w, h, radius = w * 0.36f, stroke = w * 0.08f)
-        drawWave(color, w, h, radius = w * 0.48f, stroke = w * 0.08f)
+        if (extraWave) {
+            // Pressed pulse: four tighter rings - a 4th ring at the resting spacing
+            // would clip the icon's right edge, these end at 0.48 + 0.475 + 0.035 < 1.0.
+            drawWave(color, w, h, radius = w * 0.13f, stroke = w * 0.07f)
+            drawWave(color, w, h, radius = w * 0.245f, stroke = w * 0.07f)
+            drawWave(color, w, h, radius = w * 0.36f, stroke = w * 0.07f)
+            drawWave(color, w, h, radius = w * 0.475f, stroke = w * 0.07f)
+        } else {
+            // Approved 1.3.1 render: slimmer waves, wider spacing; outer edge ends exactly
+            // at the icon's right edge (0.48 + 0.48 + 0.04 = 1.0), nothing clipped.
+            drawWave(color, w, h, radius = w * 0.24f, stroke = w * 0.08f)
+            drawWave(color, w, h, radius = w * 0.36f, stroke = w * 0.08f)
+            drawWave(color, w, h, radius = w * 0.48f, stroke = w * 0.08f)
+        }
     }
 }
 
-/** Fullscreen: four corner brackets with rounded turns (approved 1.5.0 vector). */
+/** Fullscreen: four corner brackets with rounded turns (approved 1.5.0 vector).
+ * [pressed] stretches the corners outward for a beat (the button-flash pulse). */
 @Composable
-fun FullscreenIcon(color: Color, size: Dp = 22.dp) {
-    Canvas(Modifier.size(size)) {
+fun FullscreenIcon(color: Color, size: Dp = 22.dp, pressed: Boolean = false) {
+    val pop by androidx.compose.animation.core.animateFloatAsState(if (pressed) 1.12f else 1f, label = "pop")
+    Canvas(Modifier.size(size).graphicsLayer { scaleX = pop; scaleY = pop }) {
         val w = this.size.width; val h = this.size.height
         val st = w * 0.0357f
         val ins = w * 0.143f; val arm = w * 0.207f; val r = w * 0.061f
@@ -302,7 +314,9 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
         }
     }
     val rotation = spin.value
-    val ringColor = if (pressed) Orange else tint
+    // Pressed, the ring flashes the opposite brand color: white rings go orange,
+    // orange rings go white. The label keeps its own color either way.
+    val ringColor = if (pressed) (if (tint == Orange) TextC else Orange) else tint
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().graphicsLayer {
             rotationZ = rotation

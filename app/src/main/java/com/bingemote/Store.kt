@@ -59,6 +59,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
 
+    /** Press flash on the home screen: 0 = skip rings only, 1 = every button. */
+    var buttonFlash: Int
+        get() = prefs.getInt("buttonFlash", 1).coerceIn(0, 1)
+        set(v) = prefs.edit().putInt("buttonFlash", v).apply()
+
     var autoReconnect: Boolean
         get() = prefs.getBoolean("autoReconnect", true)
         set(v) = prefs.edit().putBoolean("autoReconnect", v).apply()

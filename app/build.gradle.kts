@@ -12,8 +12,8 @@ android {
         applicationId = "com.bingemote"
         minSdk = 31
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.7.0"
+        versionCode = 15
+        versionName = "1.8.0"
     }
 
     // Release signing key is private and never committed. CI passes it in through environment
