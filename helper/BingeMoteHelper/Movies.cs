@@ -55,20 +55,22 @@ internal static class Movies
             {
                 var drives = new List<object>();
                 foreach (var d in DriveInfo.GetDrives())
-                    if (d.IsReady && d.DriveType == DriveType.Fixed) drives.Add(new { name = d.Name, dir = true });
+                    if (d.IsReady && (d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable))
+                        drives.Add(new { name = d.Name, dir = true });
                 return JsonSerializer.Serialize(new { path = "", entries = drives });
             }
             // A bare drive letter ("C:") is drive-relative on Windows, not the root; mean the root.
             if (path.Length == 2 && char.IsLetter(path[0]) && path[1] == ':') path += "\\";
-            // Local fixed drives only, drive-rooted ("C:\..."): no UNC shares (a token
-            // holder must not reach the network) and no relative paths.
+            // Local drives only (fixed or a removable USB stick), drive-rooted ("C:\..."):
+            // no UNC shares (a token holder must not reach the network) and no relative paths.
             if (path.Length < 3 || !char.IsLetter(path[0]) || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))
                 return Error(404, "not found", "That folder does not exist on the PC.");
             var letter = char.ToUpperInvariant(path[0]);
-            var fixedDrive = false;
+            var localDrive = false;
             foreach (var d in DriveInfo.GetDrives())
-                if (d.DriveType == DriveType.Fixed && char.ToUpperInvariant(d.Name[0]) == letter) { fixedDrive = true; break; }
-            if (!fixedDrive) return Error(404, "not found", "That folder does not exist on the PC.");
+                if ((d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable)
+                    && char.ToUpperInvariant(d.Name[0]) == letter) { localDrive = true; break; }
+            if (!localDrive) return Error(404, "not found", "That folder does not exist on the PC.");
             var full = Path.GetFullPath(path);
             if (!Directory.Exists(full)) return Error(404, "not found", "That folder does not exist on the PC.");
             var entries = new List<object>();
