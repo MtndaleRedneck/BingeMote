@@ -442,7 +442,12 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.wai
 private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     // Tapping anywhere outside dismisses, so there is no Done button.
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        // Use the real screen width, so 66% means 66% of the screen (the platform
+        // default would cap the dialog near 320dp and squeeze the key row off).
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         androidx.compose.material3.Surface(
             // 66% of the screen width (Ezzy's pick over 58%): roomier, not wide.
             modifier = Modifier.fillMaxWidth(0.66f),
