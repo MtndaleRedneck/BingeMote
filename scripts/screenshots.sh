@@ -9,6 +9,10 @@ shoot() { # $1 screen, $2 suffix
   adb shell pidof com.bingemote
   adb exec-out screencap -p > "screenshots/$1$2.png"
 }
+# Emulate the primary tester's phone (Galaxy S22 Ultra class: 1440x3088 @ ~649dpi)
+# so the shots match what he sees. Restored at the end.
+adb shell wm size 1440x3088
+adb shell wm density 649
 for scale in 1.0 1.3; do
   adb shell settings put system font_scale "$scale"
   suffix=""
@@ -18,5 +22,7 @@ for scale in 1.0 1.3; do
   done
 done
 adb shell settings put system font_scale 1.0
+adb shell wm size reset
+adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > screenshots/runtime-errors.txt
 if grep -q 'FATAL EXCEPTION' screenshots/runtime-errors.txt; then cat screenshots/runtime-errors.txt; exit 1; fi

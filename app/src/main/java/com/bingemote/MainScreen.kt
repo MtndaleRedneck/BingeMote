@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -423,6 +424,10 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
 @Composable
 private fun SecondarySkipRow(remote: RemoteState) {
     val label = formatSkip(remote.store.skipSecondarySec)
+    // The ring grows with screen width - 48dp on a 360dp-wide phone, never smaller
+    // than the old 40dp and never bigger than the 52dp that still pads the tile.
+    // The tile itself stays 62dp on every screen.
+    val ringDp = (48f * LocalConfiguration.current.screenWidthDp / 360f).coerceIn(40f, 52f).dp
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         PressTile(
             onTap = { remote.skip(-remote.store.skipSecondarySec) },
@@ -431,7 +436,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(62.dp),
             desc = "Back $label",
         ) { pressed ->
-            SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 40.dp, labelScale = 0.18f)
+            SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = ringDp, labelScale = 0.18f)
         }
         Spacer(Modifier.width(12.dp))
         PressTile(
@@ -441,7 +446,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             modifier = Modifier.weight(1f).height(62.dp),
             desc = "Forward $label",
         ) { pressed ->
-            SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 40.dp, labelScale = 0.18f)
+            SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = ringDp, labelScale = 0.18f)
         }
     }
 }
