@@ -4,6 +4,8 @@
 - Updates install themselves now: one click, one Windows permission prompt, and BingeMote reopens on its own
 - Update results get their own line in the window, and the window reads better at larger text sizes
 - Closing the window just tucks it into the tray - no more balloon tip
+- Updating from 1.4.0? This one still shows the setup screens - every update after is one click
+- An update puts the desktop shortcut back if you removed it
 
 ## v1.4.0
 
