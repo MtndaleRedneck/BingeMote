@@ -1,3 +1,11 @@
+## v1.6.0
+
+- Smoother mouse moves: the phone sends moves as you go, with no jump at the end of a flick
+- Steadier connection: the line to the PC stays warm and reconnects on its own
+- Keyboard: Enter, Backspace, Esc and Space sit on one row, even at large text sizes
+- Cleaner screens and plainer words throughout
+- Pointer speed goes from 0.5x to 2.0x in small steps
+
 ## v1.5.2
 
 - Pick your Movies folder on the phone with VLC closed: browse the PC's drives and folders from Settings

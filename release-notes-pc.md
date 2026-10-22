@@ -1,3 +1,11 @@
+## v1.5.2
+
+- New rounded look for the BingeMote window
+- Restarts itself after a crash, and checks every few minutes that it is still running
+- Quitting from the tray stays quit until you open it again
+- More exact mouse moves from the phone
+- Uninstalling removes the background restart task
+
 ## v1.5.1
 
 - The phone can browse this PC's folders to pick the Movies folder - no VLC needed
