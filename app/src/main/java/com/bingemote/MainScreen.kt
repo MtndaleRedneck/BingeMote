@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -61,6 +62,19 @@ fun MainScreen(
                     }
                 },
             )
+
+            // Ezzy's responsive layout: the equal gaps above soak up extra height on
+            // taller screens; on shorter screens the buttons shrink to fit (never grow),
+            // so nothing clips instead of squeezing the gaps to zero first.
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val fontScale = LocalDensity.current.fontScale
+            // Text-driven parts grow with font scale; paddings, the seek bar and gaps don't.
+            // Card text assumes a 2-line title (worst case).
+            val fixedDp = 32f + 74f * fontScale + 34f + 33f * fontScale + 30f + 14f +
+                (if (remote.helperDown) 96f else 0f)
+            val tilesDp = 358f
+            val scale = ((maxHeight.value - fixedDp) / tilesDp).coerceIn(0.75f, 1f)
+            Column(Modifier.fillMaxSize()) {
 
             // Now playing
             // When the PC is unreachable the card itself says so; no overlay, no Retry.
@@ -106,7 +120,7 @@ fun MainScreen(
                 SeekBlock(remote)
                 Spacer(Modifier.weight(1f))
             }
-            VolumeRow(remote, flashAll)
+            VolumeRow(remote, flashAll, scale)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
                 Column(
@@ -126,16 +140,18 @@ fun MainScreen(
                 }
             }
             Spacer(Modifier.weight(1f))
-            SkipRow(remote, flashAll)
+            SkipRow(remote, flashAll, scale)
             Spacer(Modifier.weight(1f))
-            SecondarySkipRow(remote)
+            SecondarySkipRow(remote, scale)
             if (!seekTop) {
                 Spacer(Modifier.weight(1f))
                 SeekBlock(remote)
             }
             Spacer(Modifier.weight(1f))
-            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
+            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse, scale = scale)
             Spacer(Modifier.height(14.dp))
+            }
+            }
         }
 
         if (subtitlesOpen) {
@@ -321,7 +337,7 @@ private fun Modifier.graphicsLayoutX(fraction: Float, thumbSize: androidx.compos
     })
 
 @Composable
-private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
+private fun VolumeRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
     val s = remote.status
     val muted = remote.muted
     Row(
@@ -332,7 +348,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
             onTap = { remote.volumeStep(false) },
             onHoldRepeat = { remote.volumeStep(false) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(84.dp),
+            modifier = Modifier.weight(1f).height((84 * scale).dp),
             desc = "Volume down",
         ) { pressed ->
             VolumeDownIcon(if (pressed && flashAll) Orange else TextC, size = 30.dp, extraWave = pressed && flashAll)
@@ -342,7 +358,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
         PressTile(
             onTap = { remote.toggleMute() },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.width(108.dp).height(84.dp), // same width as Play/Pause, so the columns line up
+            modifier = Modifier.width(108.dp).height((84 * scale).dp), // same width as Play/Pause, so the columns line up
             desc = "Mute",
         ) { pressed ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -375,7 +391,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
             onTap = { remote.volumeStep(true) },
             onHoldRepeat = { remote.volumeStep(true) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(84.dp),
+            modifier = Modifier.weight(1f).height((84 * scale).dp),
             desc = "Volume up",
         ) { pressed ->
             VolumeUpIcon(if (pressed && flashAll) Orange else TextC, size = 30.dp, extraWave = pressed && flashAll)
@@ -384,7 +400,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean) {
 }
 
 @Composable
-private fun SkipRow(remote: RemoteState, flashAll: Boolean) {
+private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
     val label = formatSkip(remote.store.skipMainSec)
     val playing = remote.status?.playing == true
     Row(
@@ -395,7 +411,7 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean) {
             onTap = { remote.skip(-remote.store.skipMainSec) },
             onHoldRepeat = { remote.skip(-remote.store.skipMainSec) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(108.dp),
+            modifier = Modifier.weight(1f).height((108 * scale).dp),
             desc = "Back $label",
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
@@ -407,7 +423,7 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean) {
             onTap = { remote.skip(remote.store.skipMainSec) },
             onHoldRepeat = { remote.skip(remote.store.skipMainSec) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(108.dp),
+            modifier = Modifier.weight(1f).height((108 * scale).dp),
             desc = "Forward $label",
         ) { pressed ->
             SkipIcon(forward = true, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
@@ -445,7 +461,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
 }
 
 @Composable
-private fun SecondarySkipRow(remote: RemoteState) {
+private fun SecondarySkipRow(remote: RemoteState, scale: Float = 1f) {
     val label = formatSkip(remote.store.skipSecondarySec)
     // Ezzy's call: the 30s ring + label are the exact 5s size, fixed. The tiles
     // grew into the space the removed skip-hint line freed (8dp spacer + ~16dp
@@ -456,7 +472,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             onTap = { remote.skip(-remote.store.skipSecondarySec) },
             onHoldRepeat = { remote.skip(-remote.store.skipSecondarySec) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(86.dp),
+            modifier = Modifier.weight(1f).height((86 * scale).dp),
             desc = "Back $label",
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 44.dp, labelScale = 0.30f, ringScale = 40f / 44f)
@@ -466,7 +482,7 @@ private fun SecondarySkipRow(remote: RemoteState) {
             onTap = { remote.skip(remote.store.skipSecondarySec) },
             onHoldRepeat = { remote.skip(remote.store.skipSecondarySec) },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.weight(1f).height(86.dp),
+            modifier = Modifier.weight(1f).height((86 * scale).dp),
             desc = "Forward $label",
         ) { pressed ->
             SkipIcon(forward = true, label = label, pressed = pressed, tint = Orange, size = 44.dp, labelScale = 0.30f, ringScale = 40f / 44f)
@@ -475,22 +491,22 @@ private fun SecondarySkipRow(remote: RemoteState) {
 }
 
 @Composable
-private fun BottomRow(remote: RemoteState, flashAll: Boolean, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit) {
+private fun BottomRow(remote: RemoteState, flashAll: Boolean, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit, scale: Float = 1f) {
     // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Movies") { pressed ->
+        PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Movies") { pressed ->
             FolderIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Subtitles") { pressed ->
+        PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Subtitles") { pressed ->
             SubtitleIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Fullscreen") { pressed ->
+        PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Fullscreen") { pressed ->
             FullscreenIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp, pressed = pressed && flashAll)
         }
         Spacer(Modifier.width(12.dp))
-        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height(80.dp), desc = "Mouse") { pressed ->
+        PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Mouse") { pressed ->
             CursorIcon(if (pressed && flashAll) Orange else TextC, size = 46.dp)
         }
     }
