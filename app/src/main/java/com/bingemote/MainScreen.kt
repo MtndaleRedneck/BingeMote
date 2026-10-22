@@ -25,7 +25,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -194,14 +197,21 @@ private fun SeekBlock(remote: RemoteState) {
         }
     }
 
+    // Tab's call (and the right one): kill the invisible font padding in the
+    // source instead of draw offsets, so the seek block's visible edges are its
+    // glyphs and the five row gaps measure equal.
+    val tight = TextStyle(
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.Both,
+        ),
+    )
     Column(Modifier.padding(horizontal = 16.dp)) {
-        // Drawn 8dp into the gap above: a text line box carries invisible font
-        // padding, which made the visible gap to the 30s row look bigger than
-        // the others (Ezzy's equal-gaps ask).
-        Row(Modifier.fillMaxWidth().offset(y = (-8).dp)) {
-            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth()) {
+            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
             Spacer(Modifier.weight(1f))
-            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
         }
         Spacer(Modifier.height(4.dp))
         Box(
@@ -286,16 +296,15 @@ private fun SeekBlock(remote: RemoteState) {
             }
         }
         Spacer(Modifier.height(2.dp))
-        // Same trick below: 8dp into the gap under the hint line.
-        Row(Modifier.fillMaxWidth().offset(y = 8.dp)) {
+        Row(Modifier.fillMaxWidth()) {
             Text(
                 if (unlocked) "Unlocked. Locks again in a few seconds" else "Hold the bar to unlock seeking",
                 color = if (unlocked) Orange else Muted, fontSize = 12.sp,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, style = tight,
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
-            Text("${formatTime(length)} total", color = Muted, fontSize = 12.sp, maxLines = 1)
+            Text("${formatTime(length)} total", color = Muted, fontSize = 12.sp, maxLines = 1, style = tight)
         }
     }
 }
