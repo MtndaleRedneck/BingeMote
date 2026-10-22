@@ -130,8 +130,17 @@ fun SetupScreen(
             } catch (e: Exception) { false }
             testing = false
             when {
-                vlcOk && helperOk -> { store.setupDone = true; onDone() }
-                !vlcOk && helperOk -> say("BingeMote answers, but VLC didn't. Check the password and that VLC is open with the web interface on.", true)
+                vlcOk && helperOk -> {
+                    // Hand the password to the PC: it writes vlcrc so a hand-opened VLC has
+                    // the web remote too (silently skipped while VLC is running).
+                    scope.launch(Dispatchers.IO) { try { HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) } catch (e: Exception) {} }
+                    store.setupDone = true; onDone()
+                }
+                !vlcOk && helperOk -> {
+                    // VLC may just be closed: the PC writes vlcrc so the next hand-open has the remote.
+                    scope.launch(Dispatchers.IO) { try { HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) } catch (e: Exception) {} }
+                    say("BingeMote answers, but VLC didn't. Check the password and that VLC is open with the web interface on.", true)
+                }
                 vlcOk && !helperOk -> say("VLC answers, but BingeMote didn't. Mouse mode won't work until BingeMote is running on the PC.", true)
                 else -> say("Nothing answered. Check the PC is awake, VLC is open, and both are on the same Wi-Fi.", true)
             }

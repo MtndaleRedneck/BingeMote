@@ -147,6 +147,11 @@ object HelperClient {
         null
     } catch (e: Exception) { e.message ?: "The PC could not start the movie." }
 
+    /** Hand the VLC web-remote password to the PC so it can write vlcrc (needs VLC closed).
+     * Fire-and-forget from the setup Finish step; the PC silently skips it while VLC runs. */
+    fun setupVlc(host: String, port: Int, token: String, password: String) =
+        post(host, port, "/vlc/setup", JSONObject().put("password", password), token)
+
     /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
     fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =
         post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)
