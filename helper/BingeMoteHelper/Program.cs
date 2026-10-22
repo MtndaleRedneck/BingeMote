@@ -22,22 +22,47 @@ internal static class Program
     /// <summary>The 1.x rule name, removed by the firewall setup so upgrades do not leave it behind.</summary>
     internal const string LegacyFirewallRule = "BingeMote Helper";
 
-    internal static readonly string DataDir = MigrateDataDir();
+    private static readonly string LocalRoot = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+    /// <summary>The data folder: the new name once it exists, the 1.x name until the one-time
+    /// move runs. The move itself waits for the single-instance mutex in Main, so two copies
+    /// racing at sign-in never fight over it.</summary>
+    internal static string DataDir { get; private set; } = PickDataDir();
+
+    private static string PickDataDir()
+    {
+        var dir = Path.Combine(LocalRoot, "BingeMote");
+        var old = Path.Combine(LocalRoot, "BingeMoteHelper");
+        return Directory.Exists(dir) || !Directory.Exists(old) ? dir : old;
+    }
 
     /// <summary>The data folder used to be %LocalAppData%\BingeMoteHelper; it is now ...\BingeMote.
-    /// One move on first launch carries pairing, the movies folder and the log over.</summary>
-    private static string MigrateDataDir()
+    /// One move carries pairing, the movies folder and the log over. Called from Main only by
+    /// the copy holding the single-instance mutex.</summary>
+    private static void MigrateDataDir()
     {
-        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var dir = Path.Combine(root, "BingeMote");
-        var old = Path.Combine(root, "BingeMoteHelper");
-        try { if (Directory.Exists(old) && !Directory.Exists(dir)) Directory.Move(old, dir); }
-        catch { return Directory.Exists(dir) ? dir : old; }
-        return dir;
+        var dir = Path.Combine(LocalRoot, "BingeMote");
+        var old = Path.Combine(LocalRoot, "BingeMoteHelper");
+        try
+        {
+            if (Directory.Exists(old) && !Directory.Exists(dir))
+            {
+                Directory.Move(old, dir);
+                DataDir = dir;
+            }
+        }
+        catch { /* the next start tries again */ }
     }
-    private static readonly string ConfigPath = Path.Combine(DataDir, "config.json");
-    private static readonly string FirewallMarker = Path.Combine(DataDir, "firewall.ok");
-    private static readonly string QuitMarkerPath = Path.Combine(DataDir, "quit-on-purpose");
+
+    private static string ConfigPath => Path.Combine(DataDir, "config.json");
+    private static string FirewallMarker => Path.Combine(DataDir, "firewall.ok");
+    private static string QuitMarkerPath => Path.Combine(DataDir, "quit-on-purpose");
+    /// <summary>Fresh while an update installer runs: the watchdog skips its round so it cannot
+    /// start a copy mid-install. Any normal start deletes it.</summary>
+    internal static string UpdatingMarkerPath => Path.Combine(DataDir, "updating");
+    /// <summary>Set after the tray notice about a failed listen, so the 5-minute watchdog does
+    /// not repeat it; cleared on the next normal start (one notice per sign-in).</summary>
+    private static string ListenFailNoticePath => Path.Combine(DataDir, "listen-fail-noticed");
 
     private const string ShowEventName = @"Local\BingeMoteHelper.ShowWindow";
     private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
@@ -110,11 +135,29 @@ internal static class Program
         if (ensureRunning)
         {
             if (File.Exists(QuitMarkerPath)) return 0;
+            // A fresh update marker means the installer is running right now: starting the app
+            // mid-install could fight it, so the watchdog skips this round.
+            try
+            {
+                if (File.Exists(UpdatingMarkerPath)
+                    && DateTime.UtcNow - File.GetLastWriteTimeUtc(UpdatingMarkerPath) < TimeSpan.FromMinutes(3))
+                    return 0;
+            }
+            catch { }
+            // Off in Settings > Startup apps means off: the watchdog honors the Windows switch.
+            if (StartupDisabledByUser()) return 0;
         }
         else
         {
             try { File.Delete(QuitMarkerPath); } catch { }
+            try { File.Delete(UpdatingMarkerPath); } catch { }
+            try { File.Delete(ListenFailNoticePath); } catch { }
         }
+        // Sign-in autostart and the Windows crash-restart are automatic launches: when a copy
+        // is already up they stay quiet instead of counting as "opened by hand" and popping
+        // the window. They still count as real launches for the quit marker (a sign-in revives
+        // a tray quit).
+        var quietLaunch = ensureRunning || args.Contains("--autostart") || args.Contains("/restarted");
 
         // One copy at a time. What a second launch does depends on what is already running:
         // the same exe just pops the running copy's window up; a different exe (an update)
@@ -123,7 +166,7 @@ internal static class Program
         using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var onlyCopy);
         if (!onlyCopy)
         {
-            if (ensureRunning) return 0; // watchdog: another copy is up, nothing to do, no window
+            if (quietLaunch) return 0; // automatic launch: another copy is up, nothing to do, no window
             var runningPath = RunningCopyPath();
             var selfPath = Environment.ProcessPath;
             var sameExe = runningPath != null && selfPath != null &&
@@ -178,6 +221,7 @@ internal static class Program
             }
         }
 
+        MigrateDataDir(); // the copy holding the mutex owns the one-time 1.x folder move
         Directory.CreateDirectory(DataDir);
         LoadConfig();
         if (LastRunVersion != VersionText)
@@ -235,7 +279,8 @@ internal static class Program
         try { http.Start(); discovery.Start(); }
         catch (Exception ex) {
             Log("Could not start listening: " + ex.Message);
-            if (ensureRunning) return 1; // watchdog: log and stay quiet, no pop-up loop
+            // Watchdog: no pop-up loop, but not silence either - one quiet tray notice per sign-in.
+            if (ensureRunning) { NotifyListenFailureOnce(); return 1; }
             MessageBox.Show("Could not start listening for the phone. If Windows asked for administrator permission earlier, choose Yes - it is needed once to open the port.\n\n" + ex.Message,
                 "BingeMote", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
@@ -410,6 +455,37 @@ internal static class Program
         });
     }
 
+    /// <summary>True when he turned BingeMote off in Settings > Startup apps (or Task Manager).
+    /// Windows records it in StartupApproved; the watchdog honors it so off stays off.</summary>
+    private static bool StartupDisabledByUser()
+    {
+        try
+        {
+            using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+            return k?.GetValue("BingeMote") is byte[] b && b.Length > 0 && (b[0] & 1) == 1; // 03/01 = disabled, 02 = enabled
+        }
+        catch { return false; }
+    }
+
+    /// <summary>A watchdog start that cannot listen used to fail silently every 5 minutes.
+    /// Show one quiet tray balloon per sign-in instead; the marker file dedupes the repeats.</summary>
+    private static void NotifyListenFailureOnce()
+    {
+        try
+        {
+            if (File.Exists(ListenFailNoticePath)) return;
+            File.WriteAllText(ListenFailNoticePath, DateTime.UtcNow.ToString("O"));
+            using var ni = new WinForms.NotifyIcon { Visible = true, BalloonTipTitle = "BingeMote" };
+            try { ni.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!); }
+            catch { ni.Icon = System.Drawing.SystemIcons.Application; }
+            ni.BalloonTipText = "BingeMote could not start listening for your phone. Open BingeMote from the Start menu to finish its setup.";
+            ni.ShowBalloonTip(8000);
+            Thread.Sleep(4000); // the balloon dies with the process; give it a moment to appear
+        }
+        catch { }
+    }
+
     /// <summary>Start with Windows for this user (no admin needed).</summary>
     private static void RegisterAutostart()
     {
@@ -418,7 +494,7 @@ internal static class Program
             using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true);
             key?.DeleteValue("BingeMoteHelper", false); // the 1.x entry name
-            key?.SetValue("BingeMote", "\"" + Environment.ProcessPath + "\"");
+            key?.SetValue("BingeMote", "\"" + Environment.ProcessPath + "\" --autostart");
         }
         catch { /* autostart is a convenience, not a requirement */ }
     }
@@ -501,6 +577,9 @@ internal sealed class HelperWindow : Form
     private readonly Label _codeCaption;
     private readonly Label _code;
     private readonly Label _codeNote;
+    private readonly Button _cancelPair;
+    private readonly Label _pairHint;
+    private bool _codeExpired;
     private readonly Label _phonesHeader;
     private readonly FlowLayoutPanel _phoneList;
     private readonly Button _removeAll;
@@ -572,9 +651,18 @@ internal sealed class HelperWindow : Form
         // One anti-aliased rounded frame, exactly the Pair button's top and height, with a
         // borderless TextBox centered inside it (no docking: a single-line TextBox keeps
         // its own height, which left a grey slab under it).
+        // While Pair is greyed, a hint next to it says why; typing a name swaps it for the button.
+        _pairHint = new Label
+        {
+            Text = "Type a name to pair",
+            Font = new Font("Segoe UI", 8f),
+            AutoSize = true, Top = y + 9,
+        };
+        var hintW = _pairHint.PreferredWidth + 10;
+        _pairHint.Left = margin + contentW - 60 - 12 - hintW;
         _nameBoxPanel = new RoundedPanel
         {
-            Left = margin, Top = y, Width = contentW - 60 - 12, Height = 32,
+            Left = margin, Top = y, Width = contentW - 60 - 12 - hintW, Height = 32,
             Radius = 4, Cursor = Cursors.IBeam,
         };
         _nameBox = new TextBox
@@ -596,7 +684,11 @@ internal sealed class HelperWindow : Form
         _pair.Enabled = false;
         StylePrimary(_pair);
         _pair.Click += (_, _) => StartPairing();
-        _nameBox.TextChanged += (_, _) => _pair.Enabled = _nameBox.Text.Trim().Length > 0;
+        _nameBox.TextChanged += (_, _) =>
+        {
+            _pair.Enabled = _nameBox.Text.Trim().Length > 0;
+            _pairHint.Visible = !_pair.Enabled;
+        };
         y += 32 + 12;
         _codeCaption = new Label
         {
@@ -613,6 +705,9 @@ internal sealed class HelperWindow : Form
             AutoSize = true, Left = margin + 98, Top = y,
             Visible = false,
         };
+        _cancelPair = MakeButton("Cancel", margin + contentW - 80, y - 2, 80);
+        _cancelPair.Visible = false;
+        _cancelPair.Click += (_, _) => CancelPairing();
         y += 28 + 6;
         _codeNote = new Label
         {
@@ -731,7 +826,7 @@ internal sealed class HelperWindow : Form
         Controls.AddRange(new Control[]
         {
             _wifiBorder,
-            _pairHeader, _firstRun, _nameBoxPanel, _pair, _codeCaption, _code, _codeNote,
+            _pairHeader, _firstRun, _nameBoxPanel, _pairHint, _pair, _codeCaption, _code, _cancelPair, _codeNote,
             _phonesHeader, _phoneList, _removeAll,
             _aboutHeader, _feedbackCard, _updatesCard,
         });
@@ -1002,19 +1097,41 @@ internal sealed class HelperWindow : Form
     {
         if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
         {
-            Program.PairCode = Program.NewPairCode();
-            Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
-            Program.PendingPhoneName = null; // an expired code keeps no name
+            // Stop at expiry instead of rolling a new code forever: the typed name goes back
+            // into the box (Pair re-enables) and the note says what happened.
+            var name = Program.PendingPhoneName;
+            Program.PairCode = null;
+            Program.PendingPhoneName = null;
+            if (!string.IsNullOrEmpty(name) && _nameBox.Text.Trim().Length == 0) _nameBox.Text = name;
+            _codeExpired = true;
+            Program.Log("Pairing code expired - showing \"Code expired\" until Pair is tapped again.");
         }
         _code.Text = Program.PairCode ?? "------";
-        // The code, its caption and its note show only while there is a code to enter.
-        var show = Program.PairCode != null;
-        if (show != _codeShown)
+        // The block shows a live code (caption, code, Cancel, note) or the expired note alone.
+        var live = Program.PairCode != null;
+        var show = live || _codeExpired;
+        if (show != _codeShown || live != _code.Visible)
         {
             _codeShown = show;
-            _codeCaption.Visible = _code.Visible = _codeNote.Visible = show;
+            _codeCaption.Visible = _code.Visible = _cancelPair.Visible = live;
+            _codeNote.Visible = show;
+            _codeNote.Text = live
+                ? "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes."
+                : "Code expired. Tap Pair for a new one.";
             ApplyLayout();
         }
+    }
+
+    /// <summary>Cancel drops the code and goes back to step one, keeping the typed name.</summary>
+    private void CancelPairing()
+    {
+        var name = Program.PendingPhoneName;
+        Program.PairCode = null;
+        Program.PendingPhoneName = null;
+        if (!string.IsNullOrEmpty(name) && _nameBox.Text.Trim().Length == 0) _nameBox.Text = name;
+        _codeExpired = false;
+        Program.Log("Pairing canceled from the window.");
+        TickStatus();
     }
 
     /// <summary>Rebuild the paired-phones list from the current config. Each phone is one
@@ -1118,6 +1235,7 @@ internal sealed class HelperWindow : Form
         Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
         Program.PairFailures = 0;
         _nameBox.Clear();
+        _codeExpired = false;
         Program.Log("Pairing code created for \"" + name + "\".");
         TickStatus();
     }
@@ -1189,6 +1307,8 @@ internal sealed class HelperWindow : Form
         _codeCaption.ForeColor = text;
         _code.ForeColor = Orange;
         _codeNote.ForeColor = text;
+        _pairHint.ForeColor = muted;
+        _pairHint.BackColor = bg;
         _phoneList.BackColor = bg;
         _firstRun.BackColor = bg;
         _firstRun.ForeColor = text;
@@ -1212,7 +1332,7 @@ internal sealed class HelperWindow : Form
         _updatesCaption.ForeColor = muted;
         _feedbackBtn.FlatAppearance.BorderSize = 0;
         _checkUpdates.FlatAppearance.BorderSize = 0;
-        foreach (var b in new[] { _removeAll })
+        foreach (var b in new[] { _removeAll, _cancelPair })
         {
             b.BackColor = cardBtn;
             b.ForeColor = text;
@@ -1367,12 +1487,16 @@ internal sealed class HelperWindow : Form
         protected override void OnPaint(PaintEventArgs e)
         {
             var fill = BackColor;
+            // Disabled reads disabled: the fill leans halfway toward whatever is behind the
+            // button and the text halfway toward that.
+            if (!Enabled) fill = Mix(BackColor, Parent?.BackColor ?? BackColor, 0.5f);
             // Hover/pressed lean toward the text color: lighter on dark grey, deeper on orange.
-            if (Enabled && _pressed) fill = Mix(BackColor, ForeColor, 0.16f);
-            else if (Enabled && _hover) fill = Mix(BackColor, ForeColor, 0.08f);
+            else if (_pressed) fill = Mix(BackColor, ForeColor, 0.16f);
+            else if (_hover) fill = Mix(BackColor, ForeColor, 0.08f);
             var border = FlatAppearance.BorderSize > 0 ? FlatAppearance.BorderColor : Color.Empty;
             PaintRounded(e.Graphics, this, fill, border, _radius);
-            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor, fill,
+            var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.5f);
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, fg, fill,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             if (Focused && ShowFocusCues && Enabled)
@@ -1398,6 +1522,7 @@ internal sealed class HelperWindow : Form
     {
         base.OnLoad(e);
         RefreshPhones();
+        ActiveControl = _nameBox; // the name box is the obvious first step
     }
 
     private static Label Header(string text, int x, int y) => new()
@@ -1494,16 +1619,27 @@ internal sealed class HelperWindow : Form
         _checkUpdates.Enabled = false;
         _updatesResult.Text = "Downloading version " + u.Value.Version + "...";
         var upd = u.Value;
+        var progress = new Progress<int>(p => _updatesResult.Text = "Downloading " + p + "%...");
         Task.Run(async () =>
         {
             try
             {
-                var path = await SelfUpdate.Download(upd.Version, upd.ExeUrl, upd.Sha256);
+                var path = await SelfUpdate.Download(upd.Version, upd.ExeUrl, upd.Sha256, progress);
                 Program.Log("Update " + upd.Version + " downloaded and verified; opening the installer.");
                 try { BeginInvoke(new Action(() =>
                 {
                     _updatesResult.Text = "Checked. Windows will ask for permission once, then the update installs itself.";
                     LaunchUpdate(path);
+                })); } catch { }
+            }
+            catch (OperationCanceledException)
+            {
+                Program.Log("Update download stalled (3 minutes) - canceled so it cannot sit on Downloading forever.");
+                try { BeginInvoke(new Action(() =>
+                {
+                    _updatesResult.Text = "The download stopped. Try again.";
+                    _checkUpdates.Enabled = true;
+                    _downloading = false;
                 })); } catch { }
             }
             catch
@@ -1530,24 +1666,34 @@ internal sealed class HelperWindow : Form
         switch (dlg.ShowDialog(this))
         {
             case WifiDialog.Result.Home:
-                if (NetworkCheck.MarkPrivate(profile))
+                // MarkPrivate waits on the Windows permission prompt (up to 30 s): run it off
+                // the UI thread so the window stays alive, like the strip button does.
+                Task.Run(() =>
                 {
-                    Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
-                    if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
-                        Program.HomeNetworks.Add(profile.Name);
-                    Program.SaveConfig();
-                    _wifiProfile = null;
-                    SetWifiStripVisible(false);
-                    Program.Log("Network \"" + profile.Name + "\" marked Private from the popup.");
-                    NoteDialog.Show(this,
-                        "\u2713 Done. Your phone can reach this PC now.\n\nThis Wi-Fi is now marked Private in Windows, and Windows remembers it.");
-                }
-                else
-                {
-                    NoteDialog.Show(this,
-                        "The change did not go through. Opening the Windows setting so you can switch this Wi-Fi to Private by hand.");
-                    OpenWifiSettings();
-                }
+                    var ok = false;
+                    try { ok = NetworkCheck.MarkPrivate(profile); } catch { }
+                    try { BeginInvoke(new Action(() =>
+                    {
+                        if (ok)
+                        {
+                            Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                            if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
+                                Program.HomeNetworks.Add(profile.Name);
+                            Program.SaveConfig();
+                            _wifiProfile = null;
+                            SetWifiStripVisible(false);
+                            Program.Log("Network \"" + profile.Name + "\" marked Private from the popup.");
+                            NoteDialog.Show(this,
+                                "\u2713 Done. Your phone can reach this PC now.\n\nThis Wi-Fi is now marked Private in Windows, and Windows remembers it.");
+                        }
+                        else
+                        {
+                            NoteDialog.Show(this,
+                                "The change did not go through. Opening the Windows setting so you can switch this Wi-Fi to Private by hand.");
+                            OpenWifiSettings();
+                        }
+                    })); } catch { }
+                });
                 break;
             case WifiDialog.Result.Settings:
                 OpenWifiSettings();
@@ -1679,7 +1825,7 @@ internal sealed class WifiDialog : Form
         var contentW = clientW - 2 * m;
         var body = DialogLook.Text(
             "Windows is treating this Wi-Fi (" + profile.Name + ") like a public hotspot, so your phone cannot reach this PC.\n\n" +
-            "If this is your home network, BingeMote can mark it as Private in Windows for you. This also turns on Windows features meant for home networks, like printer and file sharing.\n\n" +
+            "If this is your home network, BingeMote can mark it as Private in Windows for you. This also lets Windows use its home-network settings on this Wi-Fi.\n\n" +
             "On a network you don't know (hotel, cafe), choose Not now.",
             new Font("Segoe UI", 9.5f), text, m, m, contentW);
         var small = DialogLook.Text(
@@ -1692,8 +1838,10 @@ internal sealed class WifiDialog : Form
             return b;
         }
         var home = Btn("This is my home Wi-Fi", 170, Result.Home);
+        HelperWindow.StylePrimary(home);
         var settings = Btn("Open Settings instead", 150, Result.Settings);
         var notNow = Btn("Not now", 90, Result.NotNow);
+        CancelButton = notNow; // Esc means Not now
         DialogLook.RowRight(clientW - m, small.Bottom + 20, home, settings, notNow);
         ClientSize = new Size(clientW, home.Bottom + m);
         Controls.Add(body);
@@ -1744,7 +1892,7 @@ internal static class ConfirmDialog
         dlg.Controls.Add(body);
         dlg.Controls.Add(yes);
         dlg.Controls.Add(no);
-        dlg.AcceptButton = yes;
+        dlg.AcceptButton = no; // Enter on a destructive prompt must mean No
         dlg.CancelButton = no;
         answer = dlg.ShowDialog(owner) == DialogResult.OK;
         return answer;
@@ -1927,7 +2075,10 @@ internal sealed class FeedbackDialog : Form
     private void RefreshPreview()
     {
         var msg = Clean(_message.Text, 3000);
-        _preview.Text = msg + "\n\nBingeMote PC version: " + Program.VersionText +
+        // Long messages preview their start and keep the footer: the preview always shows
+        // everything else that goes out.
+        var shortMsg = msg.Length > 280 ? msg[..280] + "…" : msg;
+        _preview.Text = shortMsg + "\n\nBingeMote PC version: " + Program.VersionText +
             "\nWindows version: " + OsVersion() +
             "\nDevice: PC" +
             "\n\nNothing else. No PC name, user name, Wi-Fi, phones, or paths.";
@@ -2065,11 +2216,17 @@ internal sealed class FeedbackDialog : Form
 
     private string IssueUrl()
     {
-        var msg = Clean(_message.Text, 3000);
+        var msg = Clean(_message.Text, 4000);
         var title = "Feedback: " + (msg.Length <= 60 ? msg : msg.Substring(0, 57) + "...");
-        var body = msg + "\n\nBingeMote PC version: " + Program.VersionText + "\nWindows version: " + OsVersion();
-        var url = RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(body);
-        return url.Length <= 8000 ? url : RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(Clean(body, 4500));
+        // Trim the message, never the body: the version lines always survive a long report.
+        string Body(string m) => m + "\n\nBingeMote PC version: " + Program.VersionText + "\nWindows version: " + OsVersion();
+        var url = RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(Body(msg));
+        while (url.Length > 8000 && msg.Length > 280)
+        {
+            msg = Clean(msg, msg.Length / 2);
+            url = RepoIssues + "?title=" + Uri.EscapeDataString(title) + "&body=" + Uri.EscapeDataString(Body(msg));
+        }
+        return url;
     }
 
     private string FormUrl()
