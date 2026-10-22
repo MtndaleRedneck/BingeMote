@@ -1,3 +1,15 @@
+## v1.7.0
+
+- The mouse answers right away: moves, clicks and scrolls ride an always-open line to the PC
+- Taps click when they should, long-press drag starts every time, and slow scrolling keeps its small steps
+- After a Wi-Fi hiccup, a stalled swipe no longer lands as one big jump
+- Typed words reach the PC as typed: autocorrect and suggestions work, and Enter is a real Enter
+- The mouse screen finds the PC again on its own when the PC's address changes
+- A drag lets go if you leave the app, and the seek bar drags right after hold-to-unlock without a jump back
+- Movies open faster, folders sort Episode 2 before Episode 10, and a movie that won't start says so instead of nothing
+- Pairing is easier: the PC asks for the phone's name first, pairs as soon as the last digit lands, and an expired code says so
+- Feedback shows the whole message before it sends, and setup can put the web remote into VLC for you
+
 ## v1.6.0
 
 - Smoother mouse moves: the phone sends moves as you go, with no jump at the end of a flick
