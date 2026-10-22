@@ -1,3 +1,11 @@
+## v1.8.0
+
+- Buttons light up when you press them: white buttons flash orange, orange ones flash white
+- The 30s skip ring flashes white now, and every ring keeps its number in its own color
+- Volume buttons pop an extra sound wave, and the fullscreen corners stretch for a beat
+- New setting: Button flash - "All buttons" or "Skip rings only"
+- The "Hold a skip button to keep skipping" line is gone from the home screen
+
 ## v1.7.0
 
 - The mouse answers right away: moves, clicks and scrolls ride an always-open line to the PC
