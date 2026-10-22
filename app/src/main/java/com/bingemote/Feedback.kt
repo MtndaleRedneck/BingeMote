@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -85,7 +85,7 @@ fun FeedbackScreen(scrollState: ScrollState, onBack: () -> Unit) {
     fun open(url: String) = ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     Column(Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
+            HeaderIconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Feedback", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
@@ -132,8 +132,10 @@ fun FeedbackScreen(scrollState: ScrollState, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(14.dp))
 
-        FeedbackButton("Done", onClick = onBack)
-        Spacer(Modifier.height(28.dp))
+        // Done is just Back: a quiet text button, not a third orange button competing with the two send buttons.
+        androidx.compose.material3.TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text("Done", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
@@ -143,7 +145,7 @@ private fun FeedbackButton(label: String, onClick: () -> Unit) {
     PressTile(
         onTap = onClick,
         background = OrangeGradient,
-        modifier = Modifier.fillMaxWidth().height(46.dp),
+        modifier = Modifier.fillMaxWidth().height(48.dp),
         corner = 14.dp,
     ) {
         Text(label, color = androidx.compose.ui.graphics.Color(0xFF1B1B1E), fontSize = 14.sp, fontWeight = FontWeight.Bold)

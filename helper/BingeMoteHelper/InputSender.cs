@@ -53,9 +53,20 @@ internal static class InputSender
     private static INPUT KeyChar(char c, bool up) =>
         new() { type = INPUT_KEYBOARD, U = new INPUTUNION { ki = new KEYBDINPUT { wScan = c, dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0) } } };
 
+    // Sub-pixel remainder: rounding each batch on its own threw the fraction away,
+    // so slow moves at 1x speed could round down to nothing. Carry the fraction
+    // into the next batch instead.
+    private static float _fracX, _fracY;
+
     public static void Move(float dx, float dy)
     {
-        lock (Gate) Send(Mouse(MOUSEEVENTF_MOVE, (int)Math.Round(dx), (int)Math.Round(dy)));
+        lock (Gate)
+        {
+            _fracX += dx; _fracY += dy;
+            var ix = (int)Math.Round(_fracX); var iy = (int)Math.Round(_fracY);
+            _fracX -= ix; _fracY -= iy;
+            if (ix != 0 || iy != 0) Send(Mouse(MOUSEEVENTF_MOVE, ix, iy));
+        }
     }
 
     public static void Button(string button, bool down)

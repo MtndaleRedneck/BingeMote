@@ -2,6 +2,7 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -38,9 +39,10 @@ fun MainScreen(
     onMouse: () -> Unit,
     onMovies: () -> Unit,
     onSettings: () -> Unit,
+    startSubtitlesOpen: Boolean = false,
 ) {
     val s = remote.status
-    var subtitlesOpen by remember { mutableStateOf(false) }
+    var subtitlesOpen by remember { mutableStateOf(startSubtitlesOpen) }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
@@ -79,7 +81,7 @@ fun MainScreen(
                     )
                     Text(
                         if (lost) "Trying to reconnect"
-                        else if (vlcOut) "Pick a film in Movies - it starts by itself"
+                        else if (vlcOut) "Pick a film in Movies and it starts by itself"
                         else when (s?.state) {
                             "playing" -> "Playing"
                             "paused" -> "Paused"
@@ -107,7 +109,7 @@ fun MainScreen(
                     Text("Can't reach BingeMote on the PC", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Mouse, keyboard and Windows volume are off - using VLC's volume. If the PC's Wi-Fi is marked Public, open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
+                        "Mouse, keyboard and PC volume are off for now, so the volume buttons use VLC instead. To fix it, open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
                         color = TextC, fontSize = 13.sp,
                     )
                 }
@@ -256,7 +258,6 @@ private fun SeekBlock(remote: RemoteState) {
                 Box(
                     Modifier
                         .align(Alignment.CenterStart)
-                        .offset(x = ((-10).dp))
                         .graphicsLayoutX(shown, thumbSize)
                         .size(thumbSize)
                         .then(
@@ -271,11 +272,13 @@ private fun SeekBlock(remote: RemoteState) {
         Spacer(Modifier.height(2.dp))
         Row(Modifier.fillMaxWidth()) {
             Text(
-                if (unlocked) "Unlocked - locks on its own after a few seconds" else "Hold the bar to unlock seeking",
+                if (unlocked) "Unlocked. Locks again in a few seconds" else "Hold the bar to unlock seeking",
                 color = if (unlocked) Orange else Muted, fontSize = 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.weight(1f))
-            Text("${formatTime(length)} total", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.width(8.dp))
+            Text("${formatTime(length)} total", color = Muted, fontSize = 12.sp, maxLines = 1)
         }
     }
 }
@@ -313,7 +316,7 @@ private fun VolumeRow(remote: RemoteState) {
         PressTile(
             onTap = { remote.toggleMute() },
             hapticsOn = remote.store.haptics,
-            modifier = Modifier.width(96.dp).height(84.dp),
+            modifier = Modifier.width(108.dp).height(84.dp), // same width as Play/Pause, so the columns line up
             desc = "Mute",
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -491,12 +494,12 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
         ) {
             Text("Subtitles", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(14.dp))
-            SubtitleRow("Off", picked == -1 || (picked == null && tracks.none { it.selected })) {
+            SubtitleRow("Off", picked == -1 || (picked == null && tracks.none { it.selected }), remote.store.haptics) {
                 remote.pickSubtitle(-1); onClose()
             }
             tracks.forEach { t ->
                 val checked = if (picked != null) picked == t.id else t.selected
-                SubtitleRow(t.name, checked) {
+                SubtitleRow(t.name, checked, remote.store.haptics) {
                     remote.pickSubtitle(t.id); onClose()
                 }
             }
@@ -510,18 +513,16 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
 }
 
 @Composable
-private fun SubtitleRow(name: String, checked: Boolean, onClick: () -> Unit) {
+private fun SubtitleRow(name: String, checked: Boolean, hapticsOn: Boolean, onClick: () -> Unit) {
     val view = LocalView.current
     Row(
         Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown()
-                    tapHaptic(view, true)
-                    if (waitForUpOrCancellation() != null) onClick()
-                }
+            .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) {
+                tapHaptic(view, hapticsOn)
+                onClick()
             }
             .padding(vertical = 13.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

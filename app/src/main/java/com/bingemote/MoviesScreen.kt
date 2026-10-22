@@ -2,6 +2,7 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -92,7 +93,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     if (fixed) { loadHelper(rel, restore, healed = true); return@launch }
                 }
                 loading = false
-                error = e.message ?: "Couldn't open that folder on the PC."
+                error = e.message?.takeIf { e is HelperClient.Unreachable } ?: "Couldn't open that folder on the PC."
             }
         }
     }
@@ -197,10 +198,11 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            // Same 16dp top as Settings, so the header doesn't jump 4dp between screens.
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
+            HeaderIconButton(onBack, remote.store.haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Movies", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
@@ -218,9 +220,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 .padding(horizontal = 16.dp),
         ) {
             when {
-                loading -> item { Text("Loading...", color = Muted, modifier = Modifier.padding(8.dp)) }
-                error != null -> item { Text(error!!, color = ErrorRed, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
-                items.isEmpty() -> item { Text("No videos in this folder.", color = Muted, modifier = Modifier.padding(8.dp)) }
+                loading -> item { ListMessage("Loading\u2026", loading = true) }
+                error != null -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
+                items.isEmpty() -> item { ListMessage("No videos in this folder.") }
                 else -> items(items.size, key = { it }) { i ->
                     val item = items[i]
                     PressTile(
@@ -231,23 +233,15 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                             .padding(vertical = 5.dp),
                         corner = 16.dp,
                     ) {
-                        Column(
-                            Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
-                        ) {
-                            Text(
-                                if (item.name == "..") "Up one folder" else if (item.isDir) item.name else displayName(item.name),
-                                color = TextC,
-                                fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            )
-                            if (!item.isDir && item.sizeBytes > 0) {
-                                Text(
-                                    formatSize(item.sizeBytes),
-                                    color = Muted,
-                                    fontSize = 12.sp,
-                                )
-                            }
-                        }
+                        BrowseRowContent(
+                            name = if (item.name == "..") "Up one folder" else if (item.isDir) item.name else displayName(item.name),
+                            kind = when {
+                                item.name == ".." -> BrowseKind.Up
+                                item.isDir -> BrowseKind.Folder
+                                else -> BrowseKind.Movie
+                            },
+                            detail = if (!item.isDir && item.sizeBytes > 0) formatSize(item.sizeBytes) else null,
+                        )
                     }
                 }
             }
@@ -260,5 +254,5 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 /** "C:\Users\you\Desktop\Movies" -> "Desktop > Movies" for the path line. */
 fun prettyPath(path: String): String {
     val parts = path.replace('/', '\\').split('\\').filter { it.isNotBlank() && !it.endsWith(":") }
-    return parts.takeLast(2).joinToString(" > ").ifBlank { path }
+    return parts.takeLast(2).joinToString(" \u203A ").ifBlank { path }
 }

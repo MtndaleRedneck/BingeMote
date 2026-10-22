@@ -8,6 +8,7 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,6 +46,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         store = Store(this)
         remote = RemoteState(this, store, lifecycleScope)
+        // CI screenshot state: force the update offer dialog with mock release notes.
+        if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
+            ManualUpdate.offer = UpdateInfo(
+                versionName = "9.9.9",
+                notes = listOf("## v9.9.9", "Example improvement one", "Example improvement two"),
+                apkUrl = "",
+                size = 0,
+                sha256 = null,
+            )
+        }
         setContent {
             val current = remember { mutableStateOf(
                 if (BuildConfig.DEBUG && intent.hasExtra("screen")) intent.getStringExtra("screen") ?: "setup"
@@ -66,6 +77,15 @@ class MainActivity : ComponentActivity() {
                         onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
                     )
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
+                    // CI screenshot states (debug builds only): open with the sheet forced open.
+                    "keyboard" -> MouseScreen(remote, startKeyboardOpen = true) { current.value = "main" }
+                    "subtitles" -> MainScreen(
+                        remote,
+                        onMouse = { current.value = "mouse" },
+                        onMovies = { current.value = "movies" },
+                        onSettings = { current.value = "settings" },
+                        startSubtitlesOpen = true,
+                    )
                     "movies" -> MoviesScreen(remote, moviesListState) { current.value = "main" }
                     "settings" -> SettingsScreen(
                         remote,
@@ -167,7 +187,7 @@ fun UpdateHost(store: Store) {
                 if (context.packageManager.canRequestPackageInstalls()) {
                     launchInstaller(f)
                 } else {
-                    updateUi = UpdateUi.Failed("Allow BingeMote to install updates, then tap Update again.")
+                    updateUi = UpdateUi.Failed("Allow BingeMote to install updates, then check for updates again in Settings.")
                     context.startActivity(
                         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
                     )
@@ -224,28 +244,32 @@ fun UpdateHost(store: Store) {
                                 }
                             }
                         }
-                        Spacer(Modifier.height(8.dp))
-                        Text("Android will ask you to confirm the install.", color = Muted)
-                        Spacer(Modifier.height(4.dp))
-                        TextButton({ store.skippedUpdate = u.info.versionName; updateUi = null }) {
-                            Text("Skip this version", color = Orange)
-                        }
                     }
                 },
-                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = Orange) } },
-                dismissButton = { TextButton({ updateUi = null }) { Text("Later", color = Muted) } },
+                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = Orange, fontWeight = FontWeight.Bold) } },
+                // Skip sits with the other choices instead of floating, indented, inside the notes.
+                dismissButton = {
+                    Row {
+                        TextButton({ store.skippedUpdate = u.info.versionName; updateUi = null }) { Text("Skip this version", color = Muted) }
+                        TextButton({ updateUi = null }) { Text("Later", color = Muted) }
+                    }
+                },
             )
             is UpdateUi.Downloading -> AlertDialog(
                 onDismissRequest = {},
                 containerColor = Card2,
                 title = { Text("Downloading ${u.info.versionName}", color = TextC) },
                 text = {
-                    LinearProgressIndicator(
-                        progress = { u.progress },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = Orange,
-                        trackColor = Card,
-                    )
+                    Column {
+                        LinearProgressIndicator(
+                            progress = { u.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Orange,
+                            trackColor = Card,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("${(u.progress * 100).toInt()}%", color = Muted)
+                    }
                 },
                 confirmButton = { TextButton({ updateJob?.cancel() }) { Text("Cancel", color = Muted) } },
             )

@@ -132,7 +132,7 @@ fun SetupScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(20.dp),
+        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp), // 16dp like every other screen
     ) {
         Spacer(Modifier.height(24.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -162,6 +162,7 @@ fun SetupScreen(
                 }
                 Spacer(Modifier.height(18.dp))
                 OrangeButton("BingeMote is running", onClick = { say("", false); step = 2 })
+                SetupMessage(message, messageIsError)
             }
 
             2 -> Column {
@@ -180,7 +181,7 @@ fun SetupScreen(
                 SetupCard {
                     Text("Find your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
-                    OrangeButton(if (scanning) "Looking..." else "Find my PC", enabled = !scanning, onClick = { scan() })
+                    OrangeButton(if (scanning) "Looking\u2026" else "Find my PC", enabled = !scanning, onClick = { scan() })
                     if (scanning) {
                         Spacer(Modifier.height(10.dp))
                         CircularProgressIndicator(color = Orange, modifier = Modifier.size(28.dp))
@@ -208,7 +209,9 @@ fun SetupScreen(
                         onValueChange = { manualHost = it; if (it.isNotBlank()) chosen = null },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("192.168.1.50", color = Dimmed) },
+                        placeholder = { Text("192.168.1.50", color = Muted) },
+                        // Numbers-and-dots keyboard for an address.
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
                         colors = fieldColors(),
                     )
                 }
@@ -223,11 +226,16 @@ fun SetupScreen(
                         onValueChange = { code = it.filter(Char::isDigit).take(6) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("6-digit code", color = Dimmed) },
+                        placeholder = { Text("6-digit code", color = Muted) },
+                        // Number pad for the code (it opened the full keyboard).
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                        visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
                         colors = fieldColors(),
                     )
                     Spacer(Modifier.height(10.dp))
-                    OrangeButton(if (pairing) "Pairing..." else "Pair", enabled = !pairing, onClick = { pair() })
+                    OrangeButton(if (pairing) "Pairing\u2026" else "Pair", enabled = !pairing, onClick = { pair() })
+                    // Right under the button, not below Back where the keyboard hid it.
+                    SetupMessage(message, messageIsError)
                 }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = { say("", false); step = 1 }) { Text("Back", color = Muted) }
@@ -256,7 +264,7 @@ fun SetupScreen(
                         onValueChange = { vlcPassword = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("The password from step 4", color = Dimmed) },
+                        placeholder = { Text("The password from step 4", color = Muted) },
                         colors = fieldColors(),
                         visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     )
@@ -268,21 +276,18 @@ fun SetupScreen(
                         onValueChange = { moviesPath = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("C:\\Users\\you\\Videos", color = Dimmed) },
+                        placeholder = { Text("C:\\Users\\you\\Videos", color = Muted) },
                         colors = fieldColors(),
                     )
                     Spacer(Modifier.height(12.dp))
-                    OrangeButton(if (testing) "Checking..." else "Finish", enabled = !testing, onClick = { finish() })
+                    OrangeButton(if (testing) "Checking\u2026" else "Finish", enabled = !testing, onClick = { finish() })
+                    SetupMessage(message, messageIsError)
                 }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = { say("", false); step = 2 }) { Text("Back", color = Muted) }
             }
         }
 
-        if (message != null && message!!.isNotBlank()) {
-            Spacer(Modifier.height(14.dp))
-            Text(message!!, color = if (messageIsError) ErrorRed else Orange, fontSize = 13.sp, lineHeight = 18.sp)
-        }
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -296,12 +301,21 @@ private fun SetupCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
+private fun SetupMessage(message: String?, isError: Boolean) {
+    if (message.isNullOrBlank()) return
+    Spacer(Modifier.height(10.dp))
+    Text(message, color = if (isError) ErrorRed else Orange, fontSize = 13.sp, lineHeight = 18.sp)
+}
+
+@Composable
 private fun OrangeButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    // One primary button size app-wide: 48dp tall, 14dp corners (was 52/16 here, 46/14 in Settings).
     PressTile(
         onTap = { if (enabled) onClick() },
         background = if (enabled) OrangeGradient else CardGradient,
-        modifier = Modifier.fillMaxWidth().height(52.dp),
-        corner = 16.dp,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        corner = 14.dp,
+        enabled = enabled,
     ) {
         Text(label, color = if (enabled) androidx.compose.ui.graphics.Color(0xFF1B1B1E) else Dimmed, fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }

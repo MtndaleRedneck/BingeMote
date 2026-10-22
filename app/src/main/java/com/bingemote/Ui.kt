@@ -4,6 +4,7 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -20,7 +21,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,40 +54,57 @@ fun PressTile(
     background: Brush = CardGradient,
     corner: Dp = 18.dp,
     desc: String? = null,
+    enabled: Boolean = true,
     content: @Composable BoxScope.(pressed: Boolean) -> Unit,
 ) {
     var pressed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "sink")
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    // Read the newest callbacks at fire time, so the gesture never restarts mid-press
+    // when the screen recomposes (status polls, volume changes).
+    val tap by rememberUpdatedState(onTap)
+    val repeat by rememberUpdatedState(onHoldRepeat)
+    val buzz by rememberUpdatedState(hapticsOn)
 
     Box(
         modifier
-            .then(if (desc != null) Modifier.semantics { contentDescription = desc } else Modifier)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .shadow(if (pressed) 2.dp else 6.dp, RoundedCornerShape(corner))
+            .semantics {
+                if (desc != null) contentDescription = desc
+                role = Role.Button
+                if (!enabled) disabled()
+                onClick { if (enabled) { tap(); true } else false }
+            }
+            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.45f }
+            .shadow(if (pressed || !enabled) 2.dp else 6.dp, RoundedCornerShape(corner))
             .clip(RoundedCornerShape(corner))
             .background(background)
-            .pointerInput(onTap, onHoldRepeat, hapticsOn) {
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
                 awaitEachGesture {
                     awaitFirstDown()
-                    tapHaptic(view, hapticsOn)
+                    tapHaptic(view, buzz)
                     pressed = true
                     var repeatJob: Job? = null
-                    if (onHoldRepeat != null) {
-                        repeatJob = scope.launch {
-                            delay(400)
-                            while (true) {
-                                tapHaptic(view, hapticsOn)
-                                onHoldRepeat()
-                                delay(320)
+                    try {
+                        if (repeat != null) {
+                            repeatJob = scope.launch {
+                                delay(400)
+                                while (true) {
+                                    val r = repeat ?: break
+                                    tapHaptic(view, buzz)
+                                    r()
+                                    delay(320)
+                                }
                             }
                         }
+                        val up = waitForUpOrCancellation()
+                        if (up != null) tap()
+                    } finally {
+                        // Also runs if the gesture is cancelled, so a held skip never keeps going.
+                        repeatJob?.cancel()
+                        pressed = false
                     }
-                    val up = waitForUpOrCancellation()
-                    repeatJob?.cancel()
-                    pressed = false
-                    if (up != null) onTap()
                 }
             },
         contentAlignment = Alignment.Center,
@@ -133,20 +155,18 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
 }
 
 @Composable
-fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: Dp = 10.dp, content: @Composable BoxScope.() -> Unit) {
+fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
+    // startPad defaults to 0 so back buttons line up with the 16dp screen edge like every card.
     Box(
         Modifier
             .padding(start = startPad)
             .size(40.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(HeaderBtn)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown()
-                    tapHaptic(view, hapticsOn)
-                    if (waitForUpOrCancellation() != null) onClick()
-                }
+            .clickable(role = Role.Button) {
+                tapHaptic(view, hapticsOn)
+                onClick()
             },
         contentAlignment = Alignment.Center,
         content = content,
@@ -157,3 +177,69 @@ fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: D
 fun TileLabel(text: String, color: Color, size: Int = 14, bold: Boolean = true) {
     Text(text, color = color, fontSize = size.sp, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal)
 }
+
+/** Loading, empty and error states for the Movies and folder lists: centered, readable, with a way out. */
+@Composable
+fun ListMessage(
+    text: String,
+    isError: Boolean = false,
+    loading: Boolean = false,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (loading) {
+            androidx.compose.material3.CircularProgressIndicator(color = Orange, strokeWidth = 3.dp, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(14.dp))
+        }
+        Text(
+            text,
+            color = if (isError) TextC else Muted,
+            fontSize = 15.sp, lineHeight = 21.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        if (actionLabel != null && onAction != null) {
+            Spacer(Modifier.height(18.dp))
+            PressTile(
+                onTap = onAction,
+                background = OrangeGradient,
+                modifier = Modifier.width(180.dp).height(48.dp),
+                corner = 14.dp,
+            ) {
+                Text(actionLabel, color = Color(0xFF1B1B1E), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** One row of the Movies / folder lists: icon on the left, name left-aligned (it used to sit centered). */
+@Composable
+fun BrowseRowContent(name: String, kind: BrowseKind, detail: String? = null) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            when (kind) {
+                BrowseKind.Up -> ArrowIcon(ArrowDir.Left, Muted, 20.dp)
+                BrowseKind.Folder -> FolderIcon(Orange, 22.dp)
+                BrowseKind.Movie -> PlayIcon(Orange, 18.dp)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                color = if (kind == BrowseKind.Up) Muted else TextC,
+                fontSize = 15.sp, fontWeight = if (kind == BrowseKind.Up) FontWeight.SemiBold else FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (detail != null) Text(detail, color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+enum class BrowseKind { Up, Folder, Movie }
