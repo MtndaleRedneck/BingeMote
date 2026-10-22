@@ -65,9 +65,16 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
 
     val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(256) }
     LaunchedEffect(commands) {
+        var failedInARow = 0
         for (command in commands) {
-            try { kotlinx.coroutines.withContext(Dispatchers.IO) { command() }; helperOk = true }
-            catch (e: Exception) { helperOk = false }
+            try {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { command() }; helperOk = true
+                failedInARow = 0
+            } catch (e: Exception) {
+                helperOk = false
+                // Two dead sends in a row: the PC may sit at a new address - find it again.
+                if (++failedInARow >= 2) remote.rediscover()
+            }
         }
     }
     DisposableEffect(commands) { onDispose {

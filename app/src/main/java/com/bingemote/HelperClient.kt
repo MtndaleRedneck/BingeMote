@@ -29,6 +29,8 @@ object HelperClient {
     private const val NO_PC = "Can't reach BingeMote on the PC. Check that the PC is on and BingeMote is open."
     class BadToken(val msg: String) : Exception(msg)
     class BadPairCode(val msg: String) : Exception(msg)
+    /** The PC could not be connected to at all (off, sleeping, new address). */
+    class ConnectTimeout(val msg: String) : Exception(msg)
 
     private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
@@ -47,6 +49,10 @@ object HelperClient {
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
+        catch (e: ConnectTimeout) { throw e }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
         catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
@@ -68,6 +74,10 @@ object HelperClient {
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
+        catch (e: ConnectTimeout) { throw e }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
         catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
@@ -236,16 +246,19 @@ object HelperClient {
     fun volumeGet(host: String, port: Int, token: String): Pair<Int, Boolean> {
         val c = URL("http://$host:$port/volume/get").openConnection() as HttpURLConnection
         try {
-            c.connectTimeout = 5000; c.readTimeout = 5000
+            c.connectTimeout = 1500; c.readTimeout = 5000
             c.requestMethod = "POST"; c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("X-BingeMote-Token", token)
+            // Connect explicitly so a dead PC (connect timeout) is told apart from an error answer.
+            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
             c.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
             if (c.responseCode !in 200..299) throw Unreachable("volume get failed (${c.responseCode})")
             val text = c.inputStream.use { s: InputStream -> s.readBytes().toString(Charsets.UTF_8) }
             val o = JSONObject(text)
             return o.getInt("volume") to o.getBoolean("mute")
         } catch (e: Unreachable) { throw e }
+        catch (e: ConnectTimeout) { throw e }
         catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }

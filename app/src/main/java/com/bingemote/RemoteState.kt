@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -67,12 +69,17 @@ class RemoteState(
 
     private companion object {
         /** Consecutive failed polls before the Disconnected card shows; one success clears it. */
-        const val UNREACHABLE_AFTER = 4
+        const val UNREACHABLE_AFTER = 2
     }
 
-    /** One immediate retry on a network blip: a single dropped packet must not count as a failure. */
+    /** One immediate retry on a network blip: a single dropped packet must not count as a failure.
+     *  A connect timeout is not a blip - the PC is gone - so it is not retried (would double the wait). */
     private suspend fun <T> twiceIO(block: () -> T): T = withContext(Dispatchers.IO) {
-        try { block() } catch (e: Vlc.BadAuth) { throw e } catch (e: Exception) { block() }
+        try { block() }
+        catch (e: Vlc.BadAuth) { throw e }
+        catch (e: Vlc.ConnectTimeout) { throw e }
+        catch (e: HelperClient.ConnectTimeout) { throw e }
+        catch (e: Exception) { block() }
     }
 
     fun start() {
@@ -92,22 +99,30 @@ class RemoteState(
 
     suspend fun pollOnce() {
         if (!store.isConfigured) return
+        // Status and Windows volume in parallel: a blocked helper used to stall the whole
+        // poll (time and seek bar only updated every ~11s when VLC answered but the helper didn't).
+        val vlcDeferred = scope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
+        val volDeferred = if (store.helperToken.isNotBlank())
+            scope.async { try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } } catch (e: Exception) { null } }
+        else null
         try {
-            val s = twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) }
+            val s = vlcDeferred.await()
             status = s
-            winVolume = if (store.helperToken.isNotBlank()) {
-                try {
-                    val (v, m) = twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) }
+            if (volDeferred != null) {
+                val vm = volDeferred.await()
+                if (vm != null) {
                     helperFailures = 0
-                    muted = m
+                    muted = vm.second
                     helperDown = false
-                    v
-                } catch (e: Exception) {
+                    // Trust the phone's own taps briefly: the poll doesn't overwrite a volume
+                    // change that is still landing (that overwrite made the number jump back).
+                    if (System.currentTimeMillis() - localVolumeAt > 1500) winVolume = vm.first
+                } else {
                     // One blip keeps the last reading; two in a row means the helper is really gone.
                     helperFailures++
-                    if (helperFailures >= 2) { helperDown = true; null } else winVolume
+                    if (helperFailures >= 2) { helperDown = true; winVolume = null }
                 }
-            } else null
+            } else winVolume = null
             failures = 0
             unreachable = false
             vlcClosed = false
@@ -132,7 +147,7 @@ class RemoteState(
     }
 
     /** The laptop's IP changes with DHCP: ask the network for the helper and update the address. */
-    private fun rediscover() {
+    fun rediscover() {
         if (rediscovering) return
         rediscovering = true
         scope.launch(Dispatchers.IO) {
@@ -143,11 +158,14 @@ class RemoteState(
                     return@launch
                 }
                 val found = HelperClient.discover(3000)
-                val match = found.firstOrNull { it.name == store.pcName && HelperClient.ping(it.host, it.port, store.helperToken) }
+                // The pairing token is the PC's identity; its name is only a label.
+                val match = found.firstOrNull { HelperClient.ping(it.host, it.port, store.helperToken) }
                 if (match != null) {
-                    store.host = match.host
-                    store.helperPort = match.port
-                    failures = 0
+                    withContext(Dispatchers.Main) {
+                        store.host = match.host
+                        store.helperPort = match.port
+                        failures = 0
+                    }
                 }
             } finally {
                 rediscovering = false
@@ -161,11 +179,19 @@ class RemoteState(
         scope.launch { pollOnce() }
     }
 
-    private fun fire(block: () -> Unit) {
+    /** Set when the phone itself changes Windows volume; the poll trusts the phone for 1.5s. */
+    private var localVolumeAt = 0L
+
+    // One ordered queue for playback/volume commands: rapid volume taps and the phone's
+    // volume keys land in tap order instead of racing each other in parallel coroutines.
+    private val cmds = Channel<() -> Unit>(Channel.UNLIMITED)
+    init {
         scope.launch(Dispatchers.IO) {
-            try { block() } catch (e: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
+            for (c in cmds) try { c() } catch (_: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
         }
     }
+
+    private fun fire(block: () -> Unit) { cmds.trySend(block) }
 
     fun togglePause() {
         // Flip the icon at once; the next status poll (about a second out) confirms or corrects it.
@@ -188,12 +214,15 @@ class RemoteState(
         if (win != null) {
             // Windows system volume via the helper (recommended pick; Ezzy left it to us and did not object).
             val base = win
-            if (muted) muted = false
+            val wasMuted = muted
+            if (wasMuted) muted = false
             val next = (base + if (up) 5 else -5).coerceIn(0, 100)
             winVolume = next
+            localVolumeAt = System.currentTimeMillis()
             fire {
                 HelperClient.volumeSet(store.host, store.helperPort, store.helperToken, next)
-                HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, false)
+                // Unmute only when it WAS muted - a plain volume step must not touch the mute switch.
+                if (wasMuted) HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, false)
             }
             return
         }
@@ -215,6 +244,7 @@ class RemoteState(
         if (winVolume != null) {
             val next = !muted
             muted = next
+            localVolumeAt = System.currentTimeMillis()
             fire { HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, next) }
             return
         }

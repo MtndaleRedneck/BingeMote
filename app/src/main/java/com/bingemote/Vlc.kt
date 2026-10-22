@@ -47,22 +47,31 @@ object Vlc {
 
     class Unreachable(val msg: String) : Exception(msg)
     class BadAuth(val msg: String) : Exception(msg)
+    /** VLC answered, but with an error - NOT a connection failure. */
+    class VlcError(val msg: String) : Exception(msg)
+    /** The connect itself timed out: VLC (or the PC) is gone; retrying just doubles the wait. */
+    class ConnectTimeout(val msg: String) : Exception(msg)
 
     private fun encode(v: String) = URLEncoder.encode(v, "UTF-8")
 
-    private fun get(url: String, password: String, timeoutMs: Int = 4000): String {
+    private fun get(url: String, password: String, timeoutMs: Int = 4000, connectMs: Int = timeoutMs): String {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
-            c.connectTimeout = timeoutMs
+            c.connectTimeout = connectMs
             c.readTimeout = timeoutMs
             val creds = android.util.Base64.encodeToString(":$password".toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             c.setRequestProperty("Authorization", "Basic $creds")
+            // Connect explicitly, so a dead VLC (connect timeout) is told apart from VLC
+            // answering with an error - Movies only switches to the PC app on the former.
+            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout("VLC did not answer in time.") }
             when (c.responseCode) {
                 200 -> return c.inputStream.use { it.readText(2 * 1024 * 1024) }
                 401 -> throw BadAuth("VLC rejected the password.")
-                else -> throw Unreachable("VLC answered with error ${c.responseCode}.")
+                else -> throw VlcError("VLC answered with error ${c.responseCode}.")
             }
         } catch (e: BadAuth) { throw e }
+        catch (e: VlcError) { throw e }
+        catch (e: ConnectTimeout) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach VLC.") }
         finally { releaseQuietly(c) }
@@ -85,7 +94,7 @@ object Vlc {
     private fun browseUrl(host: String, port: Int) = "http://$host:$port/requests/browse.json"
 
     fun status(host: String, port: Int, password: String): VlcStatus =
-        parseStatus(JSONObject(get(statusUrl(host, port), password)))
+        parseStatus(JSONObject(get(statusUrl(host, port), password, connectMs = 1500)))
 
     /** Fire a playback command, e.g. command=pl_pause. */
     fun command(host: String, port: Int, password: String, command: String) {

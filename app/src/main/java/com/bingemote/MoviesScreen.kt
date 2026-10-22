@@ -41,6 +41,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     // VLC closed? The helper (always in the tray) lists and plays instead. In helper mode
     // paths are relative to the movies folder.
     var viaHelper by remember { mutableStateOf(false) }
+    // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
+    var starting by remember { mutableStateOf(false) }
 
     fun atRoot(p: String) =
         if (viaHelper) p.isEmpty()
@@ -62,6 +64,44 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         scope.launch {
             if (restore != null) listState.scrollToItem(restore.first, restore.second)
             else listState.scrollToItem(0)
+        }
+    }
+
+    /** Absolute VLC path -> helper path relative to the movies folder. */
+    fun toRel(dir: String): String {
+        val root = remote.store.moviesPath.trim().trimEnd('\\', '/')
+        if (root.isEmpty()) return ""
+        val d = dir.trimEnd('\\', '/')
+        return when {
+            d.equals(root, ignoreCase = true) -> ""
+            d.startsWith(root, ignoreCase = true) -> d.substring(root.length).trimStart('\\', '/')
+            else -> ""
+        }
+    }
+
+    /** Helper-relative path -> absolute VLC path. */
+    fun toAbs(rel: String): String {
+        val root = remote.store.moviesPath.trim().trimEnd('\\', '/')
+        return if (rel.isEmpty()) root else root + "\\" + rel
+    }
+
+    fun loadVlc(dir: String, restore: Pair<Int, Int>?) {
+        loading = true
+        error = null
+        scope.launch {
+            try {
+                val raw = withContext(Dispatchers.IO) {
+                    Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
+                }
+                show(raw, dir, false, restore)
+            } catch (e: Exception) {
+                loading = false
+                // Only a dead VLC/PC shows the connection message; a VLC error (bad folder,
+                // VLC itself upset) is shown where he is - no mode flip, no jump to the top.
+                error = if (e is Vlc.Unreachable)
+                    "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
+                else e.message ?: "Couldn't open that folder."
+            }
         }
     }
 
@@ -92,6 +132,12 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     }
                     if (fixed) { loadHelper(rel, restore, healed = true); return@launch }
                 }
+                if (e is HelperClient.ConnectTimeout) {
+                    // The PC app can't answer at all - fall back to VLC for this listing.
+                    viaHelper = false
+                    loadVlc(toAbs(rel), restore)
+                    return@launch
+                }
                 loading = false
                 error = e.message?.takeIf { e is HelperClient.Unreachable } ?: "Couldn't open that folder on the PC."
             }
@@ -100,28 +146,15 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     fun load(dir: String, restore: Pair<Int, Int>? = null) {
         if (viaHelper) { loadHelper(dir); return }
-        loading = true
-        error = null
-        scope.launch {
-            try {
-                val raw = withContext(Dispatchers.IO) {
-                    Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
-                }
-                show(raw, dir, false, restore)
-            } catch (e: Exception) {
-                if (remote.store.helperToken.isNotBlank()) {
-                    // VLC is closed - the helper takes over, relative to the movies folder.
-                    // Clear the stale absolute path first: helper paths are relative, and
-                    // keeping the old one traps Back in a 404 loop (atRoot never true).
-                    viaHelper = true
-                    path = ""
-                    loadHelper("")
-                } else {
-                    loading = false
-                    error = "Couldn't open that folder. Check the Movies folder in Settings, and that the PC is on."
-                }
-            }
+        // The PC app first (it answers instantly whether VLC is open or closed - the same
+        // order as the Settings folder picker); VLC is only the fallback. This skips the
+        // 4-second wait on a closed VLC that made the tab feel slow.
+        if (remote.store.helperToken.isNotBlank()) {
+            viaHelper = true
+            loadHelper(toRel(dir), restore)
+            return
         }
+        loadVlc(dir, restore)
     }
 
     fun upOne() {
@@ -158,25 +191,36 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 }
             }
             viaHelper -> {
+                if (starting) return
+                starting = true
                 scope.launch(Dispatchers.IO) {
-                    val failed = HelperClient.playMovie(
-                        remote.store.host, remote.store.helperPort, remote.store.helperToken, item.path,
-                        remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true,
-                    )
-                    if (failed == null) {
-                        remote.expectVlcStarting()
-                        remote.retry()
-                        withContext(Dispatchers.Main) { onBack() }
-                    } else {
-                        withContext(Dispatchers.Main) { error = failed }
-                    }
+                    try {
+                        val failed = HelperClient.playMovie(
+                            remote.store.host, remote.store.helperPort, remote.store.helperToken, item.path,
+                            remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true,
+                        )
+                        if (failed == null) {
+                            remote.expectVlcStarting()
+                            remote.retry()
+                            withContext(Dispatchers.Main) { onBack() }
+                        } else {
+                            withContext(Dispatchers.Main) { error = failed }
+                        }
+                    } finally { starting = false }
                 }
             }
             else -> {
+                if (starting) return
+                starting = true
                 scope.launch(Dispatchers.IO) {
-                    try { Vlc.playUri(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, item.uri) } catch (e: Exception) { }
+                    try {
+                        Vlc.playUri(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, item.uri)
+                        withContext(Dispatchers.Main) { onBack() }
+                    } catch (e: Exception) {
+                        // Used to fail silently and just close - stay put and say it didn't play.
+                        withContext(Dispatchers.Main) { error = "Couldn't play that one." }
+                    } finally { starting = false }
                 }
-                onBack()
             }
         }
     }

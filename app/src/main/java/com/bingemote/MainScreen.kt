@@ -172,6 +172,11 @@ private fun SeekBlock(remote: RemoteState) {
     var unlocked by remember { mutableStateOf(false) }
     var dragPos by remember { mutableStateOf<Float?>(null) }
     var idleStamp by remember { mutableStateOf(0L) }
+    // Read through a stable reference so unlocking mid-press doesn't restart the gesture
+    // (a restarted handler drops the finger: hold-then-slide needed a second touch).
+    val unlockedNow by rememberUpdatedState(unlocked)
+    // Where the finger was lifted, held until VLC's poll confirms it (kills the ~1s jump-back).
+    var pendingSeek by remember { mutableStateOf<Pair<Float, Long>?>(null) }
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
@@ -194,11 +199,11 @@ private fun SeekBlock(remote: RemoteState) {
             Modifier
                 .fillMaxWidth()
                 .height(28.dp)
-                .pointerInput(length, unlocked) {
+                .pointerInput(length) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         var holdJob: Job? = null
-                        if (!unlocked) {
+                        if (!unlockedNow) {
                             holdJob = scope.launch {
                                 delay(850)
                                 tapHaptic(view, remote.store.haptics)
@@ -215,7 +220,7 @@ private fun SeekBlock(remote: RemoteState) {
                             if (change.pressed) {
                                 val dx = change.positionChange().x
                                 if (!moved && kotlin.math.abs(change.position.x - down.position.x) > 14f) moved = true
-                                if (unlocked && (moved || dragging)) {
+                                if (unlockedNow && (moved || dragging)) {
                                     dragging = true
                                     holdJob?.cancel()
                                     val w = size.width.toFloat().coerceAtLeast(1f)
@@ -233,10 +238,11 @@ private fun SeekBlock(remote: RemoteState) {
                             dragPos = null
                             if (p != null && length > 0) {
                                 tapHaptic(view, remote.store.haptics)
+                                pendingSeek = p to System.currentTimeMillis()
                                 remote.seekTo((p * length).toLong())
                             }
                         }
-                        if (unlocked) idleStamp = System.currentTimeMillis()
+                        if (unlockedNow) idleStamp = System.currentTimeMillis()
                     }
                 },
             contentAlignment = Alignment.CenterStart,
@@ -244,7 +250,8 @@ private fun SeekBlock(remote: RemoteState) {
             // Track
             Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(TrackGray))
             // Fill
-            val shown = dragPos ?: position
+            val shown = dragPos ?: pendingSeek?.takeIf { (f, t) ->
+                System.currentTimeMillis() - t < 2500 && kotlin.math.abs(f - position) > 0.01f }?.first ?: position
             Box(
                 Modifier
                     .fillMaxWidth(shown.coerceIn(0f, 1f))
