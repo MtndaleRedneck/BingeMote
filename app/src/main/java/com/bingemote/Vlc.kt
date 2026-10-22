@@ -65,7 +65,14 @@ object Vlc {
         } catch (e: BadAuth) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach VLC.") }
-        finally { c.disconnect() }
+        finally { releaseQuietly(c) }
+    }
+
+    /** Let OkHttp pool the socket for the next poll; disconnect() would force a fresh TCP handshake every second. */
+    private fun releaseQuietly(c: HttpURLConnection) {
+        try { c.inputStream.use { it.readBytes() } } catch (_: Exception) {
+            try { c.errorStream?.use { it.readBytes() } } catch (_: Exception) {}
+        }
     }
 
     private fun InputStream.readText(max: Int): String {
@@ -201,3 +208,10 @@ val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "m4v", "avi", "wmv", "mov", "ts", "mp
 
 fun isVideoFile(name: String): Boolean =
     name.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS
+
+/** Name for display: movies read cleaner without the ".mkv"/".mp4" tail. Display only - playback still uses the real name. */
+fun displayName(name: String): String {
+    if (!isVideoFile(name)) return name
+    val stripped = name.substringBeforeLast('.')
+    return stripped.ifBlank { name }
+}

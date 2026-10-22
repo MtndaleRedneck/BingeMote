@@ -29,7 +29,7 @@ object HelperClient {
     class BadPairCode(val msg: String) : Exception(msg)
 
     @Synchronized
-    private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 3000) {
+    private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = timeoutMs
@@ -47,7 +47,7 @@ object HelperClient {
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
-        finally { c.disconnect() }
+        finally { releaseQuietly(c) }
     }
 
     /** True when the helper answers and accepts the token. */
@@ -56,7 +56,7 @@ object HelperClient {
     } catch (e: Exception) { false }
 
     @Synchronized
-    private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 3000): JSONObject {
+    private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 5000): JSONObject {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = timeoutMs
@@ -69,7 +69,7 @@ object HelperClient {
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
-        finally { c.disconnect() }
+        finally { releaseQuietly(c) }
     }
 
     /**
@@ -87,6 +87,14 @@ object HelperClient {
         if (detail != null) return Unreachable(detail)
         if (code == 404) return Unreachable("BingeMote PC is too old for this app.")
         return Unreachable("BingeMote PC answered with error $code.")
+    }
+
+    /** Let OkHttp pool the socket (keep-alive); disconnect() forced a fresh TCP handshake on every
+     * mouse batch, which is what made the pointer lurch. Consuming the response lets the pool reuse it. */
+    private fun releaseQuietly(c: HttpURLConnection) {
+        try { c.inputStream.use { it.readBytes() } } catch (_: Exception) {
+            try { c.errorStream?.use { it.readBytes() } } catch (_: Exception) {}
+        }
     }
 
     /** Subfolders anywhere on the PC (drives when path is empty), so the folder picker
@@ -155,7 +163,7 @@ object HelperClient {
         } catch (e: BadPairCode) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
-        finally { c.disconnect() }
+        finally { releaseQuietly(c) }
     }
 
     /** Find helpers on the network. Waits up to [waitMs] for replies. */
@@ -167,11 +175,17 @@ object HelperClient {
             sock.broadcast = true
             sock.soTimeout = 250
             val payload = DISCOVER_MAGIC.toByteArray(Charsets.UTF_8)
-            val packet = DatagramPacket(payload, payload.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT)
+            val targets = broadcastTargets()
             val deadline = System.currentTimeMillis() + waitMs
             var sends = 0
             while (System.currentTimeMillis() < deadline) {
-                if (sends < 3) { try { sock.send(packet) } catch (e: Exception) {}; sends++ }
+                // Six rounds to every broadcast address: routers drop lone broadcasts in both directions.
+                if (sends < 6) {
+                    for (t in targets) {
+                        try { sock.send(DatagramPacket(payload, payload.size, t, DISCOVERY_PORT)) } catch (e: Exception) {}
+                    }
+                    sends++
+                }
                 try {
                     val buf = ByteArray(1024)
                     val reply = DatagramPacket(buf, buf.size)
@@ -190,25 +204,39 @@ object HelperClient {
         return found.values.toList()
     }
 
+    /** 255.255.255.255 plus each interface's own subnet broadcast - some routers only pass one of them. */
+    private fun broadcastTargets(): List<InetAddress> {
+        val out = LinkedHashSet<InetAddress>()
+        try { out.add(InetAddress.getByName("255.255.255.255")) } catch (e: Exception) {}
+        try {
+            val ifs = java.net.NetworkInterface.getNetworkInterfaces() ?: return out.toList()
+            for (ni in ifs) {
+                try { if (!ni.isUp || ni.isLoopback) continue } catch (e: Exception) { continue }
+                for (ia in ni.interfaceAddresses) ia.broadcast?.let { out.add(it) }
+            }
+        } catch (e: Exception) {}
+        return out.toList()
+    }
+
     fun move(host: String, port: Int, token: String, dx: Float, dy: Float) =
-        post(host, port, "/mouse/move", JSONObject().put("dx", dx.toDouble()).put("dy", dy.toDouble()), token, 1500)
+        post(host, port, "/mouse/move", JSONObject().put("dx", dx.toDouble()).put("dy", dy.toDouble()), token, 2500)
 
     /** button: "left" or "right". down=true presses, down=false releases. */
     fun button(host: String, port: Int, token: String, button: String, down: Boolean) =
         post(host, port, "/mouse/button", JSONObject().put("button", button).put("down", down), token)
 
     fun scroll(host: String, port: Int, token: String, dy: Float) =
-        post(host, port, "/mouse/scroll", JSONObject().put("dy", dy.toDouble()), token, 1500)
+        post(host, port, "/mouse/scroll", JSONObject().put("dy", dy.toDouble()), token, 2500)
 
     /** Pinch zoom, sent to the PC as Ctrl + mouse wheel. delta > 0 zooms in. */
     fun zoom(host: String, port: Int, token: String, delta: Float) =
-        post(host, port, "/mouse/zoom", JSONObject().put("delta", delta.toDouble()), token, 1500)
+        post(host, port, "/mouse/zoom", JSONObject().put("delta", delta.toDouble()), token, 2500)
 
     /** Windows system volume, 0-100, and mute. Throws Unreachable when the helper does not answer. */
     fun volumeGet(host: String, port: Int, token: String): Pair<Int, Boolean> {
         val c = URL("http://$host:$port/volume/get").openConnection() as HttpURLConnection
         try {
-            c.connectTimeout = 2500; c.readTimeout = 2500
+            c.connectTimeout = 5000; c.readTimeout = 5000
             c.requestMethod = "POST"; c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("X-BingeMote-Token", token)
@@ -219,7 +247,7 @@ object HelperClient {
             return o.getInt("volume") to o.getBoolean("mute")
         } catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
-        finally { c.disconnect() }
+        finally { releaseQuietly(c) }
     }
 
     fun volumeSet(host: String, port: Int, token: String, percent: Int) =

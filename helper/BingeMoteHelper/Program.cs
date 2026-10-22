@@ -22,8 +22,30 @@ internal static class Program
     /// <summary>The 1.x rule name, removed by the firewall setup so upgrades do not leave it behind.</summary>
     internal const string LegacyFirewallRule = "BingeMote Helper";
 
-    internal static readonly string DataDir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BingeMoteHelper");
+    internal static readonly string DataDir = MigrateDataDir();
+
+    /// <summary>The data folder used to be %LocalAppData%\BingeMoteHelper; it is now ...\BingeMote.
+    /// Move the old folder wholesale on first launch so pairing, the movies folder and the log survive.
+    /// A locked file keeps the old folder for this run (retried next launch); it is never deleted.</summary>
+    private static string MigrateDataDir()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var dir = Path.Combine(root, "BingeMote");
+        var old = Path.Combine(root, "BingeMoteHelper");
+        try
+        {
+            if (!Directory.Exists(old)) return dir;
+            if (!Directory.Exists(dir)) { Directory.Move(old, dir); return dir; }
+            // Both exist (an earlier run moved partway): carry over what is missing, never overwrite.
+            foreach (var f in Directory.GetFiles(old))
+            {
+                var dest = Path.Combine(dir, Path.GetFileName(f));
+                if (!File.Exists(dest)) File.Move(f, dest);
+            }
+        }
+        catch { return Directory.Exists(dir) ? dir : old; }
+        return dir;
+    }
     private static readonly string ConfigPath = Path.Combine(DataDir, "config.json");
     private static readonly string FirewallMarker = Path.Combine(DataDir, "firewall.ok");
 
@@ -263,7 +285,7 @@ internal static class Program
 
     internal static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
-    /// <summary>One line in %LocalAppData%\BingeMoteHelper\helper.log, so a bad launch leaves a trail.</summary>
+    /// <summary>One line in %LocalAppData%\BingeMote\helper.log, so a bad launch leaves a trail.</summary>
     internal static void Log(string message)
     {
         try

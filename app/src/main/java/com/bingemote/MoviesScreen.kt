@@ -235,7 +235,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                             Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
                         ) {
                             Text(
-                                if (item.name == "..") "Up one folder" else item.name,
+                                if (item.name == "..") "Up one folder" else if (item.isDir) item.name else displayName(item.name),
                                 color = TextC,
                                 fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
