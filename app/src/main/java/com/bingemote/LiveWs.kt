@@ -55,8 +55,9 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     }
 
     private fun drop(webSocket: WebSocket) {
-        open = false
-        synchronized(this) { if (ws === webSocket) ws = null }
+        // A late callback from an old socket must not mark a newer healthy one closed.
+        val ours = synchronized(this) { if (ws === webSocket) { ws = null; true } else false }
+        if (ours) open = false
         if (closedByUs || paused || scheduler.isShutdown) return
         val delay = (500L shl attempts.coerceAtMost(4)).coerceAtMost(5000L) // 0.5, 1, 2, 4, 5... s
         attempts++
