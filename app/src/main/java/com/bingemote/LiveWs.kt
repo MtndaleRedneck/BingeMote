@@ -29,10 +29,13 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     @Synchronized
     fun connect() {
         if (ws != null || closedByUs || scheduler.isShutdown) return
-        val req = Request.Builder()
-            .url("ws://$host:$port/ws")
-            .header("X-BingeMote-Token", token)
-            .build()
+        if (host.isBlank() || port <= 0) return // not paired yet; HTTP callers no-op the same way
+        val req = try {
+            Request.Builder()
+                .url("ws://$host:$port/ws")
+                .header("X-BingeMote-Token", token)
+                .build()
+        } catch (e: Exception) { return } // a malformed saved host must never crash the screen
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 open = true
