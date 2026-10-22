@@ -73,7 +73,7 @@ fun MainScreen(
                 Column {
                     Text(
                         if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
-                        else s?.title?.ifBlank { "Nothing playing" } ?: "Nothing playing",
+                        else s?.title?.let { displayName(it).ifBlank { "Nothing playing" } } ?: "Nothing playing",
                         color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
                         maxLines = 2,
                     )
@@ -317,7 +317,8 @@ private fun VolumeRow(remote: RemoteState) {
             desc = "Mute",
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Approved layout: block sits 3dp low of center; VOL hugs the number 4dp tighter than default spacing.
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.offset(y = 3.dp)) {
                     Text(
                         if (muted) "0%" else "${remote.winVolume ?: (s?.volumePct ?: 0)}%",
                         color = if (muted) Dimmed else TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
@@ -325,6 +326,7 @@ private fun VolumeRow(remote: RemoteState) {
                     Text(
                         if (muted) "MUTED" else "VOL",
                         color = if (muted) Dimmed else Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.offset(y = (-4).dp),
                     )
                 }
                 if (muted) {

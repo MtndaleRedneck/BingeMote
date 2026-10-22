@@ -62,7 +62,18 @@ class RemoteState(
 
     private var pollJob: Job? = null
     private var failures = 0
+    private var helperFailures = 0
     private var rediscovering = false
+
+    private companion object {
+        /** Consecutive failed polls before the Disconnected card shows; one success clears it. */
+        const val UNREACHABLE_AFTER = 4
+    }
+
+    /** One immediate retry on a network blip: a single dropped packet must not count as a failure. */
+    private suspend fun <T> twiceIO(block: () -> T): T = withContext(Dispatchers.IO) {
+        try { block() } catch (e: Vlc.BadAuth) { throw e } catch (e: Exception) { block() }
+    }
 
     fun start() {
         if (pollJob?.isActive == true) return
@@ -82,15 +93,20 @@ class RemoteState(
     suspend fun pollOnce() {
         if (!store.isConfigured) return
         try {
-            val s = withContext(Dispatchers.IO) { Vlc.status(store.host, store.vlcPort, store.vlcPassword) }
+            val s = twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) }
             status = s
             winVolume = if (store.helperToken.isNotBlank()) {
                 try {
-                    val (v, m) = withContext(Dispatchers.IO) { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) }
+                    val (v, m) = twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) }
+                    helperFailures = 0
                     muted = m
                     helperDown = false
                     v
-                } catch (e: Exception) { helperDown = true; null }
+                } catch (e: Exception) {
+                    // One blip keeps the last reading; two in a row means the helper is really gone.
+                    helperFailures++
+                    if (helperFailures >= 2) { helperDown = true; null } else winVolume
+                }
             } else null
             failures = 0
             unreachable = false
@@ -98,15 +114,18 @@ class RemoteState(
             connecting = false
             expectingVlc = false
         } catch (e: Vlc.BadAuth) {
-            failures = 2
+            failures = UNREACHABLE_AFTER
             unreachable = true
         } catch (e: Exception) {
             failures++
-            if (failures >= 2) {
+            if (failures >= UNREACHABLE_AFTER) {
                 unreachable = true
                 // The PC answering its helper but not VLC means VLC simply isn't open.
                 vlcClosed = store.helperToken.isNotBlank() &&
-                    withContext(Dispatchers.IO) { HelperClient.ping(store.host, store.helperPort, store.helperToken) }
+                    withContext(Dispatchers.IO) {
+                        HelperClient.ping(store.host, store.helperPort, store.helperToken) ||
+                            HelperClient.ping(store.host, store.helperPort, store.helperToken)
+                    }
                 if (store.autoReconnect) rediscover()
             }
         }
@@ -118,7 +137,12 @@ class RemoteState(
         rediscovering = true
         scope.launch(Dispatchers.IO) {
             try {
-                val found = HelperClient.discover()
+                // The saved address usually still answers (VLC was the one down): one quick ping first.
+                if (HelperClient.ping(store.host, store.helperPort, store.helperToken)) {
+                    failures = 0
+                    return@launch
+                }
+                val found = HelperClient.discover(3000)
                 val match = found.firstOrNull { it.name == store.pcName && HelperClient.ping(it.host, it.port, store.helperToken) }
                 if (match != null) {
                     store.host = match.host
@@ -139,7 +163,7 @@ class RemoteState(
 
     private fun fire(block: () -> Unit) {
         scope.launch(Dispatchers.IO) {
-            try { block() } catch (e: Exception) { failures++; if (failures >= 2) unreachable = true }
+            try { block() } catch (e: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
         }
     }
 

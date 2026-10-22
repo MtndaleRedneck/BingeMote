@@ -115,6 +115,16 @@ class UpdaterTest {
     }
 
     @Test
+    fun display_name_strips_only_known_video_extensions() {
+        assertEquals("Avatar The Way Of Water", displayName("Avatar The Way Of Water.mkv"))
+        assertEquals("Film.Name.With.Dots", displayName("Film.Name.With.Dots.mp4"))
+        assertEquals("notes.txt", displayName("notes.txt"))
+        assertEquals("noextension", displayName("noextension"))
+        assertEquals(".mkv", displayName(".mkv"))
+        assertEquals("UPPER", displayName("UPPER.MKV"))
+    }
+
+    @Test
     fun newer_comparison() {
         assertTrue(Updater.isNewer("1.0.1", "1.0.0"))
         assertTrue(Updater.isNewer("2.0", "1.9.9"))

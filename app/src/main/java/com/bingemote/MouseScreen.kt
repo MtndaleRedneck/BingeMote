@@ -309,7 +309,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         modifier = Modifier.width(64.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                     Spacer(Modifier.width(14.dp))
-                    SpeedStep("+") { speed = (kotlin.math.round((speed + 0.1f) * 10) / 10).coerceAtMost(3.0f); remote.store.mouseSpeed = speed }
+                    SpeedStep("+") { speed = (kotlin.math.round((speed + 0.1f) * 10) / 10).coerceAtMost(2.0f); remote.store.mouseSpeed = speed }
                 }
             }
         }

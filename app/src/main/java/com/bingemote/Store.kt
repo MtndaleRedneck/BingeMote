@@ -37,10 +37,10 @@ class Store(context: Context) {
         get() = prefs.getInt("helperPort", 8488)
         set(v) = prefs.edit().putInt("helperPort", v).apply()
 
-    /// Touchpad gain: 1.0 = raw finger movement. Was hardcoded at 2.2 before 1.1.0.
+    /// Touchpad gain: 1.0 = raw finger movement. Approved range 0.5-2.0 in 0.1 steps; saved values outside it are clamped.
     var mouseSpeed: Float
-        get() = prefs.getFloat("mouseSpeed", 1.4f)
-        set(v) = prefs.edit().putFloat("mouseSpeed", v).apply()
+        get() = prefs.getFloat("mouseSpeed", 1.0f).coerceIn(0.5f, 2.0f)
+        set(v) = prefs.edit().putFloat("mouseSpeed", v.coerceIn(0.5f, 2.0f)).apply()
 
     var moviesPath: String
         get() = normalizeWinPath(prefs.getString("moviesPath", "") ?: "")
