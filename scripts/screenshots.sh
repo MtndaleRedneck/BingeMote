@@ -2,12 +2,23 @@
 set -euo pipefail
 mkdir -p screenshots
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+dismiss_anr() { # tap "Wait" if an "isn't responding" system dialog is up
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return
+  adb shell cat /sdcard/ui.xml | grep -q "isn't responding" || return
+  B=$(adb shell cat /sdcard/ui.xml | grep -o 'text="Wait"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | grep -o "\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]" | head -1)
+  [ -z "$B" ] && return
+  X1=$(echo $B | cut -d'[' -f2 | cut -d',' -f1); Y1=$(echo $B | cut -d'[' -f2 | cut -d',' -f2 | cut -d']' -f1)
+  X2=$(echo $B | cut -d'[' -f3 | cut -d',' -f1); Y2=$(echo $B | cut -d'[' -f3 | cut -d',' -f2 | cut -d']' -f1)
+  adb shell input tap $(( (X1+X2)/2 )) $(( (Y1+Y2)/2 ))
+  sleep 2
+}
 shoot() { # $1 screen, $2 suffix
   for try in 1 2 3; do
     adb shell am force-stop com.bingemote
     adb shell am start -n com.bingemote/.MainActivity --es screen "$1"
     sleep 8
     adb shell pidof com.bingemote
+    dismiss_anr
     adb exec-out screencap -p > "screenshots/$1$2.png"
     if ! black "screenshots/$1$2.png"; then break; fi
     echo "black frame on $1$2 (try $try), retrying"
@@ -16,6 +27,7 @@ shoot() { # $1 screen, $2 suffix
 }
 # Emulate the primary tester's phone (Galaxy S22 Ultra class: 1440x3088 @ ~649dpi)
 # so the shots match what he sees. Restored at the end.
+adb shell settings put global hide_error_dialogs 1
 adb shell wm size 1440x2807
 adb shell wm density 649
 # Cold start after a density/font change can capture a black frame: warm up first,
