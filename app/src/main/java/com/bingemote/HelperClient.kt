@@ -42,9 +42,7 @@ object HelperClient {
             c.outputStream.use { os: OutputStream -> os.write(bytes) }
             when (c.responseCode) {
                 in 200..299 -> return
-                401, 403 -> throw BadToken("The PC rejected the pairing token.")
-                404 -> throw Unreachable("BingeMote PC is too old for this app.")
-                else -> throw Unreachable("BingeMote PC answered with error ${c.responseCode}.")
+                else -> throw failure(c)
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
@@ -66,14 +64,40 @@ object HelperClient {
             c.setRequestProperty("X-BingeMote-Token", token)
             when (c.responseCode) {
                 in 200..299 -> return JSONObject(c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
-                401, 403 -> throw BadToken("The PC rejected the pairing token.")
-                404 -> throw Unreachable("BingeMote PC is too old for this app.")
-                else -> throw Unreachable("BingeMote PC answered with error ${c.responseCode}.")
+                else -> throw failure(c)
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
         finally { c.disconnect() }
+    }
+
+    /**
+     * Turn an error response into the right exception. The helper answers its known
+     * routes with a JSON body carrying a readable "detail" - show THAT, never a guess.
+     * Only a bare 404 (no helper JSON) means the route is missing: the PC is too old.
+     */
+    private fun failure(c: HttpURLConnection): Exception {
+        val code = c.responseCode
+        if (code == 401 || code == 403) return BadToken("The PC rejected the pairing token.")
+        val detail = try {
+            c.errorStream?.use { JSONObject(it.readBytes().toString(Charsets.UTF_8)).optString("detail") }
+                ?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) { null }
+        if (detail != null) return Unreachable(detail)
+        if (code == 404) return Unreachable("BingeMote PC is too old for this app.")
+        return Unreachable("BingeMote PC answered with error $code.")
+    }
+
+    /** Subfolders anywhere on the PC (drives when path is empty), so the folder picker
+     * works with VLC closed. Folder names only - the PC never sends files. */
+    fun browse(host: String, port: Int, token: String, path: String): List<String> {
+        val enc = java.net.URLEncoder.encode(path, "UTF-8")
+        val json = get(host, port, "/browse?path=$enc", token)
+        val arr = json.getJSONArray("entries")
+        val out = mutableListOf<String>()
+        for (i in 0 until arr.length()) out.add(arr.getJSONObject(i).getString("name"))
+        return out
     }
 
     /** The movies folder as set on the PC; null when the helper can't be asked (too old or down). */

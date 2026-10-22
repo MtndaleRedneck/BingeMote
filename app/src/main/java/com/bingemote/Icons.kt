@@ -265,7 +265,7 @@ fun PauseIcon(color: Color, size: Dp = 40.dp) {
  * does one full turn (Ezzy's ask: "I want it to fully rotate"); the number stays put.
  */
 @Composable
-fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, size: Dp = 34.dp, labelScale: Float = 0.30f) {
+fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, size: Dp = 34.dp, labelScale: Float = 0.30f, ringScale: Float = 1f) {
     val spin = remember { Animatable(0f) }
     LaunchedEffect(pressed) {
         if (pressed) {
@@ -298,7 +298,7 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             drawArc(
                 ringColor, startAngle = 130f, sweepAngle = 262f, useCenter = false,
                 topLeft = Offset(inset, inset), size = Size(w - inset * 2, w - inset * 2),
-                style = Stroke(width = w * 0.095f, cap = StrokeCap.Butt),
+                style = Stroke(width = w * 0.095f * ringScale, cap = StrokeCap.Butt),
             )
             val cx = w / 2
             val head = Path().apply {

@@ -1,3 +1,11 @@
+## v1.5.1
+
+- The phone can browse this PC's folders to pick the Movies folder - no VLC needed
+- Pairing reads better at larger text sizes: bordered name box, note never clips
+- Remove buttons fit their text - no more clipped labels
+- Feedback & bugs: buttons fit their text, and the message box scrollbar goes dark
+- Updates line keeps the version clear of the label at larger text sizes
+
 ## v1.5.0
 
 - New squircle program icon, and Windows picks it up right after an update - no sign-out needed

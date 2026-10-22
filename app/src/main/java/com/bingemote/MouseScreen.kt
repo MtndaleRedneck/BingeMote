@@ -1,5 +1,6 @@
 package com.bingemote
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.positionChange
@@ -372,17 +374,22 @@ private fun MouseButton(
     send: (String, Boolean) -> Unit,
 ) {
     val view = LocalView.current
+    // Same press feedback as every other remote button (PressTile): sink + lower shadow.
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "sink")
     Box(
         modifier
-            .shadow(6.dp, RoundedCornerShape(18.dp))
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .shadow(if (pressed) 2.dp else 6.dp, RoundedCornerShape(18.dp))
             .clip(RoundedCornerShape(18.dp))
             .background(CardGradient)
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown()
                     tapHaptic(view, hapticsOn)
+                    pressed = true
                     send(button, true)
-                    try { waitForUpOrCancel() } finally { send(button, false) }
+                    try { waitForUpOrCancel() } finally { pressed = false; send(button, false) }
                 }
             },
         contentAlignment = Alignment.Center,
