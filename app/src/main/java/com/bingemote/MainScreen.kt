@@ -94,8 +94,6 @@ fun MainScreen(
             }
 
             Spacer(Modifier.height(20.dp))
-            SeekBlock(remote)
-            Spacer(Modifier.height(18.dp))
             VolumeRow(remote, flashAll)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
@@ -119,6 +117,8 @@ fun MainScreen(
             SkipRow(remote, flashAll)
             Spacer(Modifier.height(12.dp))
             SecondarySkipRow(remote)
+            Spacer(Modifier.height(18.dp))
+            SeekBlock(remote)
             Spacer(Modifier.weight(1f))
             BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))

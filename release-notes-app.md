@@ -5,6 +5,7 @@
 - Volume buttons pop an extra sound wave, and the fullscreen corners stretch for a beat
 - New setting: Button flash - "All buttons" or "Skip rings only"
 - The "Hold a skip button to keep skipping" line is gone from the home screen
+- The time bar moved below the skip buttons, just above the bottom icons
 
 ## v1.7.0
 
