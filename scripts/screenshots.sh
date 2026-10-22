@@ -3,14 +3,15 @@ set -euo pipefail
 mkdir -p screenshots
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 dismiss_anr() { # tap "Wait" if an "isn't responding" system dialog is up
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return
-  adb shell cat /sdcard/ui.xml | grep -q "isn't responding" || return
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 0
+  adb shell cat /sdcard/ui.xml | grep -q "isn't responding" || return 0
   B=$(adb shell cat /sdcard/ui.xml | grep -o 'text="Wait"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | grep -o "\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]" | head -1)
-  [ -z "$B" ] && return
+  [ -z "$B" ] && return 0
   X1=$(echo $B | cut -d'[' -f2 | cut -d',' -f1); Y1=$(echo $B | cut -d'[' -f2 | cut -d',' -f2 | cut -d']' -f1)
   X2=$(echo $B | cut -d'[' -f3 | cut -d',' -f1); Y2=$(echo $B | cut -d'[' -f3 | cut -d',' -f2 | cut -d']' -f1)
   adb shell input tap $(( (X1+X2)/2 )) $(( (Y1+Y2)/2 ))
   sleep 2
+  return 0
 }
 shoot() { # $1 screen, $2 suffix
   for try in 1 2 3; do
