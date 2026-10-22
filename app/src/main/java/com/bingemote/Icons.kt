@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -28,22 +29,44 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/** Rounded-corner polygon like the approved artwork: cut each corner by rr along
+ * both edges and ease through it with a quadratic. */
+private fun roundedPoly(pts: List<Offset>, r: Float): Path {
+    val n = pts.size
+    fun cut(i: Int): Pair<Offset, Offset> {
+        val p0 = pts[(i - 1 + n) % n]; val p1 = pts[i]; val p2 = pts[(i + 1) % n]
+        val v1 = p0 - p1; val v2 = p2 - p1
+        val l1 = v1.getDistance(); val l2 = v2.getDistance()
+        val rr = minOf(r, l1 / 2.2f, l2 / 2.2f)
+        return p1 + v1 / l1 * rr to p1 + v2 / l2 * rr
+    }
+    val path = Path()
+    val (a0, _) = cut(0)
+    path.moveTo(a0.x, a0.y)
+    for (i in 0 until n) {
+        val (a, b) = cut(i)
+        path.lineTo(a.x, a.y)
+        path.quadraticTo(pts[i].x, pts[i].y, b.x, b.y)
+    }
+    path.close()
+    return path
+}
+
 /** Mouse cursor arrow. */
 @Composable
 fun CursorIcon(color: Color, size: Dp = 21.dp) {
     Canvas(Modifier.size(size)) {
-        val w = this.size.width; val h = this.size.height
-        val p = Path().apply {
-            moveTo(w * 0.28f, h * 0.12f)
-            lineTo(w * 0.28f, h * 0.78f)
-            lineTo(w * 0.44f, h * 0.64f)
-            lineTo(w * 0.56f, h * 0.88f)
-            lineTo(w * 0.66f, h * 0.83f)
-            lineTo(w * 0.54f, h * 0.59f)
-            lineTo(w * 0.74f, h * 0.59f)
-            close()
-        }
-        drawPath(p, color)
+        val w = this.size.width
+        // Thin outline pointer, Ezzy's pick: rounded joins, same weight as the other
+        // bottom-row icons.
+        val pts = listOf(
+            Offset(w * 0.330f, w * 0.177f), Offset(w * 0.330f, w * 0.789f),
+            Offset(w * 0.483f, w * 0.653f), Offset(w * 0.594f, w * 0.874f),
+            Offset(w * 0.696f, w * 0.823f), Offset(w * 0.585f, w * 0.611f),
+            Offset(w * 0.772f, w * 0.602f),
+        )
+        drawPath(roundedPoly(pts, w * 0.034f), color,
+            style = Stroke(width = w * 0.0357f, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
@@ -169,7 +192,7 @@ fun SubtitleIcon(color: Color, size: Dp = 22.dp) {
         // One continuous outline: the bubble's bottom edge opens where the tail
         // joins, running straight down into the tail and back up (Ezzy's pick).
         val x0 = w * 0.143f; val y0 = h * 0.179f; val x1 = w * 0.857f; val y1 = h * 0.679f
-        val r = w * 0.093f
+        val r = w * 0.061f
         val tailL = w * 0.339f; val tailR = w * 0.518f
         val tipX = w * 0.265f; val tipY = h * 0.885f
         val bubble = Path().apply {
@@ -206,17 +229,17 @@ fun SubtitleIcon(color: Color, size: Dp = 22.dp) {
 @Composable
 fun FolderIcon(color: Color, size: Dp = 22.dp) {
     Canvas(Modifier.size(size)) {
-        val w = this.size.width; val h = this.size.height
-        val p = Path().apply {
-            moveTo(w * 0.10f, h * 0.26f)
-            lineTo(w * 0.38f, h * 0.26f)
-            lineTo(w * 0.46f, h * 0.36f)
-            lineTo(w * 0.90f, h * 0.36f)
-            lineTo(w * 0.90f, h * 0.78f)
-            lineTo(w * 0.10f, h * 0.78f)
-            close()
-        }
-        drawPath(p, color, style = Stroke(width = w * 0.07f, cap = StrokeCap.Round))
+        val w = this.size.width
+        // Thin outline folder, Ezzy's pick: rounded corners, tab divider line.
+        val st = w * 0.0357f
+        val pts = listOf(
+            Offset(w * 0.177f, w * 0.772f), Offset(w * 0.177f, w * 0.245f),
+            Offset(w * 0.449f, w * 0.245f), Offset(w * 0.517f, w * 0.330f),
+            Offset(w * 0.823f, w * 0.330f), Offset(w * 0.823f, w * 0.772f),
+        )
+        drawPath(roundedPoly(pts, w * 0.034f), color,
+            style = Stroke(width = st, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawLine(color, Offset(w * 0.177f, w * 0.415f), Offset(w * 0.823f, w * 0.415f), st, cap = StrokeCap.Round)
     }
 }
 
