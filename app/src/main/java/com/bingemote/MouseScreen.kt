@@ -59,9 +59,10 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
     var helperOk by remember { mutableStateOf(true) }
     val view = LocalView.current
 
-    val host = remote.store.host
-    val port = remote.store.helperPort
-    val token = remote.store.helperToken
+    // Published state, not plain prefs: rediscovery and re-pairing recompose and reconnect.
+    val host = remote.liveHost
+    val port = remote.livePort
+    val token = remote.liveToken
 
     // The live mouse connection: frames while it is open, plain HTTP when it is not.
     val live = remember(host, port, token) { LiveWs(host, port, token) }
@@ -74,6 +75,23 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
             if (HelperClient.live === live) HelperClient.live = null
             live.close()
         }
+    }
+
+    // Backgrounded (call, screen off, home): close the live line and stop its reconnect
+    // clock; foreground again: reconnect. `away` also re-keys the pad's gesture block so a
+    // latched drag (released on background) doesn't eat the first tap after coming back.
+    var away by remember { mutableStateOf(false) }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, live) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            when (ev) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> { away = true; live.pause() }
+                androidx.lifecycle.Lifecycle.Event.ON_START -> { away = false; live.resume() }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
     val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(256) }
@@ -110,7 +128,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
             Modifier
                 .fillMaxSize()
                 .padding(bottom = 190.dp, end = 40.dp)
-                .pointerInput(host, port, token) {
+                .pointerInput(host, port, token, away) {
                     var accX = 0f; var accY = 0f
                     var accScroll = 0f; var accZoom = 0f
                     val accLock = Any()

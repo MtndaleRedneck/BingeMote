@@ -8,7 +8,7 @@
 - A drag lets go if you leave the app, and the seek bar drags right after hold-to-unlock without a jump back
 - Movies open faster, folders sort Episode 2 before Episode 10, and a movie that won't start says so instead of nothing
 - Pairing is easier: the PC asks for the phone's name first, pairs as soon as the last digit lands, and an expired code says so
-- Feedback shows the whole message before it sends, and setup can put the web remote into VLC for you
+- Setup can put the web remote into VLC for you
 
 ## v1.6.0
 

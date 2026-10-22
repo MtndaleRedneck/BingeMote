@@ -62,6 +62,17 @@ class RemoteState(
     /** Last subtitle track picked in the app, per media title. VLC's status doesn't report the current track on all versions. */
     var pickedSubtitle by mutableStateOf<Int?>(null)
 
+    /** The address the live mouse connection uses. Store.host is plain preferences, so a
+     *  rediscovery while the mouse screen is open never recomposes it - publish here instead. */
+    var liveHost by mutableStateOf(store.host); private set
+    var livePort by mutableStateOf(store.helperPort); private set
+    var liveToken by mutableStateOf(store.helperToken); private set
+
+    /** Pairing, re-pairing or rediscovery learned an address: open screens reconnect to it. */
+    fun publishAddress(host: String, port: Int, token: String) {
+        liveHost = host; livePort = port; liveToken = token
+    }
+
     private var pollJob: Job? = null
     private var failures = 0
     private var helperFailures = 0
@@ -164,6 +175,7 @@ class RemoteState(
                     withContext(Dispatchers.Main) {
                         store.host = match.host
                         store.helperPort = match.port
+                        publishAddress(match.host, match.port, store.helperToken)
                         failures = 0
                     }
                 }

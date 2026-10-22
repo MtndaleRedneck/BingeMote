@@ -5,9 +5,10 @@
 - Off stays off when BingeMote is disabled in Windows Startup apps
 - The pair screen asks for the phone's name first, greys Pair until it's typed, and says when a code has expired
 - A movie tapped twice opens once, and a movie that won't start tells the phone
-- Update downloads that stall now fail and retry instead of sitting on Downloading forever
+- Update downloads that stall now stop and let you try again instead of sitting on Downloading forever
 - Updates can no longer be interrupted by the background restart check
 - Writes VLC's web-remote settings for the phone, when the phone's setup asks
+- The Feedback preview trims very long messages and always shows the version details that go with it
 
 ## v1.5.2
 

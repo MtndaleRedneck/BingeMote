@@ -265,6 +265,7 @@ internal sealed class HttpServer : IDisposable
     private static async Task HandleWs(HttpListenerContext ctx)
     {
         WebSocket? ws = null;
+        var token = ctx.Request.Headers["X-BingeMote-Token"] ?? "";
         try
         {
             var wsCtx = await ctx.AcceptWebSocketAsync(null);
@@ -283,6 +284,13 @@ internal sealed class HttpServer : IDisposable
                 if (r.MessageType != WebSocketMessageType.Text) continue;
                 text.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
                 if (!r.EndOfMessage) continue;
+                // Removing a phone must stop its input right away, not when it happens to
+                // disconnect: the token check only ran at the handshake.
+                if (!StillPaired(token))
+                {
+                    Program.Log("Live mouse connection closed - the phone was removed.");
+                    break;
+                }
                 DispatchWs(text.ToString());
                 text.Clear();
             }
@@ -293,6 +301,11 @@ internal sealed class HttpServer : IDisposable
             try { ws?.Dispose(); } catch { }
             Program.Log("Live mouse connection closed.");
         }
+    }
+
+    private static bool StillPaired(string token)
+    {
+        lock (Program.PhonesLock) { return Program.Phones.Any(p => ConstantTimeEq(token, p.Token)); }
     }
 
     /// <summary>Apply one frame from the live connection. Anything malformed costs nothing.</summary>
