@@ -93,7 +93,10 @@ fun MainScreen(
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            // Ezzy: equal distance between every row. Five equal flexible gaps
+            // (card-vol, vol-5s, 5s-30s, 30s-seek, seek-bottom) split whatever
+            // vertical space is left, so the gaps match on any screen.
+            Spacer(Modifier.weight(1f))
             VolumeRow(remote, flashAll)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
@@ -113,11 +116,11 @@ fun MainScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.weight(1f))
             SkipRow(remote, flashAll)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.weight(1f))
             SecondarySkipRow(remote)
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.weight(1f))
             SeekBlock(remote)
             Spacer(Modifier.weight(1f))
             BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
