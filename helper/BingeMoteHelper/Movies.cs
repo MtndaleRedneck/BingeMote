@@ -13,6 +13,15 @@ internal static class Movies
     private static readonly HashSet<string> VideoExt = new(StringComparer.OrdinalIgnoreCase)
         { ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".ts", ".mpg", ".mpeg", ".webm", ".flv", ".m2ts" };
 
+    // File Explorer's ordering: "Episode 2" before "Episode 10".
+    [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int StrCmpLogicalW(string a, string b);
+    private static readonly Comparer<string> Natural = Comparer<string>.Create(StrCmpLogicalW);
+
+    // "$RECYCLE.BIN" and "System Volume Information" are not movies folders.
+    private static bool VisibleDir(string d) =>
+        (new DirectoryInfo(d).Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0;
+
     /// <summary>Resolve a folder-relative path, refusing anything outside the movies folder.</summary>
     private static string? Jail(string root, string rel)
     {
@@ -34,9 +43,9 @@ internal static class Movies
         var dir = Jail(root, rel);
         if (dir == null || !Directory.Exists(dir)) return Error(404, "not found", "That folder does not exist on the PC.");
         var entries = new List<object>();
-        foreach (var d in Directory.GetDirectories(dir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        foreach (var d in Directory.GetDirectories(dir).Where(VisibleDir).OrderBy(d => Path.GetFileName(d), Natural))
             entries.Add(new { name = Path.GetFileName(d), dir = true });
-        foreach (var f in Directory.GetFiles(dir).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        foreach (var f in Directory.GetFiles(dir).OrderBy(f => Path.GetFileName(f), Natural))
             if (VideoExt.Contains(Path.GetExtension(f)))
                 entries.Add(new { name = Path.GetFileName(f), dir = false });
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -74,7 +83,7 @@ internal static class Movies
             var full = Path.GetFullPath(path);
             if (!Directory.Exists(full)) return Error(404, "not found", "That folder does not exist on the PC.");
             var entries = new List<object>();
-            foreach (var d in Directory.GetDirectories(full).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            foreach (var d in Directory.GetDirectories(full).Where(VisibleDir).OrderBy(d => Path.GetFileName(d), Natural))
             {
                 var name = Path.GetFileName(d);
                 entries.Add(new { name = name.Length == 0 ? d : name, dir = true });
@@ -102,6 +111,8 @@ internal static class Movies
         psi.ArgumentList.Add("--http-host=" + BindAddress(bindTo));
         psi.ArgumentList.Add("--http-port=" + httpPort);
         psi.ArgumentList.Add("--http-password=" + httpPassword);
+        // A second tap hands the file to the running VLC instead of opening another one.
+        psi.ArgumentList.Add("--one-instance");
         if (fullscreen) psi.ArgumentList.Add("--fullscreen");
         try
         {

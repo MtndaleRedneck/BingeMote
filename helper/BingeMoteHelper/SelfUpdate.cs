@@ -14,9 +14,11 @@ internal static class SelfUpdate
     private static readonly HttpClient Http = new();
 
     /// <summary>Fetch the installer to the temp folder and verify its SHA-256 when the
-    /// release published one. Returns the local path; throws on any failure.</summary>
-    public static async Task<string> Download(string version, string exeUrl, string? sha256)
+    /// release published one. Returns the local path; throws on any failure. A download that
+    /// stalls for 3 minutes is canceled so the button never sits on "Downloading..." forever.</summary>
+    public static async Task<string> Download(string version, string exeUrl, string? sha256, IProgress<int>? progress = null)
     {
+        using var stall = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var current = exeUrl;
         for (var hops = 0; ; hops++)
         {
@@ -26,7 +28,7 @@ internal static class SelfUpdate
                 throw new InvalidOperationException("The download address was not trusted: " + host);
             using var req = new HttpRequestMessage(HttpMethod.Get, current);
             req.Headers.UserAgent.ParseAdd("BingeMotePC");
-            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, stall.Token);
             var code = (int)resp.StatusCode;
             if (code is >= 300 and < 400)
             {
@@ -37,8 +39,20 @@ internal static class SelfUpdate
             }
             resp.EnsureSuccessStatusCode();
             var dest = Path.Combine(Path.GetTempPath(), "BingeMote-PC-" + version + ".exe");
+            var total = resp.Content.Headers.ContentLength ?? -1;
             await using (var fs = File.Create(dest))
-                await resp.Content.CopyToAsync(fs);
+            {
+                await using var src = await resp.Content.ReadAsStreamAsync(stall.Token);
+                var buf = new byte[64 * 1024];
+                long got = 0;
+                int n;
+                while ((n = await src.ReadAsync(buf, stall.Token)) > 0)
+                {
+                    await fs.WriteAsync(buf.AsMemory(0, n), stall.Token);
+                    got += n;
+                    if (total > 0) progress?.Report((int)(got * 100 / total));
+                }
+            }
             if (sha256 != null)
             {
                 using var sha = SHA256.Create();
@@ -59,6 +73,9 @@ internal static class SelfUpdate
     public static void LaunchAndQuit(string path)
     {
         Program.Log("Starting the downloaded installer silently, quitting for the update.");
+        // Tell the watchdog an install is about to run so its 5-minute check cannot start a
+        // copy mid-install. Fresh for 3 minutes; any normal start deletes it.
+        try { File.WriteAllText(Program.UpdatingMarkerPath, DateTime.UtcNow.ToString("O")); } catch { }
         // One Windows permission prompt, a small progress bar, done: no wizard pages,
         // and it keeps the choices from the first install. The installer relaunches the app.
         Process.Start(new ProcessStartInfo(path)

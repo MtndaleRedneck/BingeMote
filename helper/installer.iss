@@ -24,7 +24,7 @@ Source: "out\BingeMote.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; The installer owns the autostart entry so uninstall removes it; the app rewrites the same value.
-Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BingeMote"; ValueData: """{app}\BingeMote.exe"""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BingeMote"; ValueData: """{app}\BingeMote.exe"" --autostart"; Flags: uninsdeletevalue
 ; Drop the 1.x autostart entry name and the 1.x exe and shortcuts on upgrade.
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "BingeMoteHelper"; Flags: deletevalue
 

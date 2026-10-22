@@ -22,6 +22,7 @@ internal static class InputSender
     private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_RETURN = 0x0D;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT { public uint type; public INPUTUNION U; }
@@ -77,10 +78,20 @@ internal static class InputSender
         lock (Gate) Send(Mouse(flags));
     }
 
+    // Slow scrolls and pinches lost their leftover fraction when each request rounded on
+    // its own; carry it into the next request, like Move does.
+    private static float _fracWheel, _fracZoom;
+
     public static void Scroll(float dy)
     {
         // Windows wheel units: 120 per notch. Positive = up.
-        lock (Gate) Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(dy * 8)));
+        lock (Gate)
+        {
+            _fracWheel += dy * 8;
+            var w = (int)MathF.Truncate(_fracWheel);
+            _fracWheel -= w;
+            if (w != 0) Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)w));
+        }
     }
 
     public static void Zoom(float delta)
@@ -88,8 +99,12 @@ internal static class InputSender
         // Ctrl+wheel is what most apps treat as zoom.
         lock (Gate)
         {
+            _fracZoom += delta * 40;
+            var w = (int)MathF.Truncate(_fracZoom);
+            _fracZoom -= w;
+            if (w == 0) return;
             Send(KeyVk(VK_CONTROL, false));
-            Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)(int)(delta * 40)));
+            Send(Mouse(MOUSEEVENTF_WHEEL, data: (uint)w));
             Send(KeyVk(VK_CONTROL, true));
         }
     }
@@ -101,6 +116,8 @@ internal static class InputSender
         {
             foreach (var c in text)
             {
+                if (c == '\r') continue;
+                if (c == '\n') { Send(KeyVk(VK_RETURN, false), KeyVk(VK_RETURN, true)); continue; } // Enter submits; a line break helps no search box
                 if (char.IsHighSurrogate(c) || char.IsLowSurrogate(c)) continue; // plain text only
                 Send(KeyChar(c, false), KeyChar(c, true));
             }

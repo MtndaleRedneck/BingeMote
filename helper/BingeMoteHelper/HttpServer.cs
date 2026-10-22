@@ -131,6 +131,13 @@ internal sealed class HttpServer : IDisposable
             Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Restart BingeMote on the PC to try again.\"}");
             return;
         }
+        // No code on screen: guesses here must not count toward the lock, or anyone on the
+        // Wi-Fi could lock pairing while he is not even pairing.
+        if (Program.PairCode == null)
+        {
+            Reply(res, 403, "{\"error\":\"bad code\"}");
+            return;
+        }
         var body = ReadBody(req);
         var code = JsonDocument.Parse(body).RootElement.GetProperty("code").GetString() ?? "";
         var valid = Program.PairCode != null
@@ -240,16 +247,11 @@ internal sealed class HttpServer : IDisposable
 
     private static string ReadBody(HttpListenerRequest req)
     {
+        if (req.ContentLength64 > 64 * 1024) throw new InvalidDataException("Request too large");
         using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
-        var buffer = new char[64 * 1024 + 1];
-        var total = 0;
-        while (total < buffer.Length) {
-            var count = reader.Read(buffer, total, buffer.Length - total);
-            if (count == 0) break;
-            total += count;
-        }
-        if (total > 64 * 1024) throw new InvalidDataException("Request too large");
-        return new string(buffer, 0, total);
+        var s = reader.ReadToEnd();
+        if (s.Length > 64 * 1024) throw new InvalidDataException("Request too large");
+        return s;
     }
 
     private static void Reply(HttpListenerResponse res, int code, string json)
