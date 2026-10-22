@@ -1,3 +1,14 @@
+## v1.6.0
+
+- Mouse input from the phone answers right away, with no more stutter on busy moves
+- Quitting from the tray keeps it off until you open it again or restart the PC
+- Off stays off when BingeMote is disabled in Windows Startup apps
+- The pair screen asks for the phone's name first, greys Pair until it's typed, and says when a code has expired
+- A movie tapped twice opens once, and a movie that won't start tells the phone
+- Update downloads that stall now fail and retry instead of sitting on Downloading forever
+- Updates can no longer be interrupted by the background restart check
+- Writes VLC's web-remote settings for the phone, when the phone's setup asks
+
 ## v1.5.2
 
 - New rounded look for the BingeMote window
