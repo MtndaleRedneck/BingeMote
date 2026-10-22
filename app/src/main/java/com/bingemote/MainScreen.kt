@@ -118,12 +118,6 @@ fun MainScreen(
             SkipRow(remote)
             Spacer(Modifier.height(12.dp))
             SecondarySkipRow(remote)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Hold a skip button to keep skipping",
-                color = Muted, fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
             Spacer(Modifier.weight(1f))
             BottomRow(remote, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
