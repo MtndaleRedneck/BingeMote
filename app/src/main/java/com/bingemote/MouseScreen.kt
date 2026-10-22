@@ -30,6 +30,9 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,6 +92,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                 .padding(bottom = 190.dp, end = 40.dp)
                 .pointerInput(host, port, token) {
                     var accX = 0f; var accY = 0f
+                    var accScroll = 0f; var accZoom = 0f
                     val accLock = Any()
                     var dragLatched = false
                     var sender: Job? = null
@@ -101,13 +105,20 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                 // Send-when-free: the next batch leaves the moment the previous one
                                 // landed (paced to at most ~60/sec), so the rate follows the
                                 // connection - fast on a healthy LAN, self-throttling when it's not.
+                                val sendStarted = System.currentTimeMillis()
                                 landed?.await()
+                                // After a stalled send (Wi-Fi hiccup), shrink what piled up: a real
+                                // mouse loses that motion instead of landing it as one big jump.
+                                if (landed != null && System.currentTimeMillis() - sendStarted > 250)
+                                    synchronized(accLock) { accX *= 0.25f; accY *= 0.25f }
                                 val pace = lastSentAt + 16 - System.currentTimeMillis()
                                 if (pace > 0) delay(pace)
                                 // Moves ride the same channel as buttons and scrolls, so a
                                 // drag can never start before its button-down reaches the PC.
-                                val dx: Float; val dy: Float
-                                synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f }
+                                val dx: Float; val dy: Float; val sc: Float; val zm: Float
+                                synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f; sc = accScroll; zm = accZoom; accScroll = 0f; accZoom = 0f }
+                                if (sc != 0f) fire { HelperClient.scroll(host, port, token, sc) }
+                                if (zm != 0f) fire { HelperClient.zoom(host, port, token, zm) }
                                 if (dx != 0f || dy != 0f) {
                                     val speed = remote.store.mouseSpeed
                                     val done = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -131,9 +142,10 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                         var moved = false
                         var dragging = dragLatched // hold the button until the next tap
                         var pinchDist = 0f
-                        var scrollAcc = 0f
                         var longPressFired = false
                         var sawSecond = false
+                        val slop = viewConfiguration.touchSlop
+                        var pendX = 0f; var pendY = 0f
 
                         // Long-press timer: 450ms stationary -> mouse button down (drag mode).
                         val lpJob = scope.launch {
@@ -165,19 +177,18 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                     val moveA = pressed[0].positionChange()
                                     val moveB = pressed[1].positionChange()
                                     if (abs(newDist - pinchDist) > 12f) {
-                                        // Pinch: zoom on the PC via Ctrl+wheel.
-                                        fire { HelperClient.zoom(host, port, token, (newDist - pinchDist) / 6f) }
+                                        // Pinch: zoom on the PC via Ctrl+wheel. Bundled like moves,
+                                        // so a fast pinch can't queue a backlog that outlives the fingers.
+                                        synchronized(accLock) { accZoom += (newDist - pinchDist) / 6f }
                                         pinchDist = newDist
                                         moved = true
                                     } else {
                                         // Two fingers moving together: scroll.
                                         val avg = (moveA.y + moveB.y) / 2f
-                                        scrollAcc += avg
-                                        if (abs(scrollAcc) > 18f) {
-                                            val amount = scrollAcc
-                                            scrollAcc = 0f
-                                            fire { HelperClient.scroll(host, port, token, -amount / 4f) }
-                                        }
+                                        // Bundled like moves: accumulate and let the sender flush. The
+                                        // leftover fraction rides the next flush (or the lift flush), so
+                                        // slow careful scrolling loses nothing.
+                                        synchronized(accLock) { accScroll += -avg / 4f }
                                         if (abs(avg) > 1f) moved = true
                                     }
                                     pressed.forEach { it.consume() }
@@ -186,8 +197,14 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                 val ch = pressed[0]
                                 val delta = ch.positionChange()
                                 if (delta != Offset.Zero) {
-                                    if (abs(delta.x) + abs(delta.y) > 2f) moved = true
-                                    synchronized(accLock) { accX += delta.x; accY += delta.y }
+                                    // A resting fingertip wobbles more than 2px; don't call it a move
+                                    // (or send it) until the finger passes Android's touch slop from
+                                    // where it first landed. Wobble before that never moves the pointer.
+                                    if (!moved && (ch.position - first.position).getDistance() > slop) moved = true
+                                    if (moved) {
+                                        synchronized(accLock) { accX += pendX + delta.x; accY += pendY + delta.y }
+                                        pendX = 0f; pendY = 0f
+                                    } else { pendX += delta.x; pendY += delta.y }
                                     ch.consume()
                                 }
                             }
@@ -195,8 +212,11 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                         }
                         lpJob.cancel()
                         sender?.cancel()
-                        val lastX: Float; val lastY: Float
-                        synchronized(accLock) { lastX = accX; lastY = accY; accX = 0f; accY = 0f }
+                        val lastX: Float; val lastY: Float; val lastSc: Float; val lastZm: Float
+                        synchronized(accLock) { lastX = accX; lastY = accY; accX = 0f; accY = 0f; lastSc = accScroll; lastZm = accZoom; accScroll = 0f; accZoom = 0f }
+                        // Lift flush: leftover scroll/zoom fractions still go out (slow scrolling loses no steps).
+                        if (lastSc != 0f) fire { HelperClient.scroll(host, port, token, lastSc) }
+                        if (lastZm != 0f) fire { HelperClient.zoom(host, port, token, lastZm) }
                         // The tail of a swipe used the ancient hardcoded 2.2x gain (the flick Ezzy feels at
 // liftoff): flush at HIS speed like every other move.
 if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * remote.store.mouseSpeed, lastY * remote.store.mouseSpeed) }
@@ -249,21 +269,37 @@ if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, last
                 .clip(RoundedCornerShape(13.dp))
                 .background(Card)
                 .pointerInput(host, port, token) {
+                    var stripAcc = 0f
+                    val stripLock = Any()
+                    var stripSender: Job? = null
+                    fun startStripSender() {
+                        if (stripSender?.isActive == true) return
+                        stripSender = scope.launch {
+                            while (isActive) {
+                                val sc: Float
+                                synchronized(stripLock) { sc = stripAcc; stripAcc = 0f }
+                                if (sc != 0f) {
+                                    fire { HelperClient.scroll(host, port, token, sc) }
+                                    delay(16)
+                                } else delay(20)
+                            }
+                        }
+                    }
                     awaitEachGesture {
                         awaitFirstDown()
-                        var acc = 0f
+                        startStripSender()
                         while (true) {
                             val event = awaitPointerEvent()
                             val ch = event.changes.firstOrNull() ?: break
                             if (!ch.pressed) break
-                            acc += ch.positionChange().y
-                            if (abs(acc) > 14f) {
-                                val amount = acc
-                                acc = 0f
-                                fire { HelperClient.scroll(host, port, token, -amount / 3f) }
-                            }
+                            synchronized(stripLock) { stripAcc += -ch.positionChange().y / 3f }
                             ch.consume()
                         }
+                        // Lift flush: the leftover fraction still goes out.
+                        val tail: Float
+                        synchronized(stripLock) { tail = stripAcc; stripAcc = 0f }
+                        if (tail != 0f) fire { HelperClient.scroll(host, port, token, tail) }
+                        stripSender?.cancel()
                     }
                 },
         ) {
@@ -464,16 +500,21 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                 OutlinedTextField(
                     value = text,
                     onValueChange = { new ->
-                        // Type the difference straight into the PC.
-                        if (new.length > text.length && new.startsWith(text)) {
-                            onType(new.substring(text.length))
-                        } else if (new.length < text.length) {
-                            repeat(text.length - new.length) { onKey("backspace") }
-                        }
+                        // Diff against the common prefix: autocorrect and suggestion taps replace
+                        // whole words, and a plain tail-add/tail-delete check loses them. Backspaces
+                        // and letters ride the same ordered channel, so they land in this order.
+                        val keep = text.commonPrefixWith(new).length
+                        repeat(text.length - keep) { onKey("backspace") }
+                        if (new.length > keep) onType(new.substring(keep))
                         text = new
                     },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Type here", color = Muted) },
+                    // Single-line with a Send action: the Enter key submits (real Enter on the PC)
+                    // instead of typing a line break.
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onKey("enter") }),
                 )
                 Spacer(Modifier.height(10.dp))
                 // One row of four, Ezzy's approved render: plain clickable Boxes, so no
