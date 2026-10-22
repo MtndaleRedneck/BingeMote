@@ -485,7 +485,9 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                                 .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable(role = Role.Button) { onKey(k) }
-                                .padding(horizontal = 4.dp),
+                                // 2dp, not 4: the real 1.3x row measured wider than the spec font
+                                // said, and 4dp clipped the last key.
+                                .padding(horizontal = 2.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
