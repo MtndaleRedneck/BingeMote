@@ -75,6 +75,14 @@ internal sealed class HttpServer : IDisposable
                     }
                     return;
 
+                case "/browse":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    {
+                        var answer = Movies.Browse(req.QueryString["path"] ?? "");
+                        Reply(res, answer.Contains("\"not found\"") ? 404 : 200, answer);
+                    }
+                    return;
+
                 case "/movies/play":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {

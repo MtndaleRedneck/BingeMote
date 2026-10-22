@@ -2,6 +2,7 @@
 // VLC is not running yet. Paths are jailed to the configured folder, and only common
 // video files can be launched.
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Text.Json;
 
@@ -42,6 +43,33 @@ internal static class Movies
         var atRoot = string.Equals(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
             fullRoot, StringComparison.OrdinalIgnoreCase);
         return JsonSerializer.Serialize(new { path = rel, atRoot, entries });
+    }
+
+    /// <summary>List subfolders of any folder (drives when path is empty) so the phone can
+    /// pick the movies folder with VLC closed. Folder names only, never files, read-only.</summary>
+    public static string Browse(string path)
+    {
+        try
+        {
+            if (path.Length == 0)
+            {
+                var drives = new List<object>();
+                foreach (var d in DriveInfo.GetDrives())
+                    if (d.IsReady) drives.Add(new { name = d.Name, dir = true });
+                return JsonSerializer.Serialize(new { path = "", entries = drives });
+            }
+            var full = Path.GetFullPath(path);
+            if (!Directory.Exists(full)) return Error(404, "not found", "That folder does not exist on the PC.");
+            var entries = new List<object>();
+            foreach (var d in Directory.GetDirectories(full).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            {
+                var name = Path.GetFileName(d);
+                entries.Add(new { name = name.Length == 0 ? d : name, dir = true });
+            }
+            return JsonSerializer.Serialize(new { path = full, entries });
+        }
+        catch (UnauthorizedAccessException) { return Error(404, "not found", "Windows won't let BingeMote look in that folder."); }
+        catch (Exception) { return Error(404, "not found", "That folder does not exist on the PC."); }
     }
 
     /// <summary>Start VLC with the chosen file and the web interface the app expects.

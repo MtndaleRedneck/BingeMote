@@ -1,3 +1,13 @@
+## v1.5.2
+
+- Pick your Movies folder on the phone with VLC closed: browse the PC's drives and folders from Settings
+- Movies quietly re-saves the folder on the PC if the PC lost it, then tries again
+- Real reasons instead of "BingeMote PC is too old for this app."
+- Fix Back getting stuck on the Movies screen when VLC is closed
+- Left and Right click sink in like every other button
+- Thinner 5-second skip rings, matching the 30-second rings
+- Bigger bottom-row buttons
+
 ## v1.5.1
 
 - Bigger remote buttons: bottom row and the skip buttons

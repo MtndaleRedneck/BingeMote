@@ -64,7 +64,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         }
     }
 
-    fun loadHelper(rel: String, restore: Pair<Int, Int>? = null) {
+    fun loadHelper(rel: String, restore: Pair<Int, Int>? = null, healed: Boolean = false) {
         loading = true
         error = null
         scope.launch {
@@ -77,6 +77,20 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 }
                 show(rows, rel, rel.isEmpty(), restore)
             } catch (e: Exception) {
+                // Self-heal once: the PC may have lost or never received the folder. If the
+                // PC's copy is empty or different, re-save the phone's copy and retry.
+                if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
+                    val fixed = withContext(Dispatchers.IO) {
+                        try {
+                            val onPc = HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+                            if (onPc.isNullOrBlank() || !onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                                HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
+                                true
+                            } else false
+                        } catch (e2: Exception) { false }
+                    }
+                    if (fixed) { loadHelper(rel, restore, healed = true); return@launch }
+                }
                 loading = false
                 error = e.message ?: "Couldn't open that folder on the PC."
             }
@@ -96,7 +110,10 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             } catch (e: Exception) {
                 if (remote.store.helperToken.isNotBlank()) {
                     // VLC is closed - the helper takes over, relative to the movies folder.
+                    // Clear the stale absolute path first: helper paths are relative, and
+                    // keeping the old one traps Back in a 404 loop (atRoot never true).
                     viaHelper = true
+                    path = ""
                     loadHelper("")
                 } else {
                     loading = false

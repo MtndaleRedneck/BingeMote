@@ -412,6 +412,7 @@ internal sealed class HelperWindow : Form
     private bool _manualDownload;
     private readonly Label _pairHeader;
     private readonly TextBox _nameBox;
+    private readonly Panel _nameBoxPanel;
     private readonly Button _pair;
     private readonly Label _codeCaption;
     private readonly Label _code;
@@ -470,14 +471,22 @@ internal sealed class HelperWindow : Form
             try { Process.Start(new ProcessStartInfo((string)e.Link!.LinkData!) { UseShellExecute = true }); } catch { }
         };
         y += 18;
+        // Borderless box inside a thin rounded border panel: BorderStyle.FixedSingle
+        // loses its edges to the rounded region, leaving stray border fragments.
+        _nameBoxPanel = new Panel
+        {
+            Left = margin, Top = y + 3, Width = contentW - 60 - 12, Height = 32,
+            Padding = new Padding(1),
+        };
         _nameBox = new TextBox
         {
-            Left = margin, Top = y + 3, Width = contentW - 60 - 12,
-            BorderStyle = BorderStyle.FixedSingle,
+            Dock = DockStyle.Fill,
+            BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 10),
             PlaceholderText = "Phone name",
         };
-        Round(_nameBox, 4);
+        _nameBoxPanel.Controls.Add(_nameBox);
+        Round(_nameBoxPanel, 4);
         // Textbox text otherwise hugs the left border; give it the same inner air as the buttons.
         SendMessage(_nameBox.Handle, 0xD3 /* EM_SETMARGINS */, (IntPtr)0x3 /* left|right */, (IntPtr)(((16 << 16) | 8)));
         _pair = MakeButton("Pair", margin + contentW - 60, y, 60);
@@ -495,7 +504,7 @@ internal sealed class HelperWindow : Form
         };
         _code = new Label
         {
-            Text = Program.PairCode ?? "------",
+            Text = Program.PairCode ?? "-  -  -  -  -  -",
             Font = new Font("Consolas", 15, FontStyle.Bold),
             ForeColor = Orange,
             AutoSize = true, Left = margin + 98, Top = y,
@@ -505,9 +514,12 @@ internal sealed class HelperWindow : Form
         {
             Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
-            AutoSize = false, Left = margin, Top = y, Width = contentW, Height = 30,
+            AutoSize = false, Left = margin, Top = y, Width = contentW,
         };
-        y += 30 + 24;
+        // Measure, don't guess: larger Windows text wraps this to three lines.
+        _codeNote.Height = TextRenderer.MeasureText(_codeNote.Text, _codeNote.Font,
+            new Size(contentW, 1000), TextFormatFlags.WordBreak).Height + 4;
+        y += _codeNote.Height + 24;
 
         _phonesHeader = Header("Paired phones", margin, y); y += 20 + 12;
         _phoneList = new FlowLayoutPanel
@@ -518,7 +530,7 @@ internal sealed class HelperWindow : Form
             AutoScroll = true,
         };
         y += 3 * 52 + 8;
-        _removeAll = MakeButton("Remove all phones...", margin, y, 150);
+        _removeAll = MakeButton("Remove all phones...", margin, y, FitWidth("Remove all phones...", new Font("Segoe UI", 8.5f), 150));
         _removeAll.Height = 32;
         _removeAll.Click += (_, _) => RemoveAllPhones();
         y += 32 + 24;
@@ -533,7 +545,8 @@ internal sealed class HelperWindow : Form
             AutoSize = true, Left = 14, Top = 15,
             UseMnemonic = false,
         };
-        _feedbackBtn = MakeButton("Send feedback", contentW - 130 - 10, 9, 130);
+        var fbw = FitWidth("Send feedback", new Font("Segoe UI", 8.5f), 130);
+        _feedbackBtn = MakeButton("Send feedback", contentW - fbw - 10, 9, fbw);
         _feedbackBtn.Height = 30;
         _feedbackBtn.Click += (_, _) => { using var dlg = new FeedbackDialog(); dlg.ShowDialog(this); };
         _feedbackCard.Controls.Add(feedbackLabel);
@@ -551,16 +564,23 @@ internal sealed class HelperWindow : Form
         {
             Text = "v" + Program.VersionText,
             Font = new Font("Segoe UI", 9.5f),
-            AutoSize = true, Left = 14 + 68, Top = 16,
+            AutoSize = true,
+            // Right after the label, however wide larger Windows text makes it.
+            Left = 14 + TextRenderer.MeasureText("Updates", new Font("Segoe UI", 10.5f)).Width + 10,
+            Top = 16,
         };
         _updatesResult = new Label
         {
             Text = "",
             Font = new Font("Segoe UI", 9.5f),
-            AutoSize = false, Left = 14 + 68 + 46, Top = 16, Width = contentW - 140 - 10 - 14 - 68 - 46 - 10 - 8, Height = 18,
+            AutoSize = false,
+            Left = _updatesCaption.Left + TextRenderer.MeasureText(_updatesCaption.Text, _updatesCaption.Font).Width + 8,
+            Top = 16, Height = 18,
             AutoEllipsis = true,
         };
-        _checkUpdates = MakeButton("Check for updates", contentW - 140 - 10, 9, 140);
+        var cuw = FitWidth("Check for updates", new Font("Segoe UI", 8.5f), 140);
+        _updatesResult.Width = contentW - cuw - 10 - _updatesResult.Left - 10;
+        _checkUpdates = MakeButton("Check for updates", contentW - cuw - 10, 9, cuw);
         _checkUpdates.Height = 30;
         _checkUpdates.Click += (_, _) => ManualUpdateCheck();
         _updatesCard.Controls.Add(updatesLabel);
@@ -606,7 +626,7 @@ internal sealed class HelperWindow : Form
         Controls.AddRange(new Control[]
         {
             _wifiBorder,
-            _pairHeader, _firstRun, _nameBox, _pair, _codeCaption, _code, _codeNote,
+            _pairHeader, _firstRun, _nameBoxPanel, _pair, _codeCaption, _code, _codeNote,
             _phonesHeader, _phoneList, _removeAll,
             _aboutHeader, _feedbackCard, _updatesCard,
         });
@@ -884,19 +904,21 @@ internal sealed class HelperWindow : Form
         {
             var row = new Panel { Width = rowWidth, Height = 48, Margin = new Padding(0, 0, 0, 4), BackColor = card };
             Round(row, 8);
+            var removeFont = new Font("Segoe UI", 8.5f);
+            var removeW = FitWidth("Remove", removeFont, 64);
             var name = new Label
             {
                 Text = ph.Name,
                 AutoEllipsis = true, AutoSize = false,
-                Left = 14, Top = 13, Width = rowWidth - 14 - 64 - 10 - 10, Height = 22,
+                Left = 14, Top = 13, Width = rowWidth - 14 - removeW - 10 - 10, Height = 22,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 10.5f),
                 ForeColor = text, BackColor = card,
             };
             var remove = new Button
             {
-                Text = "Remove", Width = 64, Height = 30, Left = rowWidth - 64 - 10, Top = 9,
-                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
+                Text = "Remove", Width = removeW, Height = 30, Left = rowWidth - removeW - 10, Top = 9,
+                FlatStyle = FlatStyle.Flat, Font = removeFont,
                 BackColor = btnBg, ForeColor = text,
             };
             remove.FlatAppearance.BorderSize = 0;
@@ -968,6 +990,13 @@ internal sealed class HelperWindow : Form
         else _timer.Stop();
     }
 
+    /// <summary>Width that fits the text at any Windows text size: measured, plus air.</summary>
+    private static int FitWidth(string text, Font font, int min)
+    {
+        var w = TextRenderer.MeasureText(text, font).Width + 28;
+        return Math.Max(min, w);
+    }
+
     private static Button MakeButton(string text, int left, int top, int width) => new ReadableButton
     {
         Text = text,
@@ -1001,6 +1030,7 @@ internal sealed class HelperWindow : Form
         _pairHeader.ForeColor = text;
         _phonesHeader.ForeColor = text;
         _aboutHeader.ForeColor = text;
+        _nameBoxPanel.BackColor = cardBtn;
         _nameBox.BackColor = card;
         _nameBox.ForeColor = text;
         _codeCaption.ForeColor = text;
@@ -1029,6 +1059,7 @@ internal sealed class HelperWindow : Form
         _updatesCard.BackColor = card;
         foreach (Control c in _feedbackCard.Controls) { c.BackColor = c is Button ? cardBtn : card; c.ForeColor = text; }
         foreach (Control c in _updatesCard.Controls) { if (c is Button) continue; c.BackColor = card; c.ForeColor = text; }
+        _updatesCaption.ForeColor = muted;
         _feedbackBtn.FlatAppearance.BorderSize = 0;
         _checkUpdates.FlatAppearance.BorderSize = 0;
         foreach (var b in new[] { _removeAll })
@@ -1111,7 +1142,7 @@ internal sealed class HelperWindow : Form
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        Round(_nameBox, 4);
+        Round(_nameBoxPanel, 4);
         Round(_feedbackCard, 8);
         Round(_updatesCard, 8);
         Round(_wifiBorder, 8);
@@ -1491,6 +1522,7 @@ internal sealed class FeedbackDialog : Form
     private const string BugFormUrl = "https://docs.google.com/forms/d/e/1FAIpQLSeD1ytVTxoA0GgftLr5wSu2kZm1yxRwCHcOV4Pb100Lm6hLcQ/viewform";
 
     private readonly TextBox _message;
+    private DarkScrollStrip _scroll = null!;
     private readonly Label _preview;
     private readonly Button _issue;
     private readonly Button _form;
@@ -1519,8 +1551,21 @@ internal sealed class FeedbackDialog : Form
             Left = 24, Top = 172, Width = 392, Height = 176,
             Font = new Font("Segoe UI", 8.5f), AutoEllipsis = false,
         };
-        _issue = new HelperWindow.ReadableButton { Text = "Open GitHub issue", Width = 130, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
-        _form = new HelperWindow.ReadableButton { Text = "Open private form", Width = 130, Height = 32, Left = 440 - 24 - 130, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        // Measured, never fixed: at larger Windows text a fixed 130px puts the words on the borders.
+        var issueW = Math.Max(130, TextRenderer.MeasureText("Open GitHub issue", Font).Width + 32);
+        var formW = Math.Max(130, TextRenderer.MeasureText("Open private form", Font).Width + 32);
+        _issue = new HelperWindow.ReadableButton { Text = "Open GitHub issue", Width = issueW, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _form = new HelperWindow.ReadableButton { Text = "Open private form", Width = formW, Height = 32, Left = 440 - 24 - formW, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+
+        // The native scrollbar stays (all scrolling behavior intact) but is covered by a
+        // dark strip that follows the theme: WinForms scrollbars can't be themed.
+        _scroll = new DarkScrollStrip(_message);
+        Controls.Add(_scroll);
+        _scroll.BringToFront();
+        var scrollTimer = new System.Windows.Forms.Timer { Interval = 60 };
+        scrollTimer.Tick += (_, _) => _scroll.SyncThumb();
+        scrollTimer.Start();
+        Disposed += (_, _) => { scrollTimer.Stop(); scrollTimer.Dispose(); };
 
         _message.TextChanged += (_, _) => RefreshPreview();
         _issue.Click += (_, _) => OpenUrl(IssueUrl());
@@ -1549,6 +1594,11 @@ internal sealed class FeedbackDialog : Form
         foreach (Control c in Controls) { c.ForeColor = text; }
         _message.BackColor = card;
         _message.ForeColor = text;
+        _scroll.Track = dark ? Color.FromArgb(32, 34, 44) : Color.FromArgb(224, 224, 228);
+        _scroll.Thumb = dark ? Color.FromArgb(74, 80, 96) : Color.FromArgb(180, 180, 190);
+        _scroll.Arrows = muted;
+        _scroll.Card = card;
+        _scroll.Invalidate();
         _preview.ForeColor = text;
         _issue.BackColor = cardBtn;
         _issue.ForeColor = text;
@@ -1603,6 +1653,111 @@ internal sealed class FeedbackDialog : Form
     {
         s = s.Trim();
         return s.Length <= max ? s : s.Substring(0, max);
+    }
+
+    /// <summary>A slim dark strip drawn over the message box's native scrollbar. The native
+    /// bar keeps working underneath (wheel, keys, caret); this paints the theme look on top
+    /// and forwards drags and page clicks to the textbox.</summary>
+    private sealed class DarkScrollStrip : Control
+    {
+        internal Color Track, Thumb, Arrows, Card;
+        private readonly TextBox _box;
+        private int _first, _lines, _visible;
+        private bool _dragging;
+        private int _dragY, _dragFirst;
+
+        internal DarkScrollStrip(TextBox box)
+        {
+            _box = box;
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+            var w = SystemInformation.VerticalScrollBarWidth;
+            SetBounds(box.Left + box.Width - w - 1, box.Top + 1, w, box.Height - 2);
+            TabStop = false;
+            SyncThumb();
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr h, int m, IntPtr w, IntPtr l);
+
+        internal void SyncThumb()
+        {
+            if (_box.IsDisposed || !_box.IsHandleCreated) return;
+            var first = (int)SendMessage(_box.Handle, 0x00CE /* EM_GETFIRSTVISIBLELINE */, IntPtr.Zero, IntPtr.Zero);
+            var lines = (int)SendMessage(_box.Handle, 0x00BA /* EM_GETLINECOUNT */, IntPtr.Zero, IntPtr.Zero);
+            var lh = Math.Max(1, TextRenderer.MeasureText("Ag", _box.Font).Height);
+            var visible = Math.Max(1, (_box.ClientSize.Height - 8) / lh);
+            if (first != _first || lines != _lines || visible != _visible)
+            {
+                _first = first; _lines = lines; _visible = visible;
+                Invalidate();
+            }
+        }
+
+        private bool Needed => _lines > _visible;
+        private int TrackH => Height - 24;
+        private int ThumbH => Math.Max(18, TrackH * _visible / Math.Max(1, _lines));
+        private int MaxFirst => Math.Max(1, _lines - _visible);
+        private int ThumbY => 12 + (TrackH - ThumbH) * Math.Min(_first, MaxFirst) / MaxFirst;
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Needed ? Track : Card);
+            if (!Needed) return;
+            // arrows
+            using var ab = new SolidBrush(Arrows);
+            var cx = Width / 2f;
+            e.Graphics.FillPolygon(ab, new[] { new PointF(cx, 3), new PointF(cx - 3.5f, 9), new PointF(cx + 3.5f, 9) });
+            e.Graphics.FillPolygon(ab, new[] { new PointF(cx, Height - 3), new PointF(cx - 3.5f, Height - 9), new PointF(cx + 3.5f, Height - 9) });
+            // thumb
+            using var tb = new SolidBrush(Thumb);
+            e.Graphics.FillRectangle(tb, 2, ThumbY, Width - 4, ThumbH);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (!Needed || e.Button != MouseButtons.Left) return;
+            if (e.Y >= ThumbY && e.Y <= ThumbY + ThumbH)
+            {
+                _dragging = true;
+                _dragY = e.Y;
+                _dragFirst = _first;
+                Capture = true;
+            }
+            else
+            {
+                SendMessage(_box.Handle, 0x00B5 /* EM_SCROLL */,
+                    (IntPtr)(e.Y < ThumbY ? 2 /* SB_PAGEUP */ : 3 /* SB_PAGEDOWN */), IntPtr.Zero);
+                SyncThumb();
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (!_dragging) return;
+            var target = _dragFirst + (e.Y - _dragY) * MaxFirst / Math.Max(1, TrackH - ThumbH);
+            var delta = Math.Max(0, Math.Min(MaxFirst, target)) - _first;
+            if (delta != 0)
+            {
+                SendMessage(_box.Handle, 0x00B6 /* EM_LINESCROLL */, IntPtr.Zero, (IntPtr)delta);
+                SyncThumb();
+            }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            _dragging = false;
+            Capture = false;
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            SendMessage(_box.Handle, 0x00B6 /* EM_LINESCROLL */, IntPtr.Zero, (IntPtr)(-3 * Math.Sign(e.Delta)));
+            SyncThumb();
+        }
     }
 
     private string IssueUrl()
