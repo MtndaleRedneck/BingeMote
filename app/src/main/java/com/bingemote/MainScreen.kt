@@ -187,7 +187,10 @@ private fun SeekBlock(remote: RemoteState) {
     }
 
     Column(Modifier.padding(horizontal = 16.dp)) {
-        Row(Modifier.fillMaxWidth()) {
+        // Drawn 8dp into the gap above: a text line box carries invisible font
+        // padding, which made the visible gap to the 30s row look bigger than
+        // the others (Ezzy's equal-gaps ask).
+        Row(Modifier.fillMaxWidth().offset(y = (-8).dp)) {
             Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -275,7 +278,8 @@ private fun SeekBlock(remote: RemoteState) {
             }
         }
         Spacer(Modifier.height(2.dp))
-        Row(Modifier.fillMaxWidth()) {
+        // Same trick below: 8dp into the gap under the hint line.
+        Row(Modifier.fillMaxWidth().offset(y = 8.dp)) {
             Text(
                 if (unlocked) "Unlocked. Locks again in a few seconds" else "Hold the bar to unlock seeking",
                 color = if (unlocked) Orange else Muted, fontSize = 12.sp,
