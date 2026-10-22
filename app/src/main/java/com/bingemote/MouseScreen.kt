@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -448,9 +449,12 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
         // default would cap the dialog near 320dp and squeeze the key row off).
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // 66% of the screen width (Ezzy's pick over 58%): roomier, not wide.
+        // At large text the key row needs real room: an S22 Ultra is 384dp wide and
+        // 66% of it clipped "Space", so a 290dp floor kicks in above 1.2x font scale.
+        val wideText = LocalDensity.current.fontScale >= 1.2f
         androidx.compose.material3.Surface(
-            // 66% of the screen width (Ezzy's pick over 58%): roomier, not wide.
-            modifier = Modifier.fillMaxWidth(0.66f),
+            modifier = Modifier.widthIn(min = if (wideText) 290.dp else 0.dp).fillMaxWidth(0.66f),
             shape = RoundedCornerShape(28.dp),
             color = Card2,
         ) {
