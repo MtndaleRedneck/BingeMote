@@ -73,6 +73,14 @@ try {
     Assert ($r.code -eq 403) "pair with wrong code is 403"
 
     $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+    Write-Host "right-code pair -> $($r.code): $($r.body)"
+    if ($r.code -ne 200) {
+        Get-Process | Where-Object { $_.ProcessName -like '*BingeMote*' } | ForEach-Object { Write-Host "process: $($_.ProcessName) pid=$($_.Id) path=$($_.Path)" }
+        $logf = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log'
+        if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf }
+        $cfgf = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\config.json'
+        if (Test-Path $cfgf) { Write-Host "== config.json =="; Get-Content $cfgf -Raw }
+    }
     Assert ($r.code -eq 200) "pair with right code is 200"
     $paired = $r.body | ConvertFrom-Json
     $token = $paired.token
