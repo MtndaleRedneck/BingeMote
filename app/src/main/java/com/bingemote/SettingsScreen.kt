@@ -47,6 +47,7 @@ fun SettingsScreen(
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
+    var seekTop by remember { mutableStateOf(store.seekOnTop) }
     var reconnect by remember { mutableStateOf(store.autoReconnect) }
     var pickingMovies by remember { mutableStateOf(false) }
     if (pickingMovies) {
@@ -128,6 +129,13 @@ fun SettingsScreen(
                 options = listOf(0 to "Skip rings only", 1 to "All buttons"),
                 selected = flash,
             ) { flash = it; store.buttonFlash = it }
+            Spacer(Modifier.height(14.dp))
+            Text("Seek bar position", color = TextC, fontSize = 14.sp)
+            Spacer(Modifier.height(10.dp))
+            ChoiceRow(
+                options = listOf(0 to "Bottom", 1 to "Top"),
+                selected = if (seekTop) 1 else 0,
+            ) { seekTop = it == 1; store.seekOnTop = seekTop }
             Spacer(Modifier.height(14.dp))
             ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
         }

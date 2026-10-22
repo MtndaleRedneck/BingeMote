@@ -46,6 +46,12 @@ for scale in 1.0 1.3; do
   done
 done
 adb shell settings put system font_scale 1.0
+# Seek-on-top variant (Settings toggle), for review
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > screenshots/main-seektop.png
 adb shell wm size reset
 adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > screenshots/runtime-errors.txt
