@@ -464,7 +464,7 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                         text = new
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Type here - it types on the PC", color = Muted) },
+                    placeholder = { Text("Type here", color = Muted) },
                 )
                 Spacer(Modifier.height(10.dp))
                 // One row of four, Ezzy's approved render: plain clickable Boxes, so no
