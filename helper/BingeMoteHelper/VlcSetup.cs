@@ -22,11 +22,33 @@ internal static class VlcSetup
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "vlcrc");
         var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : new List<string>();
-        Upsert(lines, "extraintf", "http");
+        // Merge, don't overwrite: another interface may already sit in extraintf.
+        Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
         Upsert(lines, "http-password", password);
         File.WriteAllLines(path, lines);
         Program.Log("VLC web remote written into vlcrc from the phone's Finish step.");
         return JsonSerializer.Serialize(new { ok = true });
+    }
+
+    private static string? FindValue(List<string> lines, string key)
+    {
+        var prefix = key + "=";
+        foreach (var line in lines)
+        {
+            var raw = line.TrimStart();
+            if (raw.StartsWith('#')) continue; // only a live setting counts
+            if (raw.StartsWith(prefix, StringComparison.Ordinal)) return raw[prefix.Length..].Trim();
+        }
+        return null;
+    }
+
+    private static string MergeValue(string? existing, string wanted)
+    {
+        if (string.IsNullOrEmpty(existing)) return wanted;
+        var parts = existing.Split(',').Select(p => p.Trim()).ToList();
+        if (parts.Contains(wanted)) return existing;
+        parts.Add(wanted);
+        return string.Join(",", parts);
     }
 
     /// <summary>Replace the (usually commented-out) vlcrc line for a key, or append it.</summary>
