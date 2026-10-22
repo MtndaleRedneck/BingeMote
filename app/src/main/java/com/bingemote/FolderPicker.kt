@@ -35,6 +35,9 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // Helper mode lists folders from the PC app (no VLC needed); VLC mode keeps
+    // VLC's own "Up one folder" rows and paths exactly as they come back.
+    var viaHelper by remember { mutableStateOf(false) }
     // Where each folder was scrolled to before we walked into a child, so going back
     // up lands you where you were instead of back at the top.
     val scrollStack = remember { mutableStateListOf<Triple<String, Int, Int>>() }
@@ -46,7 +49,11 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
         val d = dir.trimEnd('\\', '/')
         // A drive root ("C:") goes up to the drives list; "" is already there.
         if (d.length <= 3) return ""
-        return d.substringBeforeLast('\\', "")
+        val i = d.lastIndexOfAny(charArrayOf('\\', '/'))
+        if (i < 0) return ""
+        val p = d.substring(0, i)
+        // Keep the root slash: a bare "C:" is drive-relative on Windows, not the root.
+        return if (p.length == 2 && p[1] == ':') p + d[i] else p
     }
 
     fun load(dir: String, restore: Pair<Int, Int>? = null) {
@@ -60,6 +67,7 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                         HelperClient.browse(remote.store.host, remote.store.helperPort, remote.store.helperToken, dir)
                     }
                     dirs = names.map { BrowseItem(name = it, isDir = true, path = childPath(dir, it), uri = "", sizeBytes = 0L) }
+                    viaHelper = true
                     path = dir
                     loading = false
                     if (restore != null) listState.scrollToItem(restore.first, restore.second)
@@ -71,7 +79,8 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
-                dirs = raw.filter { it.isDir && it.name != ".." }
+                dirs = raw.filter { it.isDir }
+                viaHelper = false
                 path = dir
                 loading = false
                 if (restore != null) listState.scrollToItem(restore.first, restore.second)
@@ -113,8 +122,9 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                 error != null -> item { Text(error!!, color = ErrorRed, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 dirs.isEmpty() && path.isEmpty() -> item { Text("No folders here.", color = Muted, modifier = Modifier.padding(8.dp)) }
                 else -> {
-                    val rows = if (path.isEmpty()) dirs
-                        else listOf(BrowseItem(name = "..", isDir = true, path = parentPath(path), uri = "", sizeBytes = 0L)) + dirs
+                    val rows = if (viaHelper && path.isNotEmpty())
+                        listOf(BrowseItem(name = "..", isDir = true, path = parentPath(path), uri = "", sizeBytes = 0L)) + dirs
+                        else dirs
                     items(rows.size, key = { it }) { i ->
                         val item = rows[i]
                         PressTile(
