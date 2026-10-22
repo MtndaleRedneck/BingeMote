@@ -59,6 +59,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
 
+    /** Seek bar position on the home screen: false = below the skip rows, true = on top. */
+    var seekOnTop: Boolean
+        get() = prefs.getBoolean("seekOnTop", false)
+        set(v) = prefs.edit().putBoolean("seekOnTop", v).apply()
+
     /** Press flash on the home screen: 0 = skip rings only, 1 = every button. */
     var buttonFlash: Int
         get() = prefs.getInt("buttonFlash", 1).coerceIn(0, 1)

@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
+        // Screenshot rig: force the seek bar on top for the seektop capture.
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("seektop", false)) store.seekOnTop = true
         remote = RemoteState(this, store, lifecycleScope)
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
