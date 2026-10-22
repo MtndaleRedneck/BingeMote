@@ -25,29 +25,19 @@ internal static class Program
     internal static readonly string DataDir = MigrateDataDir();
 
     /// <summary>The data folder used to be %LocalAppData%\BingeMoteHelper; it is now ...\BingeMote.
-    /// Move the old folder wholesale on first launch so pairing, the movies folder and the log survive.
-    /// A locked file keeps the old folder for this run (retried next launch); it is never deleted.</summary>
+    /// One move on first launch carries pairing, the movies folder and the log over.</summary>
     private static string MigrateDataDir()
     {
         var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var dir = Path.Combine(root, "BingeMote");
         var old = Path.Combine(root, "BingeMoteHelper");
-        try
-        {
-            if (!Directory.Exists(old)) return dir;
-            if (!Directory.Exists(dir)) { Directory.Move(old, dir); return dir; }
-            // Both exist (an earlier run moved partway): carry over what is missing, never overwrite.
-            foreach (var f in Directory.GetFiles(old))
-            {
-                var dest = Path.Combine(dir, Path.GetFileName(f));
-                if (!File.Exists(dest)) File.Move(f, dest);
-            }
-        }
+        try { if (Directory.Exists(old) && !Directory.Exists(dir)) Directory.Move(old, dir); }
         catch { return Directory.Exists(dir) ? dir : old; }
         return dir;
     }
     private static readonly string ConfigPath = Path.Combine(DataDir, "config.json");
     private static readonly string FirewallMarker = Path.Combine(DataDir, "firewall.ok");
+    private static readonly string QuitMarkerPath = Path.Combine(DataDir, "quit-on-purpose");
 
     private const string ShowEventName = @"Local\BingeMoteHelper.ShowWindow";
     private const string QuitEventName = @"Local\BingeMoteHelper.Quit";
@@ -113,6 +103,19 @@ internal static class Program
         }
 #endif
 
+        // The watchdog relaunches us with --ensure-running every few minutes: stay silent when
+        // the app already runs or when he quit it on purpose. Any real launch (double-click,
+        // sign-in autostart, installer, update, crash restart) cancels a purposeful quit.
+        var ensureRunning = args.Contains("--ensure-running");
+        if (ensureRunning)
+        {
+            if (File.Exists(QuitMarkerPath)) return 0;
+        }
+        else
+        {
+            try { File.Delete(QuitMarkerPath); } catch { }
+        }
+
         // One copy at a time. What a second launch does depends on what is already running:
         // the same exe just pops the running copy's window up; a different exe (an update)
         // asks the old copy to quit and takes over; a copy too old to have the events
@@ -120,6 +123,7 @@ internal static class Program
         using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var onlyCopy);
         if (!onlyCopy)
         {
+            if (ensureRunning) return 0; // watchdog: another copy is up, nothing to do, no window
             var runningPath = RunningCopyPath();
             var selfPath = Environment.ProcessPath;
             var sameExe = runningPath != null && selfPath != null &&
@@ -187,6 +191,8 @@ internal static class Program
         }
         Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
+        try { RegisterApplicationRestart("/restarted", 0); } catch { } // crash or hang: Windows relaunches us
+        RegisterWatchdog();
 
         if (!File.Exists(FirewallMarker))
         {
@@ -373,6 +379,9 @@ internal static class Program
     [DllImport("shell32.dll")]
     private static extern void SHChangeNotify(int eventId, int flags, IntPtr item1, IntPtr item2);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int RegisterApplicationRestart(string? pwzCommandLine, int dwFlags);
+
     internal static string VersionText
     {
         get
@@ -409,6 +418,32 @@ internal static class Program
         }
         catch { /* autostart is a convenience, not a requirement */ }
     }
+
+    /// <summary>The tray Quit: remember it was on purpose so the watchdog does not revive the
+    /// app until he starts it again or signs in.</summary>
+    internal static void QuitOnPurpose()
+    {
+        try { File.WriteAllText(QuitMarkerPath, ""); } catch { }
+        Log("Quit from the tray menu (staying off until the next sign-in or manual start).");
+        Application.Exit();
+    }
+
+    /// <summary>A per-user scheduled task relaunches the app (silent --ensure-running) every
+    /// 5 minutes when it is not running. Runs as him, so no admin prompt; uninstall deletes it.</summary>
+    private static void RegisterWatchdog()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (exe == null) return;
+            var psi = new System.Diagnostics.ProcessStartInfo("schtasks",
+                "/Create /F /TN \"BingeMote Watchdog\" /SC MINUTE /MO 5 /TR \"\\\"" + exe + "\\\" --ensure-running\"")
+            { CreateNoWindow = true, UseShellExecute = false };
+            using var p = System.Diagnostics.Process.Start(psi);
+            p?.WaitForExit(10000);
+        }
+        catch { /* the watchdog is a safety net, not a requirement */ }
+    }
 }
 
 
@@ -428,13 +463,16 @@ internal sealed class HelperWindow : Form
     internal static readonly Color LightCard = Color.White;
     internal static readonly Color LightText = Color.FromArgb(26, 26, 26);
     internal static readonly Color LightMuted = Color.FromArgb(110, 110, 110);
+    // The subtle 1px edge on cards and the name box (Win11 settings-card look).
+    internal static readonly Color DarkBorder = Color.FromArgb(56, 56, 64);
+    internal static readonly Color LightBorder = Color.FromArgb(222, 222, 226);
 
     private bool _allowShow;
     private bool _updateAnnounced;
     private bool _manualDownload;
     private readonly Label _pairHeader;
     private readonly TextBox _nameBox;
-    private readonly Panel _nameBoxPanel;
+    private readonly RoundedPanel _nameBoxPanel;
     private readonly Button _pair;
     private readonly Label _codeCaption;
     private readonly Label _code;
@@ -443,9 +481,9 @@ internal sealed class HelperWindow : Form
     private readonly FlowLayoutPanel _phoneList;
     private readonly Button _removeAll;
     private readonly Label _aboutHeader;
-    private readonly Panel _feedbackCard;
+    private readonly RoundedPanel _feedbackCard;
     private readonly Button _feedbackBtn;
-    private readonly Panel _updatesCard;
+    private readonly RoundedPanel _updatesCard;
     private readonly Label _updatesCaption;
     private readonly Label _updatesResult;
     private readonly Button _checkUpdates;
@@ -453,7 +491,7 @@ internal sealed class HelperWindow : Form
     private readonly System.Windows.Forms.Timer _timer;
     private readonly ContextMenuStrip _menu;
     private readonly LinkLabel _firstRun;
-    private readonly Panel _wifiBorder;
+    private readonly RoundedPanel _wifiBorder;
     private readonly Label _wifiNote;
     private readonly Button _wifiBtn;
     private NetProfile? _wifiProfile;
@@ -463,6 +501,15 @@ internal sealed class HelperWindow : Form
     private readonly Dictionary<Control, int> _baseTops = new();
     private int _baseHeight;
     private bool _downloading;
+    // Layout blocks that come and go: the first-run line (measured, it may wrap) and the
+    // pairing code block (only while a code exists, i.e. after Pair is tapped).
+    private readonly int _firstRunH;
+    private readonly int _codeBlockH;
+    private const int ListBaseH = 3 * 52; // the base layout reserves three rows
+    private int _listH = ListBaseH;
+    private bool _removeAllShown = true;
+    private bool _firstRunShown;
+    private bool _codeShown;
 
     public HelperWindow(bool windowShot = false)
     {
@@ -485,6 +532,8 @@ internal sealed class HelperWindow : Form
             Text = "New here? Get the BingeMote app on your phone, then give the phone a name and tap Pair.",
             Font = new Font("Segoe UI", 8f),
             AutoSize = true, Left = margin, Top = y,
+            // Wrap inside the content width instead of running past the right margin.
+            MaximumSize = new Size(contentW, 0),
             LinkColor = Orange, ActiveLinkColor = Orange, VisitedLinkColor = Orange,
         };
         _firstRun.Links.Add(18, 13, "https://mtndaleredneck.github.io/BingeMote/");
@@ -492,25 +541,32 @@ internal sealed class HelperWindow : Form
         {
             try { Process.Start(new ProcessStartInfo((string)e.Link!.LinkData!) { UseShellExecute = true }); } catch { }
         };
-        y += 18;
-        // Borderless box inside a thin rounded border panel: BorderStyle.FixedSingle
-        // loses its edges to the rounded region, leaving stray border fragments.
-        _nameBoxPanel = new Panel
+        // Measured, not fixed: larger Windows text wraps the line to two rows.
+        _firstRunH = TextRenderer.MeasureText(_firstRun.Text, _firstRun.Font,
+            new Size(contentW, 1000), TextFormatFlags.WordBreak).Height + 6;
+        y += _firstRunH;
+        // One anti-aliased rounded frame, exactly the Pair button's top and height, with a
+        // borderless TextBox centered inside it (no docking: a single-line TextBox keeps
+        // its own height, which left a grey slab under it).
+        _nameBoxPanel = new RoundedPanel
         {
-            Left = margin, Top = y + 3, Width = contentW - 60 - 12, Height = 32,
-            Padding = new Padding(1),
+            Left = margin, Top = y, Width = contentW - 60 - 12, Height = 32,
+            Radius = 4, Cursor = Cursors.IBeam,
         };
         _nameBox = new TextBox
         {
-            Dock = DockStyle.Fill,
             BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 10),
             PlaceholderText = "Phone name",
         };
         _nameBoxPanel.Controls.Add(_nameBox);
-        Round(_nameBoxPanel, 4);
-        // Textbox text otherwise hugs the left border; give it the same inner air as the buttons.
-        SendMessage(_nameBox.Handle, 0xD3 /* EM_SETMARGINS */, (IntPtr)0x3 /* left|right */, (IntPtr)(((16 << 16) | 8)));
+        _nameBoxPanel.Layout += (_, _) =>
+        {
+            const int padX = 10;
+            _nameBox.SetBounds(padX, (_nameBoxPanel.ClientSize.Height - _nameBox.Height) / 2,
+                Math.Max(10, _nameBoxPanel.ClientSize.Width - padX * 2), _nameBox.Height);
+        };
+        _nameBoxPanel.Click += (_, _) => _nameBox.Focus();
         _pair = MakeButton("Pair", margin + contentW - 60, y, 60);
         _pair.Height = 32;
         _pair.Enabled = false;
@@ -523,13 +579,15 @@ internal sealed class HelperWindow : Form
             Text = "Pairing code:",
             Font = new Font("Segoe UI", 9),
             AutoSize = true, Left = margin, Top = y + 8,
+            Visible = false,
         };
         _code = new Label
         {
-            Text = Program.PairCode ?? "-  -  -  -  -  -",
+            Text = Program.PairCode ?? "------",
             Font = new Font("Consolas", 15, FontStyle.Bold),
             ForeColor = Orange,
             AutoSize = true, Left = margin + 98, Top = y,
+            Visible = false,
         };
         y += 28 + 6;
         _codeNote = new Label
@@ -537,11 +595,15 @@ internal sealed class HelperWindow : Form
             Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.",
             Font = new Font("Segoe UI", 8),
             AutoSize = false, Left = margin, Top = y, Width = contentW,
+            Visible = false,
         };
         // Measure, don't guess: larger Windows text wraps this to three lines.
         _codeNote.Height = TextRenderer.MeasureText(_codeNote.Text, _codeNote.Font,
             new Size(contentW, 1000), TextFormatFlags.WordBreak).Height + 4;
         y += _codeNote.Height + 24;
+        // The code block (caption, code, note) shows only while a code exists; without it
+        // "Paired phones" sits 24px under the name row, like every other section gap.
+        _codeBlockH = 12 + 28 + 6 + _codeNote.Height;
 
         _phonesHeader = Header("Paired phones", margin, y); y += 20 + 12;
         _phoneList = new FlowLayoutPanel
@@ -558,29 +620,28 @@ internal sealed class HelperWindow : Form
         y += 32 + 24;
 
         _aboutHeader = Header("About", margin, y); y += 20 + 12;
-        _feedbackCard = new Panel { Left = margin, Top = y, Width = contentW, Height = 48 };
-        Round(_feedbackCard, 8);
+        _feedbackCard = new RoundedPanel { Left = margin, Top = y, Width = contentW, Height = 48, Radius = 8 };
         var feedbackLabel = new Label
         {
             Text = "Feedback & bugs",
             Font = new Font("Segoe UI", 10.5f),
-            AutoSize = true, Left = 14, Top = 15,
+            AutoSize = true, Left = 14,
             UseMnemonic = false,
         };
         var fbw = FitWidth("Send feedback", new Font("Segoe UI", 8.5f), 130);
         _feedbackBtn = MakeButton("Send feedback", contentW - fbw - 10, 9, fbw);
         _feedbackBtn.Height = 30;
+        CenterChildrenVertically(_feedbackCard);
         _feedbackBtn.Click += (_, _) => { using var dlg = new FeedbackDialog(); dlg.ShowDialog(this); };
         _feedbackCard.Controls.Add(feedbackLabel);
         _feedbackCard.Controls.Add(_feedbackBtn);
         y += 48 + 4;
-        _updatesCard = new Panel { Left = margin, Top = y, Width = contentW, Height = 48 };
-        Round(_updatesCard, 8);
+        _updatesCard = new RoundedPanel { Left = margin, Top = y, Width = contentW, Height = 48, Radius = 8 };
         var updatesLabel = new Label
         {
             Text = "Updates",
             Font = new Font("Segoe UI", 10.5f),
-            AutoSize = true, Left = 14, Top = 14,
+            AutoSize = true, Left = 14,
         };
         _updatesCaption = new Label
         {
@@ -589,7 +650,6 @@ internal sealed class HelperWindow : Form
             AutoSize = true,
             // Right after the label, however wide larger Windows text makes it.
             Left = 14 + TextRenderer.MeasureText("Updates", new Font("Segoe UI", 10.5f)).Width + 10,
-            Top = 16,
         };
         _updatesResult = new Label
         {
@@ -597,14 +657,15 @@ internal sealed class HelperWindow : Form
             Font = new Font("Segoe UI", 9.5f),
             AutoSize = false,
             Left = _updatesCaption.Left + TextRenderer.MeasureText(_updatesCaption.Text, _updatesCaption.Font).Width + 8,
-            Top = 16, Height = 18,
             AutoEllipsis = true,
         };
+        _updatesResult.Height = _updatesResult.PreferredHeight;
         var cuw = FitWidth("Check for updates", new Font("Segoe UI", 8.5f), 140);
         _updatesResult.Width = contentW - cuw - 10 - _updatesResult.Left - 10;
         _checkUpdates = MakeButton("Check for updates", contentW - cuw - 10, 9, cuw);
         _checkUpdates.Height = 30;
         _checkUpdates.Click += (_, _) => ManualUpdateCheck();
+        CenterChildrenVertically(_updatesCard);
         _updatesCard.Controls.Add(updatesLabel);
         _updatesCard.Controls.Add(_updatesCaption);
         _updatesCard.Controls.Add(_updatesResult);
@@ -615,19 +676,20 @@ internal sealed class HelperWindow : Form
 
         // The public-Wi-Fi strip: sits at the top of the window while the network is
         // public, so the fix is never buried. The 30s poll keeps it in sync.
-        _wifiBorder = new Panel
+        // One anti-aliased card with a 1px orange edge (it used to be an orange panel with a
+        // card clipped inside it, both cut by pixel regions).
+        _wifiBorder = new RoundedPanel
         {
             Left = margin, Top = margin, Width = contentW, Height = 62,
-            BackColor = Orange, Visible = false, Padding = new Padding(1),
+            Radius = 8, BorderColor = Orange, Visible = false,
         };
-        var wifiCard = new Panel { Dock = DockStyle.Fill };
         var wifiText = new Label
         {
             Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone.",
             Font = new Font("Segoe UI", 9f),
-            Left = 12, Top = 8, Width = contentW - 12 - 160 - 16, Height = 62 - 16,
+            Left = 13, Top = 9, Width = contentW - 12 - 160 - 16, Height = 62 - 16,
         };
-        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10, 7, 160);
+        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 7 + 1, 160);
         _wifiBtn.Height = 28;
         StylePrimary(_wifiBtn);
         _wifiBtn.Click += (_, _) => FixHomeWifi();
@@ -636,14 +698,11 @@ internal sealed class HelperWindow : Form
             Text = "(Windows will ask for permission)",
             Font = new Font("Segoe UI", 7.5f),
             Width = 160, TextAlign = ContentAlignment.TopCenter,
-            Left = contentW - 160 - 10, Top = 40, Height = 16,
+            Left = contentW - 160 - 10 + 1, Top = 40 + 1, Height = 16,
         };
-        wifiCard.Controls.Add(wifiText);
-        wifiCard.Controls.Add(_wifiBtn);
-        wifiCard.Controls.Add(_wifiNote);
-        _wifiBorder.Controls.Add(wifiCard);
-        Round(wifiCard, 7);
-        Round(_wifiBorder, 8);
+        _wifiBorder.Controls.Add(wifiText);
+        _wifiBorder.Controls.Add(_wifiBtn);
+        _wifiBorder.Controls.Add(_wifiNote);
 
         Controls.AddRange(new Control[]
         {
@@ -657,7 +716,7 @@ internal sealed class HelperWindow : Form
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Show BingeMote", null, (_, _) => ShowFromTray());
-        _menu.Items.Add("Quit BingeMote", null, (_, _) => { Program.Log("Quit from the tray menu."); Application.Exit(); });
+        _menu.Items.Add("Quit BingeMote", null, (_, _) => Program.QuitOnPurpose());
         _tray = new NotifyIcon
         {
             Text = "BingeMote",
@@ -708,6 +767,7 @@ internal sealed class HelperWindow : Form
         };
         ApplyTheme();
         RefreshPhones();
+        TickStatus(); // sync the code block (hidden until there is a code)
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
@@ -730,24 +790,37 @@ internal sealed class HelperWindow : Form
     }
 
     private const int StripH = 74;
-    private const int FirstRunH = 18;
 
-    /// <summary>Base layout + the two optional blocks (Wi-Fi strip on top, first-run line
-    /// under the pair header): everything below a visible block shifts down.</summary>
+    /// <summary>Base layout + the optional blocks (Wi-Fi strip on top, first-run line
+    /// under the pair header, pairing code under the name row): everything below a
+    /// hidden block moves up. Uses our own flags, not Control.Visible, which reads false
+    /// for every child while the window itself is hidden.</summary>
     private void ApplyLayout()
     {
         if (_baseHeight == 0 || _firstRun == null || _wifiBorder == null) return;
         var stripDy = _wifiStripVisible ? StripH : 0;
-        var firstRunDy = _firstRun.Visible ? 0 : -FirstRunH;
+        var firstRunDy = _firstRunShown ? 0 : -_firstRunH;
+        var codeDy = _codeShown ? 0 : -_codeBlockH;
+        // The phone list is as tall as its rows (one line when empty, three rows at most,
+        // then it scrolls), and with no phones "Remove all phones..." leaves no gap behind.
+        var listDy = _listH - ListBaseH;
+        var removeDy = _removeAllShown ? 0 : -(8 + _removeAll.Height);
         var frTop = _baseTops[_firstRun];
+        var codeEnd = _baseTops[_codeNote];
+        var listTop = _baseTops[_phoneList];
+        var removeTop = _baseTops[_removeAll];
         foreach (Control c in Controls)
         {
             if (c == _wifiBorder) { c.Top = _baseTops[c]; continue; }
             var dy = stripDy;
             if (_baseTops[c] > frTop) dy += firstRunDy;
+            if (_baseTops[c] > codeEnd) dy += codeDy;
+            if (_baseTops[c] > listTop) dy += listDy;
+            if (_baseTops[c] > removeTop) dy += removeDy;
             c.Top = _baseTops[c] + dy;
         }
-        ClientSize = new Size(490, _baseHeight + stripDy + firstRunDy);
+        _phoneList.Height = _listH;
+        ClientSize = new Size(490, _baseHeight + stripDy + firstRunDy + codeDy + listDy + removeDy);
     }
 
     private void SetWifiStripVisible(bool show)
@@ -869,7 +942,7 @@ internal sealed class HelperWindow : Form
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("DeviceDpi=" + DeviceDpi);
             foreach (var kv in _baseTops) sb.AppendLine("base " + kv.Key.Name + "=" + kv.Value);
-            sb.AppendLine("AutoScaleMode=" + AutoScaleMode + " AutoScaleDimensions=" + CurrentAutoScaleDimensions);
+            sb.AppendLine("AutoScaleMode=" + AutoScaleMode + " AutoScaleDimensions=" + CurrentAutoScaleDimensions + " (saved " + AutoScaleDimensions + ")");
             foreach (var (n, c) in new (string, Control)[] {
                 ("firstRun", _firstRun), ("nameBox", _nameBox), ("pair", _pair),
                 ("codeCaption", _codeCaption), ("wifiBorder", _wifiBorder) })
@@ -910,6 +983,14 @@ internal sealed class HelperWindow : Form
             Program.PendingPhoneName = null; // an expired code keeps no name
         }
         _code.Text = Program.PairCode ?? "------";
+        // The code, its caption and its note show only while there is a code to enter.
+        var show = Program.PairCode != null;
+        if (show != _codeShown)
+        {
+            _codeShown = show;
+            _codeCaption.Visible = _code.Visible = _codeNote.Visible = show;
+            ApplyLayout();
+        }
     }
 
     /// <summary>Rebuild the paired-phones list from the current config. Each phone is one
@@ -920,39 +1001,63 @@ internal sealed class HelperWindow : Form
         var card = dark ? DarkCard : LightCard;
         var btnBg = dark ? DarkCard2 : LightBg;
         var text = dark ? DarkText : LightText;
+        var muted = dark ? DarkMuted : LightMuted;
+        var border = dark ? DarkBorder : LightBorder;
         _phoneList.Controls.Clear();
         var rowWidth = Program.PhonesCount > 3 ? 442 - 17 : 442; // leave room for the scroll bar
+        if (Program.PhonesCount == 0)
+        {
+            var empty = new Label
+            {
+                Text = "No phones paired yet.",
+                Font = new Font("Segoe UI", 9f),
+                AutoSize = true, Margin = new Padding(2, 2, 0, 0),
+                ForeColor = muted, BackColor = _phoneList.BackColor,
+            };
+            _phoneList.Controls.Add(empty);
+            _listH = empty.PreferredHeight + 4;
+        }
+        else
+        {
+            // Each row is 48 tall plus a 4px gap; past three rows the list scrolls.
+            _listH = Math.Min(Program.PhonesCount, 3) * 52;
+        }
         foreach (var ph in Program.PhonesSnapshot())
         {
-            var row = new Panel { Width = rowWidth, Height = 48, Margin = new Padding(0, 0, 0, 4), BackColor = card };
-            Round(row, 8);
+            var row = new RoundedPanel
+            {
+                Width = rowWidth, Height = 48, Margin = new Padding(0, 0, 0, 4),
+                BackColor = card, BorderColor = border, Radius = 8,
+            };
             var removeFont = new Font("Segoe UI", 8.5f);
             var removeW = FitWidth("Remove", removeFont, 64);
             var name = new Label
             {
                 Text = ph.Name,
                 AutoEllipsis = true, AutoSize = false,
-                Left = 14, Top = 13, Width = rowWidth - 14 - removeW - 10 - 10, Height = 22,
+                Left = 14, Width = rowWidth - 14 - removeW - 10 - 10,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font("Segoe UI", 10.5f),
                 ForeColor = text, BackColor = card,
             };
-            var remove = new Button
+            name.Height = name.PreferredHeight + 4;
+            var remove = new ReadableButton
             {
-                Text = "Remove", Width = removeW, Height = 30, Left = rowWidth - removeW - 10, Top = 9,
-                FlatStyle = FlatStyle.Flat, Font = removeFont,
+                Text = "Remove", Width = removeW, Height = 30, Left = rowWidth - removeW - 10,
+                Font = removeFont,
                 BackColor = btnBg, ForeColor = text,
             };
-            remove.FlatAppearance.BorderSize = 0;
-            Round(remove, 4);
             var phone = ph;
             remove.Click += (_, _) => RemovePhone(phone);
             row.Controls.Add(name);
             row.Controls.Add(remove);
+            CenterChildrenVertically(row);
             _phoneList.Controls.Add(row);
         }
-        _removeAll.Visible = Program.PhonesCount > 0;
-        _firstRun.Visible = Program.PhonesCount == 0;
+        _removeAllShown = Program.PhonesCount > 0;
+        _removeAll.Visible = _removeAllShown;
+        _firstRunShown = Program.PhonesCount == 0;
+        _firstRun.Visible = _firstRunShown;
         ApplyLayout();
     }
 
@@ -1047,12 +1152,14 @@ internal sealed class HelperWindow : Form
         var cardBtn = dark ? DarkCard2 : LightBg;
         var text = dark ? DarkText : LightText;
         var muted = dark ? DarkMuted : LightMuted;
+        var border = dark ? DarkBorder : LightBorder;
         BackColor = bg;
         ForeColor = text;
         _pairHeader.ForeColor = text;
         _phonesHeader.ForeColor = text;
         _aboutHeader.ForeColor = text;
-        _nameBoxPanel.BackColor = cardBtn;
+        _nameBoxPanel.BackColor = card;
+        _nameBoxPanel.BorderColor = border;
         _nameBox.BackColor = card;
         _nameBox.ForeColor = text;
         _codeCaption.ForeColor = text;
@@ -1064,21 +1171,18 @@ internal sealed class HelperWindow : Form
         _firstRun.LinkColor = Orange;
         _firstRun.ActiveLinkColor = Orange;
         _firstRun.VisitedLinkColor = Orange;
-        _wifiBorder.BackColor = Orange;
-        if (_wifiBorder.Controls.Count > 0)
+        _wifiBorder.BackColor = card;
+        _wifiBorder.BorderColor = Orange;
+        foreach (Control c in _wifiBorder.Controls)
         {
-            var wc = _wifiBorder.Controls[0];
-            wc.BackColor = card;
-            foreach (Control c in wc.Controls)
-            {
-                if (c is Button) continue;
-                c.BackColor = card;
-                c.ForeColor = text;
-            }
+            if (c is Button) continue;
+            c.BackColor = card;
+            c.ForeColor = text;
         }
-        Round(_wifiBorder, 8);
         _feedbackCard.BackColor = card;
         _updatesCard.BackColor = card;
+        _feedbackCard.BorderColor = border;
+        _updatesCard.BorderColor = border;
         foreach (Control c in _feedbackCard.Controls) { c.BackColor = c is Button ? cardBtn : card; c.ForeColor = text; }
         foreach (Control c in _updatesCard.Controls) { if (c is Button) continue; c.BackColor = card; c.ForeColor = text; }
         _updatesCaption.ForeColor = muted;
@@ -1092,9 +1196,8 @@ internal sealed class HelperWindow : Form
         }
         StylePrimary(_pair);
         if (_manualDownload) StylePrimary(_checkUpdates); else { _checkUpdates.BackColor = cardBtn; _checkUpdates.ForeColor = text; }
-        Round(_feedbackCard, 8);
-        Round(_updatesCard, 8);
         RefreshPhones();
+        Invalidate(true); // rounded corners blend into the new background
         ApplyTitleBarTheme();
     }
 
@@ -1115,40 +1218,146 @@ internal sealed class HelperWindow : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-
-    /// <summary>4px on buttons and boxes, 8px on cards - the Win11 corner radii.</summary>
-    internal static void Round(Control c, int radius)
+    /// <summary>Win11 corner radii: 4px on buttons and boxes, 8px on cards.</summary>
+    internal static System.Drawing.Drawing2D.GraphicsPath RoundedRect(RectangleF r, float radius)
     {
-        if (c.Width <= 0 || c.Height <= 0) return;
-        var d = radius * 2;
         var path = new System.Drawing.Drawing2D.GraphicsPath();
-        path.AddArc(0, 0, d, d, 180, 90);
-        path.AddArc(c.Width - d - 1, 0, d, d, 270, 90);
-        path.AddArc(c.Width - d - 1, c.Height - d - 1, d, d, 0, 90);
-        path.AddArc(0, c.Height - d - 1, d, d, 90, 90);
+        var d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+        if (d <= 0.5f) { path.AddRectangle(r); return path; }
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         path.CloseFigure();
-        c.Region = new Region(path);
+        return path;
     }
 
-    /// <summary>A flat button whose disabled label stays readable: WinForms draws disabled
-    /// text in GrayText, which vanishes on dark cards and on orange. Redraw it in the
-    /// button's normal text color instead.</summary>
+    /// <summary>Paint a smooth (anti-aliased) rounded shape: the corners outside it take
+    /// the parent's color, the inside is filled, plus an optional 1px edge. Replaces the
+    /// old Control.Region rounding, which is a hard pixel mask (jagged, never smoothed).
+    /// Radius is in the same pixels as the layout: the window's positions are fixed
+    /// pixels, so the corners stay in proportion with the boxes.</summary>
+    internal static void PaintRounded(Graphics g, Control c, Color fill, Color border, int radius)
+    {
+        g.Clear(c.Parent?.BackColor ?? SystemColors.Control);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        using (var path = RoundedRect(new RectangleF(0, 0, c.Width, c.Height), radius))
+        using (var brush = new SolidBrush(fill))
+            g.FillPath(brush, path);
+        if (!border.IsEmpty && border.A > 0)
+        {
+            using var edge = RoundedRect(new RectangleF(0.5f, 0.5f, c.Width - 1, c.Height - 1), Math.Max(0, radius - 0.5f));
+            using var pen = new Pen(border, 1f);
+            g.DrawPath(pen, edge);
+        }
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Default;
+    }
+
+    /// <summary>Keep every child of a card vertically centered by measurement, at any DPI
+    /// or Windows text size (fixed Tops put "Feedback & bugs" low when the text grew).</summary>
+    internal static void CenterChildrenVertically(Control card)
+    {
+        var busy = false;
+        void Center()
+        {
+            if (busy) return;
+            busy = true;
+            try
+            {
+                foreach (Control c in card.Controls)
+                {
+                    var h = c is Label { AutoSize: true } l ? l.PreferredHeight : c.Height;
+                    var top = (card.ClientSize.Height - h) / 2;
+                    if (c.Top != top) c.Top = top;
+                }
+            }
+            finally { busy = false; }
+        }
+        card.Layout += (_, _) => Center();
+        card.Resize += (_, _) => Center();
+        card.ControlAdded += (_, _) => Center();
+        Center();
+    }
+
+    /// <summary>A panel drawn as a smooth rounded card: BackColor inside, the parent's
+    /// color in the corners, an optional 1px BorderColor edge.</summary>
+    internal sealed class RoundedPanel : Panel
+    {
+        private int _radius = 8;
+        private Color _borderColor = Color.Empty;
+
+        public RoundedPanel()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int Radius { get => _radius; set { _radius = value; Invalidate(); } }
+
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Color BorderColor { get => _borderColor; set { _borderColor = value; Invalidate(); } }
+
+        protected override void OnPaintBackground(PaintEventArgs e) =>
+            PaintRounded(e.Graphics, this, BackColor, _borderColor, _radius);
+
+        protected override void OnParentBackColorChanged(EventArgs e)
+        {
+            base.OnParentBackColorChanged(e);
+            Invalidate();
+        }
+    }
+
+    /// <summary>A flat button drawn by hand: smooth rounded background (BackColor), a
+    /// slight hover and pressed tone, centered text. Disabled keeps the button's normal
+    /// text color: WinForms draws disabled text in GrayText, which vanishes on dark cards
+    /// and on orange.</summary>
     internal sealed class ReadableButton : Button
     {
+        private int _radius = 4;
+        private bool _hover, _pressed;
+
+        public ReadableButton()
+        {
+            FlatStyle = FlatStyle.Flat;
+            FlatAppearance.BorderSize = 0;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int Radius { get => _radius; set { _radius = value; Invalidate(); } }
+
+        private static Color Mix(Color a, Color b, float t) => Color.FromArgb(
+            (int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; _pressed = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { _pressed = true; Invalidate(); } base.OnMouseDown(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { _pressed = false; Invalidate(); base.OnMouseUp(e); }
+        protected override void OnEnabledChanged(EventArgs e) { _hover = _pressed = false; Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnParentBackColorChanged(EventArgs e) { base.OnParentBackColorChanged(e); Invalidate(); }
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            if (Enabled) { base.OnPaint(e); return; }
-            using var bg = new SolidBrush(BackColor);
-            e.Graphics.FillRectangle(bg, ClientRectangle);
-            if (FlatAppearance.BorderSize > 0)
+            var fill = BackColor;
+            // Hover/pressed lean toward the text color: lighter on dark grey, deeper on orange.
+            if (Enabled && _pressed) fill = Mix(BackColor, ForeColor, 0.16f);
+            else if (Enabled && _hover) fill = Mix(BackColor, ForeColor, 0.08f);
+            var border = FlatAppearance.BorderSize > 0 ? FlatAppearance.BorderColor : Color.Empty;
+            PaintRounded(e.Graphics, this, fill, border, _radius);
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor, fill,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+            if (Focused && ShowFocusCues && Enabled)
             {
-                using var pen = new Pen(FlatAppearance.BorderColor, FlatAppearance.BorderSize);
-                e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using var ring = RoundedRect(new RectangleF(2.5f, 2.5f, Width - 5, Height - 5), Math.Max(1, _radius - 2));
+                using var pen = new Pen(Color.FromArgb(140, ForeColor), 1f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+                e.Graphics.DrawPath(pen, ring);
             }
-            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
     }
 
@@ -1158,19 +1367,12 @@ internal sealed class HelperWindow : Form
         b.BackColor = Orange;
         b.ForeColor = OnOrange;
         b.FlatAppearance.BorderSize = 0;
-        Round(b, 4);
+        b.Invalidate();
     }
 
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        Round(_nameBoxPanel, 4);
-        Round(_feedbackCard, 8);
-        Round(_updatesCard, 8);
-        Round(_wifiBorder, 8);
-        if (_wifiBorder.Controls.Count > 0) Round(_wifiBorder.Controls[0], 7);
-        Round(_pair, 4);
-        Round(_wifiBtn, 4);
         RefreshPhones();
     }
 
@@ -1377,6 +1579,53 @@ internal sealed class HelperWindow : Form
 }
 
 
+/// <summary>Shared look for the small dialogs: 20px margins, measured text (never clipped),
+/// smooth rounded buttons (4px) right-aligned with 8px gaps.</summary>
+internal static class DialogLook
+{
+    internal const int Margin = 20;
+    internal const int Gap = 8;
+
+    /// <summary>A wrapping label exactly as tall as its text at this width.</summary>
+    internal static Label Text(string text, Font font, Color fg, int left, int top, int width)
+    {
+        var h = TextRenderer.MeasureText(text, font, new Size(width, 0),
+            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+        return new Label
+        {
+            Left = left, Top = top, Width = width, Height = h + 2,
+            Font = font, ForeColor = fg, Text = text, UseMnemonic = false,
+        };
+    }
+
+    /// <summary>The dialogs' button: card fill, 1px muted edge, as before; now drawn smooth.</summary>
+    internal static HelperWindow.ReadableButton Button(string text, Font font, int minWidth, int height, Color card, Color fg, Color edge)
+    {
+        var b = new HelperWindow.ReadableButton
+        {
+            Text = text, Font = font, Height = height,
+            Width = Math.Max(minWidth, TextRenderer.MeasureText(text, font).Width + 28),
+            BackColor = card, ForeColor = fg,
+        };
+        b.FlatAppearance.BorderSize = 1;
+        b.FlatAppearance.BorderColor = edge;
+        return b;
+    }
+
+    /// <summary>Lay buttons out left to right, ending at <paramref name="right"/>.</summary>
+    internal static void RowRight(int right, int top, params Control[] buttons)
+    {
+        var x = right;
+        for (var i = buttons.Length - 1; i >= 0; i--)
+        {
+            x -= buttons[i].Width;
+            buttons[i].Left = x;
+            buttons[i].Top = top;
+            x -= Gap;
+        }
+    }
+}
+
 /// <summary>The public-Wi-Fi popup: names the network and offers the one-click Private fix,
 /// the manual Settings route, or Not now (remembered per Wi-Fi name).</summary>
 internal sealed class WifiDialog : Form
@@ -1394,7 +1643,6 @@ internal sealed class WifiDialog : Form
         var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
 
         Text = "BingeMote";
-        Width = 520; Height = 330;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -1402,39 +1650,33 @@ internal sealed class WifiDialog : Form
         BackColor = bg;
         ForeColor = text;
 
-        var body = new Label
+        const int clientW = 500;
+        var m = DialogLook.Margin;
+        var contentW = clientW - 2 * m;
+        var body = DialogLook.Text(
+            "Windows is treating this Wi-Fi (" + profile.Name + ") like a public hotspot, so your phone cannot reach this PC.\n\n" +
+            "If this is your home network, BingeMote can mark it as Private in Windows for you. This also turns on Windows features meant for home networks, like printer and file sharing.\n\n" +
+            "On a network you don't know (hotel, cafe), choose Not now.",
+            new Font("Segoe UI", 9.5f), text, m, m, contentW);
+        var small = DialogLook.Text(
+            "This only changes this one Wi-Fi. Windows will ask for permission once.",
+            new Font("Segoe UI", 8f), text, m, body.Bottom + 12, contentW);
+        Button Btn(string label, int width, Result r)
         {
-            Left = 20, Top = 18, Width = 460, Height = 160,
-            Font = new Font("Segoe UI", 9.5f),
-            ForeColor = text,
-            Text = "Windows is treating this Wi-Fi (" + profile.Name + ") like a public hotspot, so your phone cannot reach this PC.\n\n" +
-                   "If this is your home network, BingeMote can mark it as Private in Windows for you. This also turns on Windows features meant for home networks, like printer and file sharing.\n\n" +
-                   "On a network you don't know (hotel, cafe), choose Not now.",
-        };
-        var small = new Label
-        {
-            Left = 20, Top = 186, Width = 460, Height = 34,
-            Font = new Font("Segoe UI", 8f),
-            ForeColor = text,
-            Text = "This only changes this one Wi-Fi. Windows will ask for permission once.",
-        };
-        Button Btn(string label, int left, int width, Result r)
-        {
-            var b = new Button
-            {
-                Text = label, Left = left, Top = 240, Width = width, Height = 32,
-                FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
-                BackColor = card, ForeColor = text,
-            };
-            b.FlatAppearance.BorderColor = muted;
+            var b = DialogLook.Button(label, new Font("Segoe UI", 8.5f), width, 32, card, text, muted);
             b.Click += (_, _) => { Answer = r; Close(); };
             return b;
         }
+        var home = Btn("This is my home Wi-Fi", 170, Result.Home);
+        var settings = Btn("Open Settings instead", 150, Result.Settings);
+        var notNow = Btn("Not now", 90, Result.NotNow);
+        DialogLook.RowRight(clientW - m, small.Bottom + 20, home, settings, notNow);
+        ClientSize = new Size(clientW, home.Bottom + m);
         Controls.Add(body);
         Controls.Add(small);
-        Controls.Add(Btn("This is my home Wi-Fi", 20, 170, Result.Home));
-        Controls.Add(Btn("Open Settings instead", 198, 150, Result.Settings));
-        Controls.Add(Btn("Not now", 356, 90, Result.NotNow));
+        Controls.Add(home);
+        Controls.Add(settings);
+        Controls.Add(notNow);
     }
 
     public new Result ShowDialog(IWin32Window owner)
@@ -1460,31 +1702,21 @@ internal static class ConfirmDialog
         {
             AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
-            Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
             StartPosition = FormStartPosition.CenterParent,
             BackColor = bg, ForeColor = fg,
         };
-        var body = new Label
-        {
-            Left = 20, Top = 18, Width = 400, Height = 80,
-            Font = new Font("Segoe UI", 9.5f), ForeColor = fg, Text = text,
-        };
-        var yes = new Button
-        {
-            Text = confirmLabel, Left = 190, Top = 112, Width = 110, Height = 30,
-            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
-            BackColor = card, ForeColor = fg, DialogResult = DialogResult.OK,
-        };
-        yes.FlatAppearance.BorderColor = muted;
-        var no = new Button
-        {
-            Text = "Cancel", Left = 310, Top = 112, Width = 90, Height = 30,
-            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
-            BackColor = card, ForeColor = fg, DialogResult = DialogResult.Cancel,
-        };
-        no.FlatAppearance.BorderColor = muted;
+        const int clientW = 440;
+        var m = DialogLook.Margin;
+        var body = DialogLook.Text(text, new Font("Segoe UI", 9.5f), fg, m, m, clientW - 2 * m);
+        var btnFont = new Font("Segoe UI", 8.5f);
+        var yes = DialogLook.Button(confirmLabel, btnFont, 110, 30, card, fg, muted);
+        yes.DialogResult = DialogResult.OK;
+        var no = DialogLook.Button("Cancel", btnFont, 90, 30, card, fg, muted);
+        no.DialogResult = DialogResult.Cancel;
+        DialogLook.RowRight(clientW - m, Math.Max(body.Bottom, m + 40) + 20, yes, no);
+        dlg.ClientSize = new Size(clientW, yes.Bottom + m);
         dlg.Controls.Add(body);
         dlg.Controls.Add(yes);
         dlg.Controls.Add(no);
@@ -1510,24 +1742,18 @@ internal static class NoteDialog
         {
             AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
-            Width = 460, Height = 200,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
             StartPosition = FormStartPosition.CenterParent,
             BackColor = bg, ForeColor = fg,
         };
-        var body = new Label
-        {
-            Left = 20, Top = 18, Width = 400, Height = 90,
-            Font = new Font("Segoe UI", 9.5f), ForeColor = fg, Text = text,
-        };
-        var ok = new Button
-        {
-            Text = "OK", Left = 310, Top = 116, Width = 90, Height = 30,
-            FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 8.5f),
-            BackColor = card, ForeColor = fg, DialogResult = DialogResult.OK,
-        };
-        ok.FlatAppearance.BorderColor = muted;
+        const int clientW = 440;
+        var m = DialogLook.Margin;
+        var body = DialogLook.Text(text, new Font("Segoe UI", 9.5f), fg, m, m, clientW - 2 * m);
+        var ok = DialogLook.Button("OK", new Font("Segoe UI", 8.5f), 90, 30, card, fg, muted);
+        ok.DialogResult = DialogResult.OK;
+        DialogLook.RowRight(clientW - m, Math.Max(body.Bottom, m + 40) + 20, ok);
+        dlg.ClientSize = new Size(clientW, ok.Bottom + m);
         dlg.Controls.Add(body);
         dlg.Controls.Add(ok);
         dlg.AcceptButton = ok;
@@ -1544,6 +1770,8 @@ internal sealed class FeedbackDialog : Form
     private const string BugFormUrl = "https://docs.google.com/forms/d/e/1FAIpQLSeD1ytVTxoA0GgftLr5wSu2kZm1yxRwCHcOV4Pb100Lm6hLcQ/viewform";
 
     private readonly TextBox _message;
+    private readonly HelperWindow.RoundedPanel _messageFrame;
+    private readonly HelperWindow.RoundedPanel _previewCard;
     private DarkScrollStrip _scroll = null!;
     private readonly Label _preview;
     private readonly Button _issue;
@@ -1557,32 +1785,53 @@ internal sealed class FeedbackDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(440, 420);
         Font = new Font("Segoe UI", 9.5f);
 
-        var title = new Label { Text = "Feedback & bugs", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 16, UseMnemonic = false };
+        // One column, 24px margins (like the main window), measured heights so nothing clips.
+        const int clientW = 440, m = 24, contentW = clientW - 2 * m;
+        var y = m;
+        var title = new Label { Text = "Feedback & bugs", Font = new Font("Segoe UI", 10.5f, FontStyle.Bold), AutoSize = true, Left = m, Top = y, UseMnemonic = false };
+        y += title.PreferredHeight + 12;
+
+        // The message box: a smooth rounded frame (4px, 1px edge) with a borderless box inside.
+        _messageFrame = new HelperWindow.RoundedPanel { Left = m, Top = y, Width = contentW, Height = 104, Radius = 4 };
         _message = new TextBox
         {
-            Multiline = true, Left = 24, Top = 44, Width = 392, Height = 96,
-            PlaceholderText = "Your message", BorderStyle = BorderStyle.FixedSingle,
+            Multiline = true, Left = 10, Top = 7, Width = contentW - 10 - 4, Height = 104 - 14,
+            PlaceholderText = "Your message", BorderStyle = BorderStyle.None,
             ScrollBars = ScrollBars.Vertical,
         };
-        var whatHeader = new Label { Text = "What will be sent", Font = new Font("Segoe UI", 9f, FontStyle.Bold), AutoSize = true, Left = 24, Top = 152 };
+        _messageFrame.Controls.Add(_message);
+        _messageFrame.Click += (_, _) => _message.Focus();
+        y += _messageFrame.Height + 20;
+
+        var whatHeader = new Label { Text = "What will be sent", Font = new Font("Segoe UI", 9f, FontStyle.Bold), AutoSize = true, Left = m, Top = y, UseMnemonic = false };
+        y += whatHeader.PreferredHeight + 8;
+
+        // The preview sits on a card (8px corners, 12px padding) so it reads as one block.
+        _previewCard = new HelperWindow.RoundedPanel { Left = m, Top = y, Width = contentW, Height = 168, Radius = 8 };
         _preview = new Label
         {
-            Left = 24, Top = 172, Width = 392, Height = 176,
-            Font = new Font("Segoe UI", 8.5f), AutoEllipsis = false,
+            Left = 12, Top = 10, Width = contentW - 24, Height = 168 - 20,
+            Font = new Font("Segoe UI", 8.5f), AutoEllipsis = false, UseMnemonic = false,
         };
+        _previewCard.Controls.Add(_preview);
+        y += _previewCard.Height + 20;
+
         // Measured, never fixed: at larger Windows text a fixed 130px puts the words on the borders.
         var issueW = Math.Max(130, TextRenderer.MeasureText("Open GitHub issue", Font).Width + 32);
         var formW = Math.Max(130, TextRenderer.MeasureText("Open private form", Font).Width + 32);
-        _issue = new HelperWindow.ReadableButton { Text = "Open GitHub issue", Width = issueW, Height = 32, Left = 24, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
-        _form = new HelperWindow.ReadableButton { Text = "Open private form", Width = formW, Height = 32, Left = 440 - 24 - formW, Top = 368, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _issue = new HelperWindow.ReadableButton { Text = "Open GitHub issue", Width = issueW, Height = 32, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _form = new HelperWindow.ReadableButton { Text = "Open private form", Width = formW, Height = 32, FlatStyle = FlatStyle.Flat, Enabled = false };
+        // Both actions together at the right, 8px apart; the orange one last.
+        DialogLook.RowRight(clientW - m, y, _issue, _form);
+        y += 32 + m;
+        ClientSize = new Size(clientW, y);
 
         // The native scrollbar stays (all scrolling behavior intact) but is covered by a
         // dark strip that follows the theme: WinForms scrollbars can't be themed.
         _scroll = new DarkScrollStrip(_message);
-        Controls.Add(_scroll);
+        _messageFrame.Controls.Add(_scroll);
         _scroll.BringToFront();
         var scrollTimer = new System.Windows.Forms.Timer { Interval = 60 };
         scrollTimer.Tick += (_, _) => _scroll.SyncThumb();
@@ -1594,9 +1843,9 @@ internal sealed class FeedbackDialog : Form
         _form.Click += (_, _) => OpenUrl(FormUrl());
 
         Controls.Add(title);
-        Controls.Add(_message);
+        Controls.Add(_messageFrame);
         Controls.Add(whatHeader);
-        Controls.Add(_preview);
+        Controls.Add(_previewCard);
         Controls.Add(_issue);
         Controls.Add(_form);
         ApplyTheme();
@@ -1613,7 +1862,12 @@ internal sealed class FeedbackDialog : Form
         var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
         BackColor = bg;
         ForeColor = text;
+        var border = dark ? HelperWindow.DarkBorder : HelperWindow.LightBorder;
         foreach (Control c in Controls) { c.ForeColor = text; }
+        _messageFrame.BackColor = card;
+        _messageFrame.BorderColor = border;
+        _previewCard.BackColor = card;
+        _previewCard.BorderColor = border;
         _message.BackColor = card;
         _message.ForeColor = text;
         _scroll.Track = dark ? Color.FromArgb(32, 34, 44) : Color.FromArgb(224, 224, 228);
@@ -1622,11 +1876,11 @@ internal sealed class FeedbackDialog : Form
         _scroll.Card = card;
         _scroll.Invalidate();
         _preview.ForeColor = text;
+        _preview.BackColor = card;
         _issue.BackColor = cardBtn;
         _issue.ForeColor = text;
         _issue.FlatAppearance.BorderSize = 0;
         HelperWindow.StylePrimary(_form);
-        HelperWindow.Round(_issue, 4);
         TitleBarTheme();
     }
 
@@ -1634,13 +1888,6 @@ internal sealed class FeedbackDialog : Form
     {
         base.OnHandleCreated(e);
         TitleBarTheme();
-    }
-
-    protected override void OnLoad(EventArgs e)
-    {
-        base.OnLoad(e);
-        HelperWindow.Round(_issue, 4);
-        HelperWindow.Round(_form, 4);
     }
 
     private void TitleBarTheme()
@@ -1693,7 +1940,8 @@ internal sealed class FeedbackDialog : Form
             _box = box;
             SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
             var w = SystemInformation.VerticalScrollBarWidth;
-            SetBounds(box.Left + box.Width - w - 1, box.Top + 1, w, box.Height - 2);
+            var edge = box.BorderStyle == BorderStyle.None ? 0 : 1; // a borderless box's bar sits flush
+            SetBounds(box.Left + box.Width - w - edge, box.Top + edge, w, box.Height - 2 * edge);
             TabStop = false;
             SyncThumb();
         }
@@ -1723,16 +1971,25 @@ internal sealed class FeedbackDialog : Form
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            e.Graphics.Clear(Needed ? Track : Card);
+            // The strip blends into the box; the track and thumb are smooth slim pills.
+            e.Graphics.Clear(Card);
             if (!Needed) return;
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
             // arrows
             using var ab = new SolidBrush(Arrows);
             var cx = Width / 2f;
-            e.Graphics.FillPolygon(ab, new[] { new PointF(cx, 3), new PointF(cx - 3.5f, 9), new PointF(cx + 3.5f, 9) });
-            e.Graphics.FillPolygon(ab, new[] { new PointF(cx, Height - 3), new PointF(cx - 3.5f, Height - 9), new PointF(cx + 3.5f, Height - 9) });
-            // thumb
+            g.FillPolygon(ab, new[] { new PointF(cx, 3), new PointF(cx - 3.5f, 8), new PointF(cx + 3.5f, 8) });
+            g.FillPolygon(ab, new[] { new PointF(cx, Height - 3), new PointF(cx - 3.5f, Height - 8), new PointF(cx + 3.5f, Height - 8) });
+            const float pill = 6f;
+            var px = (Width - pill) / 2f;
+            using (var track = HelperWindow.RoundedRect(new RectangleF(px, 12, pill, TrackH), pill / 2))
+            using (var trb = new SolidBrush(Track))
+                g.FillPath(trb, track);
+            using var thumb = HelperWindow.RoundedRect(new RectangleF(px, ThumbY, pill, ThumbH), pill / 2);
             using var tb = new SolidBrush(Thumb);
-            e.Graphics.FillRectangle(tb, 2, ThumbY, Width - 4, ThumbH);
+            g.FillPath(tb, thumb);
         }
 
         protected override void OnMouseDown(MouseEventArgs e)

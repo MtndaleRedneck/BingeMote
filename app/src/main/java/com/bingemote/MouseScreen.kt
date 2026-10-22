@@ -2,6 +2,9 @@ package com.bingemote
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -44,9 +47,9 @@ import kotlin.math.sqrt
  * pinch = zoom (Ctrl+wheel on the PC), long-press + move = drag, tap = release drag.
  */
 @Composable
-fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
+fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var keyboardOpen by remember { mutableStateOf(false) }
+    var keyboardOpen by remember { mutableStateOf(startKeyboardOpen) }
     var speedOpen by remember { mutableStateOf(false) }
     var speed by remember { mutableStateOf(remote.store.mouseSpeed) }
     var helperOk by remember { mutableStateOf(true) }
@@ -71,7 +74,11 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
             executor.shutdown()
         }
     } }
-    fun fire(block: () -> Unit) { if (!commands.trySend(block).isSuccess) helperOk = false }
+    fun fire(block: () -> Unit): Boolean {
+        val queued = commands.trySend(block).isSuccess
+        if (!queued) helperOk = false
+        return queued
+    }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         // Touchpad
@@ -87,14 +94,30 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                     fun startSender() {
                         if (sender?.isActive == true) return
                         sender = scope.launch {
+                            var landed: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+                            var lastSentAt = 0L
                             while (isActive) {
-                                delay(40)
+                                // Send-when-free: the next batch leaves the moment the previous one
+                                // landed (paced to at most ~60/sec), so the rate follows the
+                                // connection - fast on a healthy LAN, self-throttling when it's not.
+                                landed?.await()
+                                val pace = lastSentAt + 16 - System.currentTimeMillis()
+                                if (pace > 0) delay(pace)
                                 // Moves ride the same channel as buttons and scrolls, so a
                                 // drag can never start before its button-down reaches the PC.
                                 val dx: Float; val dy: Float
                                 synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f }
                                 if (dx != 0f || dy != 0f) {
-                                    fire { HelperClient.move(host, port, token, dx * remote.store.mouseSpeed, dy * remote.store.mouseSpeed) }
+                                    val speed = remote.store.mouseSpeed
+                                    val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+                                    landed = done
+                                    if (!fire {
+                                        try { HelperClient.move(host, port, token, dx * speed, dy * speed) }
+                                        finally { done.complete(Unit) }
+                                    }) done.complete(Unit)
+                                    lastSentAt = System.currentTimeMillis()
+                                } else {
+                                    delay(20)
                                 }
                             }
                         }
@@ -173,7 +196,9 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         sender?.cancel()
                         val lastX: Float; val lastY: Float
                         synchronized(accLock) { lastX = accX; lastY = accY; accX = 0f; accY = 0f }
-                        if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * 2.2f, lastY * 2.2f) }
+                        // The tail of a swipe used the ancient hardcoded 2.2x gain (the flick Ezzy feels at
+// liftoff): flush at HIS speed like every other move.
+if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * remote.store.mouseSpeed, lastY * remote.store.mouseSpeed) }
 
                         val duration = System.currentTimeMillis() - downTime
                         when {
@@ -206,7 +231,8 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
         ) {
             Text(
                 "Tap for left click\nTwo-finger tap for right click\nTwo-finger drag to scroll\nPinch to zoom\nLong-press + move to drag\nTap to release drag",
-                color = Dimmed, fontSize = 15.sp, lineHeight = 22.sp,
+                // Still quiet, but readable in a dark room (Dimmed was about 2.6:1 on the background).
+                color = Muted.copy(alpha = 0.7f), fontSize = 15.sp, lineHeight = 22.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
@@ -251,8 +277,9 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
         }
 
         // Top-left back chip, top-right gear (pointer speed) + keyboard buttons
-        Row(Modifier.fillMaxWidth().padding(16.dp)) {
-            HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
+        // Centered vertically, so the 40dp back button lines up with the 52dp round buttons.
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            HeaderIconButton(onBack, remote.store.haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.weight(1f))
             PressTile(
                 onTap = { speedOpen = !speedOpen },
@@ -301,7 +328,7 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                 Text("Pointer speed", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SpeedStep("\u2212") { speed = (kotlin.math.round((speed - 0.1f) * 10) / 10).coerceAtLeast(0.5f); remote.store.mouseSpeed = speed }
+                    SpeedStep("\u2212", remote.store.haptics) { speed = (kotlin.math.round((speed - 0.1f) * 10) / 10).coerceAtLeast(0.5f); remote.store.mouseSpeed = speed }
                     Spacer(Modifier.width(14.dp))
                     Text(
                         "%.1fx".format(speed),
@@ -309,17 +336,22 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
                         modifier = Modifier.width(64.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                     Spacer(Modifier.width(14.dp))
-                    SpeedStep("+") { speed = (kotlin.math.round((speed + 0.1f) * 10) / 10).coerceAtMost(2.0f); remote.store.mouseSpeed = speed }
+                    SpeedStep("+", remote.store.haptics) { speed = (kotlin.math.round((speed + 0.1f) * 10) / 10).coerceAtMost(2.0f); remote.store.mouseSpeed = speed }
                 }
             }
         }
 
         if (!helperOk) {
             Text(
-                "Lost BingeMote on the computer.\nIs it running?",
-                color = ErrorRed, fontSize = 13.sp,
+                "Can't reach BingeMote on the PC.\nIs it open?",
+                color = ErrorRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 84.dp, end = 40.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 84.dp, end = 40.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Card)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
             )
         }
 
@@ -346,17 +378,17 @@ fun MouseScreen(remote: RemoteState, onBack: () -> Unit) {
 
 /** One - / + step of the pointer-speed stepper. */
 @Composable
-private fun SpeedStep(glyph: String, onTap: () -> Unit) {
+private fun SpeedStep(glyph: String, hapticsOn: Boolean, onTap: () -> Unit) {
+    val view = LocalView.current
     Box(
         Modifier
             .size(52.dp, 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(HeaderBtn)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown()
-                    if (waitForUpOrCancellation() != null) onTap()
-                }
+            // Ripple + tick like every other button (it had neither).
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                tapHaptic(view, hapticsOn)
+                onTap()
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -418,7 +450,7 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
             color = Card2,
         ) {
             Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 24.dp)) {
-                Text("Keyboard", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                Text("Keyboard", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(14.dp))
                 OutlinedTextField(
                     value = text,
@@ -435,9 +467,27 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                     placeholder = { Text("Type here - it types on the PC", color = Muted) },
                 )
                 Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                // One row of four, Ezzy's approved render: plain clickable Boxes, so no
+                // TextButton minimum width or default padding can squeeze a key into wrapping.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     listOf("enter" to "Enter", "backspace" to "Backspace", "escape" to "Esc", "space" to "Space").forEach { (k, label) ->
-                        TextButton(onClick = { onKey(k) }) { Text(label, color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                        Box(
+                            Modifier
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(role = Role.Button) { onKey(k) }
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                label, color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, softWrap = false,
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(12.dp))

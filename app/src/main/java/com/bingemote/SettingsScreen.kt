@@ -2,6 +2,10 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -57,7 +61,7 @@ fun SettingsScreen(
         Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            HeaderIconButton(onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
+            HeaderIconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Settings", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
@@ -67,7 +71,10 @@ fun SettingsScreen(
         SettingsSection("Your PC") {
             SettingsRow("PC", store.pcName.ifBlank { store.host })
             Spacer(Modifier.height(6.dp))
-            TextButton(onClick = onRepair) { Text("Pair with a different PC", color = Orange) }
+            // No side padding, so the label lines up with "PC" above it (TextButton adds 12dp by default).
+            TextButton(onClick = onRepair, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp)) {
+                Text("Pair with a different PC", color = Orange, fontWeight = FontWeight.SemiBold)
+            }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -90,8 +97,8 @@ fun SettingsScreen(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card2).padding(horizontal = 16.dp, vertical = 15.dp),
             ) {
                 Text(
-                    store.moviesPath.ifBlank { "Not set yet - use Browse PC folders" },
-                    color = if (store.moviesPath.isBlank()) Dimmed else TextC,
+                    store.moviesPath.ifBlank { "Not set yet. Tap Browse PC folders." },
+                    color = if (store.moviesPath.isBlank()) Muted else TextC,
                     fontSize = 14.sp,
                 )
             }
@@ -117,30 +124,38 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
-        SettingsSection("Phone blocked?") {
+        SettingsSection("Phone can't connect?") {
             Text(
-                "Windows may have marked the PC's Wi-Fi as Public. Open BingeMote on the PC and tap 'This is my home Wi-Fi'.",
+                "Open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
                 color = TextC, fontSize = 14.sp,
             )
         }
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Feedback & bugs") {
+            val view = androidx.compose.ui.platform.LocalView.current
             Row(
-                Modifier.fillMaxWidth().pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        if (waitForUpOrCancellation() != null) onFeedback()
-                    }
-                },
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                        tapHaptic(view, haptics)
+                        onFeedback()
+                    },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // No hard line break: the text wraps on its own at any font size.
                 Text(
-                    "General feedback, bugs, and\nfeature suggestions",
+                    "Send feedback, report a bug, or suggest a feature",
                     color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                     lineHeight = 20.sp, modifier = Modifier.weight(1f),
                 )
-                Text("\u203A", color = Muted, fontSize = 20.sp)
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Muted, modifier = Modifier.size(24.dp),
+                )
             }
             Spacer(Modifier.height(6.dp))
             Text("You see exactly what is sent before you send it.", color = Muted, fontSize = 12.sp)
@@ -172,21 +187,22 @@ fun SettingsScreen(
                     }
                 },
                 background = OrangeGradient,
-                modifier = Modifier.fillMaxWidth().height(46.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
                 corner = 14.dp,
+                enabled = !checking,
             ) {
                 Text(
-                    if (checking) "Checking..." else "Check for updates",
+                    if (checking) "Checking\u2026" else "Check for updates",
                     color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }
             if (result.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text(result, color = Muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(result, color = Muted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
-            Text("Version ${BuildConfig.VERSION_NAME}", color = TextC, fontSize = 12.sp)
+            Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 12.sp)
         }
         // Bottom gap = the screen's own 16.dp padding, same as the sides (the old
         // extra 28.dp spacer left a visibly bigger gap under the last card).
@@ -223,10 +239,18 @@ fun SettingsRow(label: String, value: String) {
 
 @Composable
 fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    // The whole row toggles, not just the switch.
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(label, color = TextC, fontSize = 14.sp, modifier = Modifier.weight(1f))
         Switch(
-            checked = checked, onCheckedChange = onChange,
+            checked = checked, onCheckedChange = null,
             colors = SwitchDefaults.colors(checkedTrackColor = Orange, uncheckedTrackColor = TrackGray),
         )
     }

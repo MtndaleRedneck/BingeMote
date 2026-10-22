@@ -25,10 +25,11 @@ object HelperClient {
     private const val REPLY_MAGIC = "BINGEMOTE_HERE_V1"
 
     class Unreachable(val msg: String) : Exception(msg)
+    /** Shown to the user. The raw socket text ("failed to connect to /192.168.1.5 (port 8488) after 2500ms") used to leak into Movies. */
+    private const val NO_PC = "Can't reach BingeMote on the PC. Check that the PC is on and BingeMote is open."
     class BadToken(val msg: String) : Exception(msg)
     class BadPairCode(val msg: String) : Exception(msg)
 
-    @Synchronized
     private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
@@ -46,7 +47,7 @@ object HelperClient {
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
+        catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
 
@@ -55,7 +56,6 @@ object HelperClient {
         post(host, port, "/ping", JSONObject(), token); true
     } catch (e: Exception) { false }
 
-    @Synchronized
     private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 5000): JSONObject {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {
@@ -68,7 +68,7 @@ object HelperClient {
             }
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
+        catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
 
@@ -162,7 +162,7 @@ object HelperClient {
             }
         } catch (e: BadPairCode) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
+        catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
 
@@ -246,7 +246,7 @@ object HelperClient {
             val o = JSONObject(text)
             return o.getInt("volume") to o.getBoolean("mute")
         } catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach BingeMote PC on the computer.") }
+        catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
 

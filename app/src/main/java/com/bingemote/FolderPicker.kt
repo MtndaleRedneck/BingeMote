@@ -2,6 +2,7 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -35,6 +36,7 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
     // Helper mode lists folders from the PC app (no VLC needed); VLC mode keeps
     // VLC's own "Up one folder" rows and paths exactly as they come back.
     var viaHelper by remember { mutableStateOf(false) }
@@ -97,10 +99,10 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HeaderIconButton(onCancel) { Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = TextC) }
+            HeaderIconButton(onCancel, remote.store.haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Pick your movies folder", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
@@ -118,9 +120,9 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                 .padding(horizontal = 16.dp),
         ) {
             when {
-                loading -> item { Text("Loading...", color = Muted, modifier = Modifier.padding(8.dp)) }
-                error != null -> item { Text(error!!, color = ErrorRed, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
-                dirs.isEmpty() && path.isEmpty() -> item { Text("No folders here.", color = Muted, modifier = Modifier.padding(8.dp)) }
+                loading -> item { ListMessage("Loading\u2026", loading = true) }
+                error != null -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
+                dirs.isEmpty() && path.isEmpty() -> item { ListMessage("No folders here.") }
                 else -> {
                     val rows = if (viaHelper && path.isNotEmpty())
                         listOf(BrowseItem(name = "..", isDir = true, path = parentPath(path), uri = "", sizeBytes = 0L)) + dirs
@@ -147,11 +149,9 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                                 .padding(vertical = 5.dp),
                             corner = 16.dp,
                         ) {
-                            Text(
-                                if (item.name == "..") "Up one folder" else item.name,
-                                color = TextC, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                            BrowseRowContent(
+                                name = if (item.name == "..") "Up one folder" else item.name,
+                                kind = if (item.name == "..") BrowseKind.Up else BrowseKind.Folder,
                             )
                         }
                     }
@@ -167,7 +167,7 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                 onTap = {
                     if (saving || path.isEmpty()) return@PressTile
                     saving = true
-                    error = null
+                    saveError = null
                     scope.launch {
                         // Save on the PC so Movies works with VLC closed; only then close.
                         val saved = withContext(Dispatchers.IO) {
@@ -179,18 +179,24 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
                         }
                         saving = false
                         if (saved) onPick(path)
-                        else error = "Couldn't save that on the PC. Check the connection and tap Select this folder again."
+                        else saveError = "Couldn't save that on the PC. Check the connection and tap Select this folder again."
                     }
                 },
                 background = OrangeGradient,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                corner = 16.dp,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                corner = 14.dp,
+                // Dimmed at "All drives", where there is nothing to select yet.
+                enabled = path.isNotEmpty() && !saving,
             ) {
                 Text(
-                    "Select this folder",
+                    if (saving) "Saving\u2026" else "Select this folder",
                     color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
                     fontSize = 15.sp, fontWeight = FontWeight.Bold,
                 )
+            }
+            saveError?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = ErrorRed, fontSize = 13.sp, lineHeight = 18.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             }
             TextButton(onClick = onCancel) { Text("Cancel", color = Muted) }
         }
