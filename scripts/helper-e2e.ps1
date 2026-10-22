@@ -25,6 +25,12 @@ try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8488/') { throw "uninstaller left the listen permission behind" }
 Write-Host "ok: uninstaller removed the firewall rule and listen permission"
 
+# A silent install now reopens the app on purpose (an update must come back up for him),
+# and the silent uninstall can miss that brand-new process. Nothing from the
+# install/uninstall phase may still be running once the runtime tests start their own exe.
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
 # --- Part 1: the one-time elevated setup, run as-is (CI runners are already admin) ---
 Write-Host "== install-firewall =="
 # The helper is a WinExe, so `&` returns immediately and $LASTEXITCODE stays empty.
