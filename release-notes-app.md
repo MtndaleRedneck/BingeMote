@@ -6,7 +6,7 @@
 - Fix Back getting stuck on the Movies screen when VLC is closed
 - Left and Right click sink in like every other button
 - Thinner 5-second skip rings, matching the 30-second rings
-- Bigger bottom-row buttons
+- New-look folder, subtitles, fullscreen, and pointer buttons, now bigger
 
 ## v1.5.1
 
