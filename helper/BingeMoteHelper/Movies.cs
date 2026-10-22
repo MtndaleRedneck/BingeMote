@@ -58,6 +58,8 @@ internal static class Movies
                     if (d.IsReady && d.DriveType == DriveType.Fixed) drives.Add(new { name = d.Name, dir = true });
                 return JsonSerializer.Serialize(new { path = "", entries = drives });
             }
+            // A bare drive letter ("C:") is drive-relative on Windows, not the root; mean the root.
+            if (path.Length == 2 && char.IsLetter(path[0]) && path[1] == ':') path += "\\";
             // Local fixed drives only, drive-rooted ("C:\..."): no UNC shares (a token
             // holder must not reach the network) and no relative paths.
             if (path.Length < 3 || !char.IsLetter(path[0]) || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))
