@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Net;
 using System.Text;
@@ -32,11 +33,11 @@ internal sealed class HttpServer : IDisposable
             HttpListenerContext ctx;
             try { ctx = _listener.GetContext(); }
             catch { break; }
-            Task.Run(() => Handle(ctx));
+            Task.Run(async () => await Handle(ctx));
         }
     }
 
-    private void Handle(HttpListenerContext ctx)
+    private async Task Handle(HttpListenerContext ctx)
     {
         try
         {
@@ -59,6 +60,15 @@ internal sealed class HttpServer : IDisposable
 
                 case "/pair":
                     HandlePair(req, res);
+                    return;
+
+                // The live mouse connection (item 5): one always-open WebSocket for
+                // move/scroll/zoom/button frames, fire-and-forget. Same port, same token
+                // check; an old phone simply never opens it and stays on HTTP.
+                case "/ws":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    if (!req.IsWebSocketRequest) { Reply(res, 400, "{\"error\":\"websocket expected\"}"); return; }
+                    await HandleWs(ctx);
                     return;
 
                 case "/config":
@@ -237,6 +247,60 @@ internal sealed class HttpServer : IDisposable
                 return;
         }
         Reply(res, 200, "{\"ok\":true}");
+    }
+
+    /// <summary>Serve one live mouse connection until it drops. Each text frame is a small
+    /// JSON command applied as it arrives (frames are ordered, so a click sent after moves
+    /// lands after them). No replies: fire-and-forget.</summary>
+    private static async Task HandleWs(HttpListenerContext ctx)
+    {
+        WebSocket? ws = null;
+        try
+        {
+            var wsCtx = await ctx.AcceptWebSocketAsync(null);
+            ws = wsCtx.WebSocket;
+            Program.Log("Live mouse connection opened.");
+            var buf = new byte[4096];
+            var text = new StringBuilder();
+            while (ws.State == WebSocketState.Open)
+            {
+                var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), CancellationToken.None);
+                if (r.MessageType == WebSocketMessageType.Close)
+                {
+                    try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None); } catch { }
+                    break;
+                }
+                if (r.MessageType != WebSocketMessageType.Text) continue;
+                text.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
+                if (!r.EndOfMessage) continue;
+                DispatchWs(text.ToString());
+                text.Clear();
+            }
+        }
+        catch { /* a dropped connection is normal - Wi-Fi blips, the phone sleeps */ }
+        finally
+        {
+            try { ws?.Dispose(); } catch { }
+            Program.Log("Live mouse connection closed.");
+        }
+    }
+
+    /// <summary>Apply one frame from the live connection. Anything malformed costs nothing.</summary>
+    private static void DispatchWs(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            var r = doc.RootElement;
+            switch (r.GetProperty("cmd").GetString())
+            {
+                case "move": InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;
+                case "button": InputSender.Button(r.GetProperty("button").GetString() ?? "left", r.GetProperty("down").GetBoolean()); break;
+                case "scroll": InputSender.Scroll((float)r.GetProperty("dy").GetDouble()); break;
+                case "zoom": InputSender.Zoom((float)r.GetProperty("delta").GetDouble()); break;
+            }
+        }
+        catch { }
     }
 
     /// <summary>503 with a reason the phone can show, instead of a bare "internal" error.</summary>
