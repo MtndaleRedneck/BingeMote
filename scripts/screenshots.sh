@@ -71,5 +71,6 @@ dismiss_anr
 adb exec-out screencap -p > screenshots/main-tall.png
 adb shell wm size reset
 adb shell wm density reset
+adb logcat -d | grep BMLayout > screenshots/layout-metrics.txt || true
 adb logcat -d -s AndroidRuntime:E > screenshots/runtime-errors.txt
 if grep -q 'FATAL EXCEPTION' screenshots/runtime-errors.txt; then cat screenshots/runtime-errors.txt; exit 1; fi

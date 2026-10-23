@@ -114,6 +114,13 @@ fun MainScreen(
             // sane margins while the whole home scales.
             val gapShareDp = ((maxHeight.value / uniform - fixedDp - tilesDp) / 5f)
                 .coerceIn(8f, 16f)
+            if (BuildConfig.DEBUG) {
+                android.util.Log.w(
+                    "BMLayout",
+                    "fontScale=$fontScale availW=${maxWidth.value} availH=${maxHeight.value} " +
+                        "uniform=$uniform fixedDp=$fixedDp gapShare=$gapShareDp helperDown=${remote.helperDown}",
+                )
+            }
             CompositionLocalProvider(
                 LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale),
             ) {
@@ -251,6 +258,7 @@ private fun SeekBlock(remote: RemoteState, gapDp: Float) {
     var pendingSeek by remember { mutableStateOf<Pair<Float, Long>?>(null) }
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+    val seekDensity = LocalDensity.current
 
     // Relock about five seconds after the last touch.
     LaunchedEffect(unlocked, idleStamp) {
@@ -270,17 +278,36 @@ private fun SeekBlock(remote: RemoteState, gapDp: Float) {
             trim = LineHeightStyle.Trim.Both,
         ),
     )
-    // Digits don't reach their line box's ascent (cap height only), leaving
-    // ~11px of invisible reserve above the time row that broke the equal
-    // glyph-to-glyph gaps. A 0.75em line box (still trimmed both ends) fits
-    // the digits' actual ink, so the seek block's outer gaps measure like
-    // every other row's. The ink itself is unchanged.
-    val tightDigits = tight.copy(lineHeight = 10.5.sp)
     Column(Modifier.padding(horizontal = gapDp.dp)) {
-        Row(Modifier.fillMaxWidth()) {
-            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tightDigits)
+        // Ezzy's gaps are measured glyph-to-glyph, but digits only fill their
+        // cap height: a natural line box reserves ascent/descent room the time
+        // row never inks (~11px at font 1.0), which made the gap above this
+        // row read too big on his ruler. Measure the digit ink at runtime and
+        // report this row's height as that ink, centered, so the block's outer
+        // gaps measure like every other row's. The glyphs are untouched; cap
+        // height is identical across font weights, so a plain Paint suffices.
+        val digitInkPx = remember(seekDensity) {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            paint.textSize = with(seekDensity) { 14.sp.toPx() }
+            val bounds = android.graphics.Rect()
+            paint.getTextBounds("0", 0, 1, bounds)
+            bounds.height()
+        }
+        Row(
+            Modifier.fillMaxWidth().layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                if (digitInkPx <= 0 || digitInkPx >= placeable.height) {
+                    return@layout layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                val reserve = placeable.height - digitInkPx
+                layout(placeable.width, placeable.height - reserve) {
+                    placeable.place(0, -reserve / 2)
+                }
+            },
+        ) {
+            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
             Spacer(Modifier.weight(1f))
-            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tightDigits)
+            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
         }
         Spacer(Modifier.height(4.dp))
         Box(
