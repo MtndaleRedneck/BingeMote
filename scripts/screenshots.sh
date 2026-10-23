@@ -99,7 +99,7 @@ grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-command.txt || { echo '
 #    down while locked, hold past the 850ms in-press unlock, slide, release -
 #    no lift between hold and slide. `input swipe` cannot pause mid-gesture,
 #    so the events are streamed on-device with sendevent (60 steps over 6s).
-TOUCH_DEV=$(adb shell getevent -pl 2>/dev/null | tr -d '\r' | awk '/^add device/{d=$NF} /ABS_MT_POSITION_X/{print d; exit}')
+TOUCH_DEV=$(adb shell getevent -pl 2>/dev/null | tr -d '\r' | awk '/^add device/{d=$NF} /ABS_MT_POSITION_X/ && !found {print d; found=1}')
 if [ -z "$TOUCH_DEV" ]; then
   echo 'NOTE: no multitouch input device found; continuous hold-then-slide not exercised'
 else
