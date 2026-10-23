@@ -36,6 +36,13 @@ class CancelGestureTest {
             "seeded demo seek block did not appear",
             device.wait(Until.findObject(By.text("25:00")), 15000),
         )
+        // Cold launches place the measured layout a beat after the first text
+        // composes; a gesture fired at the not-yet-placed bar lands on whatever
+        // is transiently there and no drag starts (interruptedDragDoesNothing,
+        // run 39953888432). Wait for the transport and let placement settle.
+        assertNotNull("play/pause button not found after launch",
+            device.wait(Until.findObject(By.desc("Pause")), 8000))
+        Thread.sleep(1500)
     }
 
     private fun capture(tag: String) {
@@ -101,7 +108,7 @@ class CancelGestureTest {
         assertFalse("release inside the circle toggled play/pause: $log", log.contains("togglePause"))
         assertNotNull(
             "counters did not return to the seed after cancel (see cancel-after-$style.png/xml)",
-            device.wait(Until.findObject(By.text("25:00")), 3000),
+            device.wait(Until.findObject(By.text("25:00")), 6000),
         )
         assertNotNull(
             "play/pause flipped despite the cancel (no toggle allowed)",
@@ -151,7 +158,7 @@ class CancelGestureTest {
         assertFalse("interrupted drag toggled play/pause: $log", log.contains("togglePause"))
         assertNotNull(
             "counters did not return to the seed after the interruption",
-            device.wait(Until.findObject(By.text("25:00")), 3000),
+            device.wait(Until.findObject(By.text("25:00")), 6000),
         )
     }
 }
