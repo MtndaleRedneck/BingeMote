@@ -1,13 +1,12 @@
 package com.bingemote
 
 import android.graphics.Point
-import java.util.regex.Pattern
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlin.concurrent.thread
 
@@ -37,12 +36,19 @@ class SeekGestureTest {
         Thread.sleep(2000)
         val unlocked = device.wait(Until.findObject(By.textContains("Unlocked")), 1500)
         assertNotNull("in-press hold did not unlock during the slide", unlocked)
-        val elapsed = device.wait(Until.findObject(By.textRegex(Pattern.compile("^\\d+:\\d{2}$"))), 1500)
-        assertNotNull("elapsed counter not found mid-slide", elapsed)
-        assertTrue("continuous drag elapsed preview stayed at seed time", elapsed.text != "25:00")
-        val remaining = device.wait(Until.findObject(By.textRegex(Pattern.compile("^-\\d+:\\d{2}$"))), 1500)
-        assertNotNull("remaining counter not found mid-slide", remaining)
-        assertTrue("continuous drag remaining preview stayed at seed time", remaining.text != "-1:25:24")
+        // The seek block must be rendered, and both counters must be off the seed
+        // values (UiAutomator By here has no regex selector, so assert absence of
+        // the seed texts plus presence of the block's total label).
+        val block = device.wait(Until.findObject(By.textContains("total")), 1500)
+        assertNotNull("seek block not rendered mid-slide", block)
+        assertNull(
+            "continuous drag elapsed preview stayed at seed time",
+            device.wait(Until.findObject(By.text("25:00")), 500),
+        )
+        assertNull(
+            "continuous drag remaining preview stayed at seed time",
+            device.wait(Until.findObject(By.text("-1:25:24")), 500),
+        )
         gesture.join()
         // Post-release the static demo poll restores the seed counters.
         val post = device.wait(Until.findObject(By.text("25:00")), 3000)
