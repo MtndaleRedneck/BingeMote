@@ -25,6 +25,14 @@ class SeekGestureTest {
     @Test
     fun continuousHoldThenSlide() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // am instrument force-stops the app, so the shell's seeded launch is gone:
+        // relaunch with the rig extras from here (runs as shell).
+        device.executeShellCommand(
+            "am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true"
+        )
+        // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
+        val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)
+        assertNotNull("seeded demo seek block did not appear", seeded)
         val start = Point(400, 913)
         val dwell = Point(401, 913) // 1px: a non-degenerate segment, under the 14px move threshold
         val end = Point(1150, 760)

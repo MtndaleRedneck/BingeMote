@@ -102,10 +102,6 @@ grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-command.txt || { echo '
 #    the gesture and asserts the live preview DURING it; the seekTo log check
 #    happens here after the run.
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true
-sleep 6
-dismiss_anr
 adb logcat -c
 adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/seek-slide-instrument.txt
