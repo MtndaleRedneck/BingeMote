@@ -1,6 +1,7 @@
 package com.bingemote
 
 import android.graphics.Point
+import java.util.regex.Pattern
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -36,10 +37,10 @@ class SeekGestureTest {
         Thread.sleep(2000)
         val unlocked = device.wait(Until.findObject(By.textContains("Unlocked")), 1500)
         assertNotNull("in-press hold did not unlock during the slide", unlocked)
-        val elapsed = device.wait(Until.findObject(By.textRegex("^\\d+:\\d{2}$")), 1500)
+        val elapsed = device.wait(Until.findObject(By.textRegex(Pattern.compile("^\\d+:\\d{2}$"))), 1500)
         assertNotNull("elapsed counter not found mid-slide", elapsed)
         assertTrue("continuous drag elapsed preview stayed at seed time", elapsed.text != "25:00")
-        val remaining = device.wait(Until.findObject(By.textRegex("^-\\d+:\\d{2}$")), 1500)
+        val remaining = device.wait(Until.findObject(By.textRegex(Pattern.compile("^-\\d+:\\d{2}$"))), 1500)
         assertNotNull("remaining counter not found mid-slide", remaining)
         assertTrue("continuous drag remaining preview stayed at seed time", remaining.text != "-1:25:24")
         gesture.join()
