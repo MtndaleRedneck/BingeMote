@@ -68,12 +68,13 @@ class CancelGestureTest {
         assertNotNull("seed back counter not found for the baseline", seedBack)
         val f = seedFwd.visibleBounds
         val b = seedBack.visibleBounds
-        device.executeShellCommand(
-            "printf 'fwd %d %d %d %d\\nback %d %d %d %d\\n'" +
-                " ${f.left} ${f.top} ${f.right} ${f.bottom}" +
-                " ${b.left} ${b.top} ${b.right} ${b.bottom}" +
-                " > /sdcard/bm-cancel-bounds-$tag.txt"
-        )
+        // Bounds travel over logcat, not a /sdcard printf: UiAutomation's
+        // executeShellCommand does not interpret shell redirection on this
+        // emulator (run 39960953492 pulled "cat: No such file" into every
+        // bounds file, which the compare then silently skipped). The CI
+        // script extracts these lines into the bounds files host-side.
+        android.util.Log.i("BMSeek", "bounds $tag fwd ${f.left} ${f.top} ${f.right} ${f.bottom}")
+        android.util.Log.i("BMSeek", "bounds $tag back ${b.left} ${b.top} ${b.right} ${b.bottom}")
         device.executeShellCommand("screencap -p /sdcard/bm-cancel-pixels-$tag-before.png")
     }
 
@@ -192,8 +193,9 @@ class CancelGestureTest {
         assertNull("gesture injection failed: $gestureError", gestureError)
         assertTrue("drag preview never went live before the interruption: $dragLog", live)
         // A real interruption: another activity takes focus mid-drag, which is
-        // how the system actually cancels a touch stream (injected ACTION_CANCEL
-        // is not faithfully forwarded by the input dispatcher).
+        // how the system actually cancels a touch stream. The injected-cancel
+        // probe below characterizes what the dispatcher does with an injected
+        // ACTION_CANCEL; this activity switch is the faithful case.
         device.executeShellCommand("am start -a android.settings.SETTINGS")
         Thread.sleep(2500)
         capture("interrupted") // foreground = settings: the interruption itself
@@ -210,5 +212,70 @@ class CancelGestureTest {
             device.wait(Until.findObject(By.text("25:00")), 15000),
         )
         device.executeShellCommand("screencap -p /sdcard/bm-cancel-pixels-interrupted-after.png")
+    }
+
+    /**
+     * Characterizes the injected ACTION_CANCEL path next to the faithful
+     * activity-switch test above. The raw stream is hooked at
+     * MainActivity.dispatchTouchEvent (DEBUG "raw action=" lines), so the
+     * outcome map is: action=3 logged + no seek = the gate works and the
+     * dispatcher forwards injected cancels faithfully; action=1 + seek = the
+     * dispatcher converts injected cancels to UP (injection artifact, not an
+     * app bug); no raw line after the moves = the dispatcher swallowed the
+     * event entirely (inconclusive, reported as a failure with evidence).
+     */
+    @Test
+    fun injectedCancelDoesNotSeek() {
+        device.executeShellCommand("logcat -c")
+        launch("ring")
+        assertNotNull("play/pause button not found",
+            device.wait(Until.findObject(By.desc("Pause")), 8000))
+        var gestureError: Throwable? = null
+        val gesture = thread {
+            try {
+                val ua = instrumentation.uiAutomation
+                val t0 = SystemClock.uptimeMillis()
+                fun inject(action: Int, x: Float, y: Float) {
+                    val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
+                    ua.injectInputEvent(ev, true)
+                    ev.recycle()
+                }
+                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
+                for (i in 1..10) {
+                    inject(MotionEvent.ACTION_MOVE, 400f + i * 50f, 913f - i * 20f)
+                    Thread.sleep(75)
+                }
+                Thread.sleep(400)
+                inject(MotionEvent.ACTION_CANCEL, 900f, 713f)
+            } catch (t: Throwable) { gestureError = t }
+        }
+        val t0 = SystemClock.uptimeMillis()
+        var live = false
+        var dragLog = ""
+        while (SystemClock.uptimeMillis() - t0 < 8000 && !live) {
+            Thread.sleep(400)
+            dragLog = bmSeekLog()
+            live = dragLog.lines().any { line ->
+                Regex("drag sec=(\\d+)").find(line)?.groupValues?.get(1)?.toLongOrNull()
+                    ?.let { kotlin.math.abs(it - 1500) > 30 } == true
+            }
+        }
+        assertNull("gesture injection failed: $gestureError", gestureError)
+        assertTrue("drag preview never went live before the injected cancel: $dragLog", live)
+        gesture.join()
+        Thread.sleep(1000)
+        val log = bmSeekLog()
+        val rawAfterDrag = log.lines().map { it.trim() }
+            .filter { Regex("raw action=\\d+").containsMatchIn(it) }
+        // A DOWN must be there from the gesture start; the diagnostic is the
+        // tail AFTER the drag went live (what the cancel became).
+        assertTrue("no raw DOWN/UP/CANCEL reached MainActivity at all: $log",
+            rawAfterDrag.isNotEmpty())
+        val tail = rawAfterDrag.last()
+        assertFalse("injected cancel led to a seek (raw tail=$tail): $log",
+            log.contains("seekTo"))
+        assertFalse("injected cancel toggled play/pause (raw tail=$tail): $log",
+            log.contains("togglePause"))
     }
 }

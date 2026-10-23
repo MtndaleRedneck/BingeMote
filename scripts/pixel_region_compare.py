@@ -59,10 +59,12 @@ def main():
         print(f"COMPARE FAIL: geometry differs {bw}x{bh}x{bch} vs {aw}x{ah}x{ach}")
         return 1
     rc = 0
+    regions = 0
     for line in open(bounds_path):
         parts = line.split()
         if len(parts) != 5:
             continue
+        regions += 1
         name, l, t, r, b = parts[0], *map(int, parts[1:5])
         if r > bw or b > bh or l < 0 or t < 0 or r <= l or b <= t:
             print(f"COMPARE FAIL: region '{name}' ({l},{t},{r},{b}) outside {bw}x{bh}")
@@ -83,6 +85,12 @@ def main():
         print(f"region {name}: {diff}/{total} pixels differ ({pct:.2f}%) -> {status}")
         if pct > 1.0:
             rc = 1
+    if regions == 0:
+        # A bounds file with no parseable regions must never read as a pass
+        # (run 39960953492: pulled files held an adb error message, every line
+        # was skipped, and the compare exited 0 without checking a pixel).
+        print(f"COMPARE FAIL: no parseable regions in {bounds_path}")
+        return 1
     return rc
 
 if __name__ == '__main__':
