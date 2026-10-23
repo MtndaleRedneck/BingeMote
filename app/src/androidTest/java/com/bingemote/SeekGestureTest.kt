@@ -10,6 +10,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.concurrent.thread
 
 /**
@@ -22,6 +23,10 @@ import kotlin.concurrent.thread
  * am instrument force-stops the app, so the test relaunches it with the rig extras
  * itself (seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total, track x 44..1396,
  * center y ~913 at 1440x2807 @ 649dpi). The shell checks the BMSeek seekTo log after.
+ *
+ * Evidence rule: every capture is taken BEFORE the assertion that depends on the
+ * state it shows, and a failed capture fails loudly - a missing screenshot is a
+ * rig defect to diagnose, never a silent NOTE.
  */
 class SeekGestureTest {
     @Test
@@ -36,6 +41,15 @@ class SeekGestureTest {
         // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
         val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)
         assertNotNull("seeded demo seek block did not appear", seeded)
+        val evidenceDir = instrumentation.context.getExternalFilesDir(null)!!
+        assertTrue("evidence dir unusable: ${evidenceDir.absolutePath}",
+            evidenceDir.isDirectory || evidenceDir.mkdirs())
+        fun capture(tag: String) {
+            val shot = File(evidenceDir, "seek-slide-$tag.png")
+            assertTrue("screenshot capture failed for '$tag' (path=${shot.absolutePath})",
+                device.takeScreenshot(shot))
+            device.dumpWindowHierarchy(File(evidenceDir, "seek-slide-$tag.xml"))
+        }
         var gestureError: Throwable? = null
         val gesture = thread {
             // Explicit MotionEvent injection: UiDevice.swipe's step pacing is only
@@ -72,13 +86,16 @@ class SeekGestureTest {
         assertTrue("continuous drag remaining preview never left the seed time", remainingMoved)
         val unlocked = device.wait(Until.findObject(By.textContains("Unlocked")), 1500)
         assertNotNull("in-press hold did not unlock during the slide", unlocked)
-        // Pixel proof, captured while the slide is still running.
-        val shot = java.io.File(instrumentation.context.getExternalFilesDir(null), "seek-slide-mid.png")
-        device.takeScreenshot(shot)
+        // Pixel + tree proof, captured while the slide is still running.
+        capture("mid")
         gesture.join()
         assertNull("gesture injection failed: $gestureError", gestureError)
-        // Post-release the static demo poll restores the seed counters.
+        // State at the instant of release.
+        capture("release")
+        // Post-release the static demo poll restores the seed counters; capture the
+        // state the assertion judges BEFORE judging it, pass or fail.
         val post = device.wait(Until.findObject(By.text("25:00")), 3000)
-        assertNotNull("post-release elapsed did not return to the seed poll", post)
+        capture("post")
+        assertNotNull("post-release elapsed did not return to the seed poll (see seek-slide-post.png/xml)", post)
     }
 }
