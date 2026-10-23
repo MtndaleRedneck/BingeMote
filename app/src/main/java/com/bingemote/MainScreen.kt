@@ -89,7 +89,11 @@ fun MainScreen(
             // Implemented as a density override, not a draw-layer scale: every dp
             // and sp inside shrinks in the same proportion while the layout flows
             // normally, so the equal weight gaps keep working and content can
-            // never be painted out of place. At uniform == 1f this is a no-op.
+            // never be painted out of place. Only the dp density is scaled:
+            // sp -> px is sp * fontScale * density, so scaling density moves text
+            // by exactly the same factor as dp; scaling fontScale too would
+            // shrink text by the factor SQUARED relative to the tiles.
+            // At uniform == 1f this is a no-op.
             val cfg = LocalConfiguration.current
             val uniform = minOf(
                 1f,
@@ -98,7 +102,7 @@ fun MainScreen(
             ).coerceAtLeast(0.75f)
             val baseDensity = LocalDensity.current
             CompositionLocalProvider(
-                LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale * uniform),
+                LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale),
             ) {
             Column(Modifier.fillMaxSize()) {
 
