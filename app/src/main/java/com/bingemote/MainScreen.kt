@@ -266,17 +266,20 @@ private class SeekDrag {
     var barOrigin by mutableStateOf(Offset.Zero)
 }
 
-/** Buzz once per entry into the cancel circle, and track how close the finger is. */
-private fun SeekDrag.trackCircle(finger: Offset, rampPx: Float, view: View, haptics: Boolean) {
+/** Buzz once per entry into the cancel circle, and track how close the finger is.
+ * Geometry is the VISIBLE circle (the tile's inscribed circle minus its 4dp
+ * content inset), not the layout rect: the rect's corners are outside the
+ * circle, and a release there must seek, not cancel. */
+private fun SeekDrag.trackCircle(finger: Offset, rampPx: Float, insetPx: Float, view: View, haptics: Boolean) {
     val cb = circle ?: return
-    val inside = cb.contains(finger)
+    val radius = minOf(cb.width, cb.height) / 2f - insetPx
+    val dist = kotlin.math.hypot(finger.x - cb.center.x, finger.y - cb.center.y)
+    val inside = dist <= radius
     if (inside != inCircle) {
         if (inside) tapHaptic(view, haptics)
         inCircle = inside
     }
-    val dx = maxOf(cb.left - finger.x, 0f, finger.x - cb.right)
-    val dy = maxOf(cb.top - finger.y, 0f, finger.y - cb.bottom)
-    proximity = (1f - kotlin.math.hypot(dx, dy) / rampPx).coerceIn(0f, 1f)
+    proximity = (1f - (dist - radius).coerceAtLeast(0f) / rampPx).coerceIn(0f, 1f)
 }
 
 /** Progress bar with hold-to-unlock seeking. Locked by default; hold 500ms to
@@ -306,6 +309,8 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
     val scope = rememberCoroutineScope()
     val seekDensity = LocalDensity.current
     val rampPx = with(seekDensity) { 96.dp.toPx() }
+    // The cancel ring is drawn inside the tile's 4dp content inset.
+    val circleInsetPx = with(seekDensity) { 4.dp.toPx() }
 
     // Relock about five seconds after the last touch, never mid-press.
     LaunchedEffect(unlocked, idleStamp, pressing) {
@@ -404,7 +409,7 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
                                         val w = size.width.toFloat().coerceAtLeast(1f)
                                         dragPos = (change.position.x / w).coerceIn(0f, 1f)
                                         drag.active = true
-                                        drag.trackCircle(drag.barOrigin + change.position, rampPx, view, remote.store.haptics)
+                                        drag.trackCircle(drag.barOrigin + change.position, rampPx, circleInsetPx, view, remote.store.haptics)
                                         idleStamp = System.currentTimeMillis()
                                         if (BuildConfig.DEBUG && length > 0) {
                                             val nowMs = System.currentTimeMillis()

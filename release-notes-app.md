@@ -4,10 +4,7 @@
 - The bar unlocks faster (half a second), never locks again mid-drag, and an interrupted drag no longer jumps your place
 - The time bar lives on top now, Movies folder sits above Skip buttons in Settings, and the reconnect switch is gone - it always just finds your PC
 - Mouse: after a Wi-Fi hiccup your full swipe lands instead of being cut down
-
-## v1.8.1
-
-- Seek bar fixed: the thumb follows your finger anywhere on the bar, keeps tracking when your finger slides off it, and the times show where you will land while you drag
+- The bar's thumb follows your finger anywhere, even off the bar, and the times show where you will land while you drag
 
 ## v1.8.0
 
