@@ -115,16 +115,28 @@ grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT F
 # written to the target app's internal files dir and retrieved via run-as (debug build
 # is debuggable). Each extraction is verified by size and file signature BEFORE the
 # pixels are interpreted; a bad pull is a loud rig defect, never a silent NOTE.
-for f in seek-slide-mid.png seek-slide-release.png seek-slide-post.png; do
+for f in seek-slide-mid.png seek-slide-release.png seek-slide-post.png \
+         seek-slide-pixels-before.png seek-slide-pixels-after.png seek-slide-bounds.txt; do
   adb exec-out cat "/sdcard/bm-$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
-  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image'; then
+  if [ "$sz" -gt 20 ] && echo "$sig" | grep -Eq 'PNG image|text'; then
     echo "PULLED: $f ($sz bytes, $sig)"
   else
     echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
   fi
 done
+# Post-release seed-return: the counter regions must pixel-match the baseline.
+if file -b screenshots/seek-slide-pixels-before.png 2>/dev/null | grep -q 'PNG image' \
+   && file -b screenshots/seek-slide-pixels-after.png 2>/dev/null | grep -q 'PNG image' \
+   && [ -s screenshots/seek-slide-bounds.txt ]; then
+  python3 scripts/pixel_region_compare.py \
+    screenshots/seek-slide-pixels-before.png \
+    screenshots/seek-slide-pixels-after.png \
+    screenshots/seek-slide-bounds.txt || { echo 'ASSERT FAIL: post-release counters did not pixel-match the seed'; SEEK_FAIL=1; }
+else
+  echo 'ASSERT FAIL: missing/invalid seek-slide pixel-compare inputs'; SEEK_FAIL=1
+fi
 adb exec-out screencap -p > screenshots/main-seekslide-up.png
 adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
 echo '--- BMSeek (continuous) ---'
@@ -159,7 +171,9 @@ done
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.
 for tag in ring fills interrupted; do
-  if [ -s "screenshots/cancel-pixels-$tag-before.png" ] && [ -s "screenshots/cancel-pixels-$tag-after.png" ] && [ -s "screenshots/cancel-bounds-$tag.txt" ]; then
+  if file -b "screenshots/cancel-pixels-$tag-before.png" 2>/dev/null | grep -q 'PNG image' \
+     && file -b "screenshots/cancel-pixels-$tag-after.png" 2>/dev/null | grep -q 'PNG image' \
+     && [ -s "screenshots/cancel-bounds-$tag.txt" ]; then
     python3 scripts/pixel_region_compare.py \
       "screenshots/cancel-pixels-$tag-before.png" \
       "screenshots/cancel-pixels-$tag-after.png" \

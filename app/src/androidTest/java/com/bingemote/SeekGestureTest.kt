@@ -41,6 +41,24 @@ class SeekGestureTest {
         // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
         val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)
         assertNotNull("seeded demo seek block did not appear", seeded)
+        assertNotNull("play/pause button not found after launch",
+            device.wait(Until.findObject(By.desc("Pause")), 8000))
+        Thread.sleep(1500)
+        device.executeShellCommand("logcat -c")
+        // Baseline for the shell-side seed-return pixel compare.
+        val seedFwd = device.findObject(By.text("25:00"))
+        val seedBack = device.findObject(By.text("-1:25:24"))
+        assertNotNull("seed counters not found for the baseline", seedFwd)
+        assertNotNull("seed back counter not found for the baseline", seedBack)
+        val f = seedFwd.visibleBounds
+        val bk = seedBack.visibleBounds
+        device.executeShellCommand(
+            "printf 'fwd %d %d %d %d\nback %d %d %d %d\n'" +
+                " ${f.left} ${f.top} ${f.right} ${f.bottom}" +
+                " ${bk.left} ${bk.top} ${bk.right} ${bk.bottom}" +
+                " > /sdcard/bm-seek-slide-bounds.txt"
+        )
+        device.executeShellCommand("screencap -p /sdcard/bm-seek-slide-pixels-before.png")
         fun capture(tag: String) {
             device.executeShellCommand("screencap -p /sdcard/bm-seek-slide-$tag.png")
         }
@@ -69,15 +87,23 @@ class SeekGestureTest {
                 gestureError = t
             }
         }
-        // The seed counters must be DISPLACED at some point during the gesture;
-        // they only return to the seed on release (static demo poll), so a gone
-        // event can only mean the preview went live mid-gesture. The gesture is
-        // exactly 1.2s dwell + 3s slide, well inside the 8s window.
-        val elapsedMoved = device.wait(Until.gone(By.text("25:00")), 8000)
+        // The seed counters must be DISPLACED during the gesture. The drag
+        // handler DEBUG-logs the exact value the counter Text renders; logcat
+        // cannot freeze the way this emulator's accessibility tree does under
+        // counter churn (runs 39955727138/39956293965/39958872473).
+        val t0 = SystemClock.uptimeMillis()
+        var live = false
+        var dragLog = ""
+        while (SystemClock.uptimeMillis() - t0 < 8000 && !live) {
+            Thread.sleep(400)
+            dragLog = device.executeShellCommand("logcat -d -s BMSeek:I")
+            live = dragLog.lines().any { line ->
+                Regex("drag sec=(\\d+)").find(line)?.groupValues?.get(1)?.toLongOrNull()
+                    ?.let { kotlin.math.abs(it - 1500) > 30 } == true
+            }
+        }
         assertNull("gesture injection failed: $gestureError", gestureError)
-        assertTrue("continuous drag elapsed preview never left the seed time", elapsedMoved)
-        val remainingMoved = device.wait(Until.gone(By.text("-1:25:24")), 3000)
-        assertTrue("continuous drag remaining preview never left the seed time", remainingMoved)
+        assertTrue("continuous drag preview never left the seed time: $dragLog", live)
         // The bar hint keeps its pre-1.9 wording ("Unlocked..."); the cancel
         // wording lives on the play/pause circle, not the bar hint.
         val unlocked = device.wait(Until.findObject(By.textContains("Unlocked")), 4000)
@@ -88,10 +114,11 @@ class SeekGestureTest {
         assertNull("gesture injection failed: $gestureError", gestureError)
         // State at the instant of release.
         capture("release")
-        // Post-release the static demo poll restores the seed counters; capture the
-        // state the assertion judges BEFORE judging it, pass or fail.
-        val post = device.wait(Until.findObject(By.text("25:00")), 3000)
+        // Post-release the static demo poll restores the seed counters; the
+        // shell pixel-compares the counter regions against the pre-gesture
+        // baseline (tree text here froze in run 39958872473).
+        Thread.sleep(1500)
         capture("post")
-        assertNotNull("post-release elapsed did not return to the seed poll (see seek-slide-post.png/xml)", post)
+        device.executeShellCommand("screencap -p /sdcard/bm-seek-slide-pixels-after.png")
     }
 }
