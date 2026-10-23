@@ -14,6 +14,7 @@ android {
         targetSdk = 34
         versionCode = 16
         versionName = "1.8.1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // Release signing key is private and never committed. CI passes it in through environment
@@ -61,4 +62,7 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    // Screenshot-rig only: drives the continuous hold-then-slide seek gesture as one touch.
+    androidTestImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
