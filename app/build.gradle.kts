@@ -64,5 +64,6 @@ dependencies {
     testImplementation("org.json:json:20240303")
     // Screenshot-rig only: drives the continuous hold-then-slide seek gesture as one touch.
     androidTestImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
