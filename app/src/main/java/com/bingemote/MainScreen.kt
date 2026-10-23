@@ -24,8 +24,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -34,6 +32,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
@@ -66,51 +65,42 @@ fun MainScreen(
                 },
             )
 
-            // Ezzy's responsive layout: the equal gaps above soak up extra height on
-            // taller screens; on shorter screens the buttons shrink to fit (never grow),
-            // so nothing clips instead of squeezing the gaps to zero first.
+            // Ezzy's responsive layout: the equal weight gaps soak up extra height on
+            // taller screens; on shorter screens the whole home shrinks uniformly to
+            // fit (text included) instead of clipping the bottom row.
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val fontScale = LocalDensity.current.fontScale
             // Shrink only on REAL overflow: the fixed parts (card, seek block,
             // minimum gaps, bottom margin) measured on the reference profile are
-            // ~110dp of frame plus ~80dp of text that grows with the font. At
-            // font 1.0 on his geometry this leaves scale exactly 1.0, so the
-            // approved sizes render untouched; bigger fonts shrink the tiles
-            // instead of clipping the bottom row.
+            // ~110dp of frame plus ~80dp of text that grows with the font.
             val fixedDp = 110f + 80f * fontScale +
                 (if (remote.helperDown) 96f else 0f)
             val tilesDp = 358f
-            val scale = ((maxHeight.value - fixedDp) / tilesDp).coerceIn(0.75f, 1f)
 
-            // Ezzy's responsive rules, verified 8:07 PM in his own words:
-            // a smaller phone shrinks EVERYTHING to scale; a different aspect
-            // ratio re-spaces the rows (the equal weight gaps do that), content
-            // size untouched. The uniform scale is driven by WIDTH only: a
-            // narrower phone shrinks everything, a wider one never grows
-            // (capped at 1). A height ratio mis-fires in practice because
-            // screenHeightDp is the window height (gesture nav bar excluded),
-            // not the panel height his reference geometry describes, so it
-            // shrank content on reference-sized screens; short-height phones
-            // are already covered by the shrink-to-fit tiles above and the
-            // equal weight gaps. Reference width 356dp is INFERRED from his
-            // screenshots, not confirmed device state. At uniform == 1f this
-            // wrapper is an exact no-op.
+            // Ezzy's responsive rules, verified 8:07 PM in his own words: a
+            // smaller phone shrinks EVERYTHING to scale; a different aspect ratio
+            // re-spaces the rows (the equal weight gaps do that), content size
+            // untouched; nothing ever grows past how it renders on his screen.
+            // One uniform factor from two axes (Tab technical agreement 8:42):
+            //  - width: a narrower phone shrinks everything (reference width
+            //    356dp INFERRED from his screenshots, not confirmed device state)
+            //  - height: only on REAL overflow of the actual available space the
+            //    WHOLE home shrinks uniformly, text included - never tile-only.
+            // Implemented as a density override, not a draw-layer scale: every dp
+            // and sp inside shrinks in the same proportion while the layout flows
+            // normally, so the equal weight gaps keep working and content can
+            // never be painted out of place. At uniform == 1f this is a no-op.
             val cfg = LocalConfiguration.current
-            val uniform = minOf(1f, cfg.screenWidthDp / 356f)
-
-            val availW = maxWidth
-            val availH = maxHeight
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            Column(
-                Modifier
-                    .requiredWidth((availW.value / uniform).dp)
-                    .requiredHeight((availH.value / uniform).dp)
-                    .graphicsLayer {
-                        scaleX = uniform
-                        scaleY = uniform
-                        transformOrigin = TransformOrigin(0.5f, 0f)
-                    },
+            val uniform = minOf(
+                1f,
+                cfg.screenWidthDp / 356f,
+                maxHeight.value / (fixedDp + tilesDp),
+            ).coerceAtLeast(0.75f)
+            val baseDensity = LocalDensity.current
+            CompositionLocalProvider(
+                LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale * uniform),
             ) {
+            Column(Modifier.fillMaxSize()) {
 
             // Now playing
             // When the PC is unreachable the card itself says so; no overlay, no Retry.
@@ -159,7 +149,7 @@ fun MainScreen(
                 SeekBlock(remote)
                 Spacer(Modifier.weight(1f))
             }
-            VolumeRow(remote, flashAll, scale)
+            VolumeRow(remote, flashAll)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
                 Column(
@@ -179,15 +169,15 @@ fun MainScreen(
                 }
             }
             Spacer(Modifier.weight(1f))
-            SkipRow(remote, flashAll, scale)
+            SkipRow(remote, flashAll)
             Spacer(Modifier.weight(1f))
-            SecondarySkipRow(remote, scale)
+            SecondarySkipRow(remote)
             if (!seekTop) {
                 Spacer(Modifier.weight(1f))
                 SeekBlock(remote)
             }
             Spacer(Modifier.weight(1f))
-            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse, scale = scale)
+            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
             }
             }
@@ -457,7 +447,7 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
         }
         Spacer(Modifier.width(12.dp))
-        PlayPauseButton(remote, playing, flashAll, scale)
+        PlayPauseButton(remote, playing, flashAll)
         Spacer(Modifier.width(12.dp))
         PressTile(
             onTap = { remote.skip(remote.store.skipMainSec) },
