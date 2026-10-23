@@ -311,7 +311,11 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
     // long as this block is composed; no other view listener exists to clobber.
     DisposableEffect(view) {
         val listener = View.OnTouchListener { _, ev ->
-            if (ev.actionMasked == MotionEvent.ACTION_CANCEL) drag.rawCancelAt = ev.eventTime
+            val a = ev.actionMasked
+            if (a == MotionEvent.ACTION_CANCEL) drag.rawCancelAt = ev.eventTime
+            if (BuildConfig.DEBUG && (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL)) {
+                Log.i("BMSeek", "raw action=$a")
+            }
             false
         }
         view.setOnTouchListener(listener)
