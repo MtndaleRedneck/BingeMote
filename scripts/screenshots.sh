@@ -96,56 +96,25 @@ grep -q 'text="25:00"' screenshots/seek-up.xml || { echo 'ASSERT FAIL: post-rele
 grep -q 'text="-1:25:24"' screenshots/seek-up.xml || { echo 'ASSERT FAIL: post-release remaining did not return to the seed poll'; SEEK_FAIL=1; }
 grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-command.txt || { echo 'ASSERT FAIL: release issued no in-range seekTo'; SEEK_FAIL=1; }
 # 3) Continuous hold-then-slide as ONE touch (the original complaint path):
-#    down while locked, hold past the 850ms in-press unlock, slide, release -
-#    no lift between hold and slide. `input swipe` cannot pause mid-gesture,
-#    so the events are streamed on-device with sendevent (60 steps over 6s).
-TOUCH_DEV=$(adb shell getevent -pl 2>/dev/null | tr -d '\r' | awk '/^add device/{d=$NF} /ABS_MT_POSITION_X/ && !found {print d; found=1}')
-if [ -z "$TOUCH_DEV" ]; then
-  echo 'NOTE: no multitouch input device found; continuous hold-then-slide not exercised'
-else
-  echo "continuous hold-then-slide on $TOUCH_DEV"
-  adb shell am force-stop com.bingemote
-  adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true
-  sleep 6
-  dismiss_anr
-  adb logcat -c
-  SE="sendevent $TOUCH_DEV 3 57 0
-sendevent $TOUCH_DEV 3 53 400
-sendevent $TOUCH_DEV 3 54 913
-sendevent $TOUCH_DEV 1 330 1
-sendevent $TOUCH_DEV 0 0 0
-sleep 1.2"
-  for i in $(seq 1 60); do
-    X=$((400 + (i * 750) / 60))
-    Y=$((913 - (i * 150) / 60))
-    SE="$SE
-sendevent $TOUCH_DEV 3 53 $X
-sendevent $TOUCH_DEV 3 54 $Y
-sendevent $TOUCH_DEV 0 0 0
-sleep 0.1"
-  done
-  SE="$SE
-sendevent $TOUCH_DEV 3 57 4294967295
-sendevent $TOUCH_DEV 1 330 0
-sendevent $TOUCH_DEV 0 0 0"
-  echo "$SE" | adb shell sh &
-  SE_PID=$!
-  sleep 3
-  # ~1.2s hold + ~1.8s into the slide: mid-gesture, past the in-press unlock.
-  adb exec-out screencap -p > screenshots/main-seekslide.png
-  dump_texts seek-slide-mid
-  wait "$SE_PID"
-  sleep 0.5
-  adb exec-out screencap -p > screenshots/main-seekslide-up.png
-  dump_texts seek-slide-up
-  adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
-  echo '--- BMSeek (continuous) ---'
-  cat screenshots/seek-slide-command.txt
-  grep -q 'Unlocked' screenshots/seek-slide-mid.xml || { echo 'ASSERT FAIL: in-press hold did not unlock during the slide'; SEEK_FAIL=1; }
-  if grep -q 'text="25:00"' screenshots/seek-slide-mid.xml; then echo 'ASSERT FAIL: continuous drag elapsed preview stayed at seed time'; SEEK_FAIL=1; fi
-  if grep -q 'text="-1:25:24"' screenshots/seek-slide-mid.xml; then echo 'ASSERT FAIL: continuous drag remaining preview stayed at seed time'; SEEK_FAIL=1; fi
-  grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-slide-command.txt || { echo 'ASSERT FAIL: continuous release issued no in-range seekTo'; SEEK_FAIL=1; }
-fi
+#    down while locked, the 850ms unlock firing mid-press, then sliding without
+#    lifting. `input swipe` cannot pause mid-gesture and the shell user may not
+#    write /dev/input directly, so a UiAutomator instrumentation test performs
+#    the gesture and asserts the live preview DURING it; the seekTo log check
+#    happens here after the run.
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true
+sleep 6
+dismiss_anr
+adb logcat -c
+adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/seek-slide-instrument.txt
+grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT FAIL: continuous hold-then-slide test failed (see seek-slide-instrument.txt)'; SEEK_FAIL=1; }
+adb exec-out screencap -p > screenshots/main-seekslide-up.png
+adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
+echo '--- BMSeek (continuous) ---'
+cat screenshots/seek-slide-command.txt
+grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-slide-command.txt || { echo 'ASSERT FAIL: continuous release issued no in-range seekTo'; SEEK_FAIL=1; }
 [ "$SEEK_FAIL" -eq 0 ] || exit 1
 # Small phone, same aspect ratio as the reference (~1.94): everything should
 # shrink to one uniform scale (296/356 ~ 0.83), gaps included.
