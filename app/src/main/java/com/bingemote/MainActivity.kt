@@ -38,6 +38,18 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
 
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val a = ev.actionMasked
+        // The one place every raw touch enters the app (the Compose root view
+        // overrides dispatchTouchEvent, so a view-level OnTouchListener never
+        // fires). A system cancel marks the gesture: it must not seek.
+        if (a == android.view.MotionEvent.ACTION_CANCEL) RawTouch.cancelAt = ev.eventTime
+        if (BuildConfig.DEBUG && (a == android.view.MotionEvent.ACTION_DOWN || a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL)) {
+            android.util.Log.i("BMSeek", "raw action=$a")
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     private lateinit var store: Store
     private lateinit var remote: RemoteState
     private var screen: MutableState<String>? = null

@@ -254,11 +254,12 @@ private fun StatusPill(connected: Boolean, modifier: Modifier = Modifier) {
 
 /** Live seek-drag facts shared between the bar (the gesture owner) and the
  * play/pause circle (the cancel target while a drag is active). */
+/** eventTime of the last raw ACTION_CANCEL entering the app; 0 = none since
+ * the current gesture started. Written by MainActivity.dispatchTouchEvent. */
+object RawTouch { var cancelAt = 0L }
+
 private class SeekDrag {
     var active by mutableStateOf(false)
-    // eventTime of the last raw ACTION_CANCEL seen on the host view; 0 = none
-    // since the current gesture started. UI-thread only, no recompose needed.
-    var rawCancelAt = 0L
     var inCircle by mutableStateOf(false)
     var proximity by mutableStateOf(0f)
     var circle by mutableStateOf<Rect?>(null)
@@ -304,24 +305,6 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val seekDensity = LocalDensity.current
-    // A system-cancelled drag (nav swipe, gesture grab) must not seek. Compose
-    // delivers ACTION_CANCEL to pointerInput as a synthetic Release that is
-    // indistinguishable from a real finger-up, so the raw stream marks it
-    // instead. The listener only observes (returns false) and lives exactly as
-    // long as this block is composed; no other view listener exists to clobber.
-    DisposableEffect(view) {
-        val listener = View.OnTouchListener { _, ev ->
-            val a = ev.actionMasked
-            if (a == MotionEvent.ACTION_CANCEL) drag.rawCancelAt = ev.eventTime
-            if (BuildConfig.DEBUG && (a == MotionEvent.ACTION_DOWN || a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL)) {
-                Log.i("BMSeek", "raw action=$a")
-            }
-            false
-        }
-        view.setOnTouchListener(listener)
-        onDispose { view.setOnTouchListener(null) }
-    }
-    // Proximity ramp for the cancel circle: full effect at its border, none 96dp away.
     val rampPx = with(seekDensity) { 96.dp.toPx() }
 
     // Relock about five seconds after the last touch, never mid-press.
@@ -389,7 +372,7 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         pressing = true
-                        drag.rawCancelAt = 0L
+                        RawTouch.cancelAt = 0L
                         var holdJob: Job? = null
                         if (!unlockedNow) {
                             holdJob = scope.launch {
@@ -436,7 +419,7 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
                                     up = true
                                     // Only a real finger-up counts; a system cancel
                                     // arrives as the same synthetic release shape.
-                                    cleanRelease = drag.rawCancelAt == 0L
+                                    cleanRelease = RawTouch.cancelAt == 0L
                                 }
                             }
                         } catch (e: CancellationException) {

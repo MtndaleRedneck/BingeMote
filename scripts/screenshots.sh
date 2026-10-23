@@ -98,6 +98,17 @@ if grep -q 'text="-1:25:24"' screenshots/seek-mid.xml; then echo 'ASSERT FAIL: d
 grep -q 'text="25:00"' screenshots/seek-up.xml || { echo 'ASSERT FAIL: post-release elapsed did not return to the seed poll'; SEEK_FAIL=1; }
 grep -q 'text="-1:25:24"' screenshots/seek-up.xml || { echo 'ASSERT FAIL: post-release remaining did not return to the seed poll'; SEEK_FAIL=1; }
 grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-command.txt || { echo 'ASSERT FAIL: release issued no in-range seekTo'; SEEK_FAIL=1; }
+
+# Counter bounds ride the logcat (UiAutomation executeShellCommand does not
+# interpret shell redirection on this emulator - run 39960953492). Extract the
+# last logged fwd/back pair for a tag into a bounds file.
+extract_bounds() { # $1 logcat file, $2 tag, $3 output file
+  : > "$3"
+  grep -oE "bounds $2 fwd [0-9]+ [0-9]+ [0-9]+ [0-9]+" "$1" | tail -1 | sed -E "s/^bounds $2 //" >> "$3" || true
+  grep -oE "bounds $2 back [0-9]+ [0-9]+ [0-9]+ [0-9]+" "$1" | tail -1 | sed -E "s/^bounds $2 //" >> "$3" || true
+}
+bounds_ok() { grep -q '^fwd ' "$1" && grep -q '^back ' "$1"; }
+
 # 3) Continuous hold-then-slide as ONE touch (the original complaint path):
 #    down while locked, the 850ms unlock firing mid-press, then sliding without
 #    lifting. `input swipe` cannot pause mid-gesture and the shell user may not
@@ -115,8 +126,9 @@ grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT F
 # written to the target app's internal files dir and retrieved via run-as (debug build
 # is debuggable). Each extraction is verified by size and file signature BEFORE the
 # pixels are interpreted; a bad pull is a loud rig defect, never a silent NOTE.
+extract_bounds screenshots/seek-slide-logcat.txt seek-slide screenshots/seek-slide-bounds.txt
 for f in seek-slide-mid.png seek-slide-release.png seek-slide-post.png \
-         seek-slide-pixels-before.png seek-slide-pixels-after.png seek-slide-bounds.txt; do
+         seek-slide-pixels-before.png seek-slide-pixels-after.png; do
   adb exec-out cat "/sdcard/bm-$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
@@ -129,11 +141,12 @@ done
 # Post-release seed-return: the counter regions must pixel-match the baseline.
 if file -b screenshots/seek-slide-pixels-before.png 2>/dev/null | grep -q 'PNG image' \
    && file -b screenshots/seek-slide-pixels-after.png 2>/dev/null | grep -q 'PNG image' \
-   && [ -s screenshots/seek-slide-bounds.txt ]; then
+   && bounds_ok screenshots/seek-slide-bounds.txt; then
   python3 scripts/pixel_region_compare.py \
     screenshots/seek-slide-pixels-before.png \
     screenshots/seek-slide-pixels-after.png \
-    screenshots/seek-slide-bounds.txt || { echo 'ASSERT FAIL: post-release counters did not pixel-match the seed'; SEEK_FAIL=1; }
+    screenshots/seek-slide-bounds.txt 2>&1 | tee screenshots/pixel-compare-seek-slide.txt \
+    || { echo 'ASSERT FAIL: post-release counters did not pixel-match the seed'; SEEK_FAIL=1; }
 else
   echo 'ASSERT FAIL: missing/invalid seek-slide pixel-compare inputs'; SEEK_FAIL=1
 fi
@@ -150,14 +163,16 @@ adb logcat -c
 adb shell am instrument -w -e class com.bingemote.CancelGestureTest,com.bingemote.StoreMigrationTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt
 adb logcat -d > screenshots/cancel-logcat.txt
-grep -q '^OK (4 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
+grep -q '^OK (5 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
+for tag in ring fills interrupted; do
+  extract_bounds screenshots/cancel-logcat.txt "$tag" "screenshots/cancel-bounds-$tag.txt"
+done
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \
          cancel-pixels-ring-before.png cancel-pixels-ring-after.png \
          cancel-pixels-fills-before.png cancel-pixels-fills-after.png \
-         cancel-pixels-interrupted-before.png cancel-pixels-interrupted-after.png \
-         cancel-bounds-ring.txt cancel-bounds-fills.txt cancel-bounds-interrupted.txt; do
+         cancel-pixels-interrupted-before.png cancel-pixels-interrupted-after.png; do
   adb exec-out cat "/sdcard/bm-$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
@@ -173,11 +188,12 @@ done
 for tag in ring fills interrupted; do
   if file -b "screenshots/cancel-pixels-$tag-before.png" 2>/dev/null | grep -q 'PNG image' \
      && file -b "screenshots/cancel-pixels-$tag-after.png" 2>/dev/null | grep -q 'PNG image' \
-     && [ -s "screenshots/cancel-bounds-$tag.txt" ]; then
+     && bounds_ok "screenshots/cancel-bounds-$tag.txt"; then
     python3 scripts/pixel_region_compare.py \
       "screenshots/cancel-pixels-$tag-before.png" \
       "screenshots/cancel-pixels-$tag-after.png" \
-      "screenshots/cancel-bounds-$tag.txt" || { echo "ASSERT FAIL: counters did not pixel-match the seed ($tag)"; SEEK_FAIL=1; }
+      "screenshots/cancel-bounds-$tag.txt" 2>&1 | tee "screenshots/pixel-compare-$tag.txt" \
+      || { echo "ASSERT FAIL: counters did not pixel-match the seed ($tag)"; SEEK_FAIL=1; }
   else
     echo "PULL DIAG: missing pixel-compare inputs for $tag"; SEEK_FAIL=1
   fi
