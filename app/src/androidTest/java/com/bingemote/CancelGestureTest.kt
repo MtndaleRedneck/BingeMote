@@ -223,6 +223,73 @@ class CancelGestureTest {
     }
 
     /**
+     * The cancel target is the VISIBLE circle, not the button's square layout
+     * rect: a release at a rect corner (inside the rect, outside the ring)
+     * must seek, and the drag must never enter the circle on the way (no
+     * entry buzz, no "Release to cancel" wording). The approach drops
+     * vertically onto the corner at a constant x outside the inscribed
+     * circle, so the path itself never clips the ring.
+     */
+    @Test
+    fun releaseAtRectCornerSeeksNotCancels() {
+        android.util.Log.i("BMSeek", "BEGIN cornerRelease")
+        launch("ring")
+        val pauseBtn = device.wait(Until.findObject(By.desc("Pause")), 8000)
+        assertNotNull("play/pause button not found", pauseBtn)
+        val b = pauseBtn.visibleBounds
+        // 6px off the rect's top-left corner: inside the layout rect, while
+        // the point and the whole vertical approach stay ~10px+ outside the
+        // inscribed circle (corner distance is ~41% beyond the radius).
+        val px = (b.left + 6).toFloat()
+        val py = (b.top + 6).toFloat()
+        val expSec = ((px - 44f) / 1352f * 6624f).toLong()
+        var gestureError: Throwable? = null
+        val gesture = thread {
+            try {
+                val ua = instrumentation.uiAutomation
+                val t0 = SystemClock.uptimeMillis()
+                fun inject(action: Int, x: Float, y: Float) {
+                    val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
+                    ua.injectInputEvent(ev, true)
+                    ev.recycle()
+                }
+                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
+                for (i in 1..15) { // along the bar row to the corner's x
+                    inject(MotionEvent.ACTION_MOVE, 400f + (px - 400f) * i / 15, 913f)
+                    Thread.sleep(75)
+                }
+                for (i in 1..10) { // straight down onto the corner
+                    inject(MotionEvent.ACTION_MOVE, px, 913f + (py - 913f) * i / 10)
+                    Thread.sleep(75)
+                }
+                Thread.sleep(1000)
+                inject(MotionEvent.ACTION_UP, px, py)
+            } catch (t: Throwable) { gestureError = t }
+        }
+        val t0 = SystemClock.uptimeMillis()
+        var dragLog = ""
+        while (SystemClock.uptimeMillis() - t0 < 8000) {
+            Thread.sleep(400)
+            dragLog = bmSeekLog("cornerRelease")
+            if (dragLogHas(dragLog, expSec, 2, inCircle = false)) break
+        }
+        gesture.join()
+        assertNull("gesture injection failed: $gestureError", gestureError)
+        Thread.sleep(1000)
+        val log = bmSeekLog("cornerRelease")
+        assertTrue("drag preview never reached the corner target (want sec~$expSec inCircle=false): $log",
+            dragLogHas(log, expSec, 2, inCircle = false))
+        assertFalse("finger at the rect corner entered the circle (buzz + cancel wording): $log",
+            log.contains("inCircle=true"))
+        val sought = Regex("seekTo seconds=(\\d+)").find(log)?.groupValues?.get(1)?.toLongOrNull()
+        assertTrue("release at the rect corner issued no seek: $log", sought != null)
+        assertTrue("release-at-corner seek $sought missed the drag target ~$expSec: $log",
+            sought != null && kotlin.math.abs(sought - expSec) <= 2)
+        assertFalse("release at the rect corner toggled play/pause: $log", log.contains("togglePause"))
+    }
+
+    /**
      * Characterizes the injected ACTION_CANCEL path next to the faithful
      * activity-switch test above. The raw stream is hooked at
      * MainActivity.dispatchTouchEvent (DEBUG "raw action=" lines), so the

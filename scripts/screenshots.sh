@@ -163,7 +163,7 @@ adb logcat -c
 adb shell am instrument -w -e class com.bingemote.CancelGestureTest,com.bingemote.StoreMigrationTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt
 adb logcat -d > screenshots/cancel-logcat.txt
-grep -q '^OK (5 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
+grep -q '^OK (6 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
 for tag in ring fills interrupted; do
   extract_bounds screenshots/cancel-logcat.txt "$tag" "screenshots/cancel-bounds-$tag.txt"
 done
