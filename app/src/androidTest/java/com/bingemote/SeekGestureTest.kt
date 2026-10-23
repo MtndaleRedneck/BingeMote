@@ -87,10 +87,9 @@ class SeekGestureTest {
         assertTrue("continuous drag elapsed preview never left the seed time", elapsedMoved)
         val remainingMoved = device.wait(Until.gone(By.text("-1:25:24")), 3000)
         assertTrue("continuous drag remaining preview never left the seed time", remainingMoved)
-        // Since 1.9 the mid-drag hint is "Release to seek" ("Unlocked..." shows
-        // only when unlocked and NOT dragging); it appears only once the in-press
-        // hold has unlocked and the drag is live.
-        val unlocked = device.wait(Until.findObject(By.textContains("Release to seek")), 4000)
+        // The bar hint keeps its pre-1.9 wording ("Unlocked..."); the cancel
+        // wording lives on the play/pause circle, not the bar hint.
+        val unlocked = device.wait(Until.findObject(By.textContains("Unlocked")), 4000)
         assertNotNull("in-press hold did not unlock during the slide", unlocked)
         // Pixel + tree proof, captured while the slide is still running.
         capture("mid")
