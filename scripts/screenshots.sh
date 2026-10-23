@@ -108,6 +108,8 @@ adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
 # Keep the full logcat whatever happened: a crashed test process leaves its stack here.
 adb logcat -d > screenshots/seek-slide-logcat.txt
 grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT FAIL: continuous hold-then-slide test failed (see seek-slide-instrument.txt)'; SEEK_FAIL=1; }
+# Pixel proof the test captured mid-slide.
+adb pull /sdcard/Android/data/com.bingemote.test/files/seek-slide-mid.png screenshots/main-seekslide.png 2>/dev/null || echo 'NOTE: no mid-slide screenshot pulled'
 adb exec-out screencap -p > screenshots/main-seekslide-up.png
 adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
 echo '--- BMSeek (continuous) ---'
