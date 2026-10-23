@@ -73,6 +73,11 @@ class RemoteState(
         liveHost = host; livePort = port; liveToken = token
     }
 
+    /** Screenshot-rig only: a fake playing video so seek-drag captures show real times. */
+    fun debugSeedStatus() {
+        if (BuildConfig.DEBUG) status = VlcStatus("playing", "Demo", 1500, 6624, 128, false, emptyList())
+    }
+
     private var pollJob: Job? = null
     private var failures = 0
     private var helperFailures = 0

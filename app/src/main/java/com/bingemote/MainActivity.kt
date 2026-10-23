@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
         // Screenshot rig: force the seek bar on top for the seektop capture.
         if (BuildConfig.DEBUG && intent.getBooleanExtra("seektop", false)) store.seekOnTop = true
         remote = RemoteState(this, store, lifecycleScope)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
             ManualUpdate.offer = UpdateInfo(
