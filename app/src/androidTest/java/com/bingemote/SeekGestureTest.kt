@@ -41,7 +41,10 @@ class SeekGestureTest {
         // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
         val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)
         assertNotNull("seeded demo seek block did not appear", seeded)
-        val evidenceDir = instrumentation.context.getExternalFilesDir(null)!!
+        // External storage is unavailable to the test package on this AVD
+        // (getExternalFilesDir returned null, run 39913166669); the target app's
+        // internal files dir always exists and the shell reads it back via run-as.
+        val evidenceDir = instrumentation.targetContext.filesDir
         assertTrue("evidence dir unusable: ${evidenceDir.absolutePath}",
             evidenceDir.isDirectory || evidenceDir.mkdirs())
         fun capture(tag: String) {

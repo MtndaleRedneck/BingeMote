@@ -108,13 +108,20 @@ adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
 # Keep the full logcat whatever happened: a crashed test process leaves its stack here.
 adb logcat -d > screenshots/seek-slide-logcat.txt
 grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT FAIL: continuous hold-then-slide test failed (see seek-slide-instrument.txt)'; SEEK_FAIL=1; }
-# Evidence the test captured inside the instrument (mid-slide, release, post-release).
-# Diagnose the exact path/result: list the evidence dir first, then pull each file
-# with the adb error visible - a missing capture is a rig defect, not a silent NOTE.
-EVDIR=/sdcard/Android/data/com.bingemote.test/files
-adb shell "ls -l $EVDIR" || echo 'PULL DIAG: evidence dir listing failed'
+# Evidence the test captured inside the instrument (mid-slide, release, post-release),
+# written to the target app's internal files dir and retrieved via run-as (debug build
+# is debuggable). Each extraction is verified by size and file signature BEFORE the
+# pixels are interpreted; a bad pull is a loud rig defect, never a silent NOTE.
+adb shell "run-as com.bingemote ls -l files" || echo 'PULL DIAG: evidence dir listing failed'
 for f in seek-slide-mid.png seek-slide-mid.xml seek-slide-release.png seek-slide-release.xml seek-slide-post.png seek-slide-post.xml; do
-  adb pull "$EVDIR/$f" "screenshots/$f" || echo "PULL DIAG: failed: $f"
+  adb exec-out run-as com.bingemote cat "files/$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
+  sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
+  sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
+  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image|XML|text'; then
+    echo "PULLED: $f ($sz bytes, $sig)"
+  else
+    echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
+  fi
 done
 adb exec-out screencap -p > screenshots/main-seekslide-up.png
 adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
