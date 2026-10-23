@@ -44,7 +44,8 @@ class SeekGestureTest {
         assertNotNull("play/pause button not found after launch",
             device.wait(Until.findObject(By.desc("Pause")), 8000))
         Thread.sleep(1500)
-        device.executeShellCommand("logcat -c")
+        // Isolation by marker, not logcat -c (see CancelGestureTest.bmSeekLog).
+        android.util.Log.i("BMSeek", "BEGIN continuousHoldThenSlide")
         // Baseline for the shell-side seed-return pixel compare.
         val seedFwd = device.findObject(By.text("25:00"))
         val seedBack = device.findObject(By.text("-1:25:24"))
@@ -95,6 +96,8 @@ class SeekGestureTest {
         while (SystemClock.uptimeMillis() - t0 < 8000 && !live) {
             Thread.sleep(400)
             dragLog = device.executeShellCommand("logcat -d -s BMSeek:I")
+            val bi = dragLog.lastIndexOf("BEGIN continuousHoldThenSlide")
+            if (bi >= 0) dragLog = dragLog.substring(bi)
             live = dragLog.lines().any { line ->
                 Regex("drag sec=(\\d+)").find(line)?.groupValues?.get(1)?.toLongOrNull()
                     ?.let { kotlin.math.abs(it - 1500) > 30 } == true

@@ -58,7 +58,15 @@ class CancelGestureTest {
         device.executeShellCommand("screencap -p /sdcard/bm-cancel-$tag.png")
     }
 
-    private fun bmSeekLog(): String = device.executeShellCommand("logcat -d -s BMSeek:I")
+    /** BMSeek lines after this test's last BEGIN marker. Tests no longer run
+     * logcat -c: a later test's clear wiped earlier tests' bounds lines before
+     * the single end-of-run host dump (run 39964355071), so isolation is by
+     * marker instead. */
+    private fun bmSeekLog(marker: String): String {
+        val log = device.executeShellCommand("logcat -d -s BMSeek:I")
+        val i = log.lastIndexOf("BEGIN $marker")
+        return if (i >= 0) log.substring(i) else log
+    }
 
     /** Seed counter bounds + a baseline shot, for the shell-side pixel compare. */
     private fun counterBaseline(tag: String) {
@@ -87,7 +95,7 @@ class CancelGestureTest {
         }
 
     private fun releaseInsideCancels(style: String) {
-        device.executeShellCommand("logcat -c")
+        android.util.Log.i("BMSeek", "BEGIN releaseInside-$style")
         launch(style)
         val pauseBtn = device.wait(Until.findObject(By.desc("Pause")), 8000)
         assertNotNull("play/pause button not found", pauseBtn)
@@ -126,7 +134,7 @@ class CancelGestureTest {
         var dragLog = ""
         while (SystemClock.uptimeMillis() - t0 < 8000) {
             Thread.sleep(400)
-            dragLog = bmSeekLog()
+            dragLog = bmSeekLog("releaseInside-$style")
             if (dragLogHas(dragLog, expSec, 2, inCircle = true)) break
         }
         assertNull("gesture injection failed: $gestureError", gestureError)
@@ -140,7 +148,7 @@ class CancelGestureTest {
         Thread.sleep(1000)
         capture("after-$style")
         device.executeShellCommand("screencap -p /sdcard/bm-cancel-pixels-$style-after.png")
-        val log = bmSeekLog()
+        val log = bmSeekLog("releaseInside-$style")
         assertFalse("release inside the circle issued a seek: $log", log.contains("seekTo"))
         assertFalse("release inside the circle toggled play/pause: $log", log.contains("togglePause"))
         // Seed-return is asserted by the shell: pixel compare of the counter
@@ -155,7 +163,7 @@ class CancelGestureTest {
 
     @Test
     fun interruptedDragDoesNothing() {
-        device.executeShellCommand("logcat -c")
+        android.util.Log.i("BMSeek", "BEGIN interrupted")
         launch("ring")
         counterBaseline("interrupted")
         var gestureError: Throwable? = null
@@ -184,7 +192,7 @@ class CancelGestureTest {
         var dragLog = ""
         while (SystemClock.uptimeMillis() - t0 < 8000 && !live) {
             Thread.sleep(400)
-            dragLog = bmSeekLog()
+            dragLog = bmSeekLog("interrupted")
             live = dragLog.lines().any { line ->
                 Regex("drag sec=(\\d+)").find(line)?.groupValues?.get(1)?.toLongOrNull()
                     ?.let { kotlin.math.abs(it - 1500) > 30 } == true
@@ -200,7 +208,7 @@ class CancelGestureTest {
         Thread.sleep(2500)
         capture("interrupted") // foreground = settings: the interruption itself
         gesture.join()
-        val log = bmSeekLog()
+        val log = bmSeekLog("interrupted")
         assertFalse("interrupted drag issued a seek: $log", log.contains("seekTo"))
         assertFalse("interrupted drag toggled play/pause: $log", log.contains("togglePause"))
         // Back to the seeded main screen; the counters sit at the polled seed.
@@ -226,7 +234,7 @@ class CancelGestureTest {
      */
     @Test
     fun injectedCancelDoesNotSeek() {
-        device.executeShellCommand("logcat -c")
+        android.util.Log.i("BMSeek", "BEGIN injectedCancel")
         launch("ring")
         assertNotNull("play/pause button not found",
             device.wait(Until.findObject(By.desc("Pause")), 8000))
@@ -255,7 +263,7 @@ class CancelGestureTest {
         var dragLog = ""
         while (SystemClock.uptimeMillis() - t0 < 8000 && !live) {
             Thread.sleep(400)
-            dragLog = bmSeekLog()
+            dragLog = bmSeekLog("injectedCancel")
             live = dragLog.lines().any { line ->
                 Regex("drag sec=(\\d+)").find(line)?.groupValues?.get(1)?.toLongOrNull()
                     ?.let { kotlin.math.abs(it - 1500) > 30 } == true
@@ -265,7 +273,7 @@ class CancelGestureTest {
         assertTrue("drag preview never went live before the injected cancel: $dragLog", live)
         gesture.join()
         Thread.sleep(1000)
-        val log = bmSeekLog()
+        val log = bmSeekLog("injectedCancel")
         val rawAfterDrag = log.lines().map { it.trim() }
             .filter { Regex("raw action=\\d+").containsMatchIn(it) }
         // A DOWN must be there from the gesture start; the diagnostic is the
