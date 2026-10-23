@@ -26,11 +26,18 @@ class SeekGestureTest {
     fun continuousHoldThenSlide() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val start = Point(400, 913)
+        val dwell = Point(401, 913) // 1px: a non-degenerate segment, under the 14px move threshold
         val end = Point(1150, 760)
+        var gestureError: Throwable? = null
         val gesture = thread {
-            // [start, start, end] at 300 steps/segment (~5ms each): ~1.5s dwell past
+            // [start, dwell, end] at 300 steps/segment (~5ms each): ~1.5s dwell past
             // the 850ms in-press unlock, then a ~1.5s slide - one unbroken touch.
-            device.swipe(arrayOf(start, start, end), 300)
+            // An injector exception must fail the test, not crash the process.
+            try {
+                device.swipe(arrayOf(start, dwell, end), 300)
+            } catch (t: Throwable) {
+                gestureError = t
+            }
         }
         // ~0.5s into the slide: mid-gesture, past the in-press unlock.
         Thread.sleep(2000)
@@ -50,6 +57,7 @@ class SeekGestureTest {
             device.wait(Until.findObject(By.text("-1:25:24")), 500),
         )
         gesture.join()
+        assertNull("gesture injection failed: $gestureError", gestureError)
         // Post-release the static demo poll restores the seed counters.
         val post = device.wait(Until.findObject(By.text("25:00")), 3000)
         assertNotNull("post-release elapsed did not return to the seed poll", post)
