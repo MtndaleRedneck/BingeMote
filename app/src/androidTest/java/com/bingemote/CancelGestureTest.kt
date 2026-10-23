@@ -1,5 +1,7 @@
 package com.bingemote
 
+import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.os.SystemClock
 import android.view.MotionEvent
 import androidx.test.platform.app.InstrumentationRegistry
@@ -54,6 +56,60 @@ class CancelGestureTest {
 
     private fun bmSeekLog(): String = device.executeShellCommand("logcat -d -s BMSeek:I")
 
+    /** Pixel-compare one region of two screenshots (actual pixels, no tree). */
+    private fun regionMatches(a: File, b: File, r: Rect, toleranceFraction: Double = 0.01): Boolean {
+        val ba = BitmapFactory.decodeFile(a.path) ?: return false
+        val bb = BitmapFactory.decodeFile(b.path) ?: return false
+        var total = 0
+        var diff = 0
+        for (x in r.left until r.right) {
+            for (y in r.top until r.bottom) {
+                if (x >= ba.width || y >= ba.height || x >= bb.width || y >= bb.height) continue
+                total++
+                if (ba.getPixel(x, y) != bb.getPixel(x, y)) diff++
+            }
+        }
+        return total > 0 && diff <= (total * toleranceFraction).toInt()
+    }
+
+    /** Seed counter bounds + baseline pixels, captured before any gesture. */
+    private fun counterBaseline(tag: String): Triple<Rect, Rect, File> {
+        val seedFwd = device.findObject(By.text("25:00"))
+        val seedBack = device.findObject(By.text("-1:25:24"))
+        assertNotNull("seed counters not found for the baseline", seedFwd)
+        assertNotNull("seed back counter not found for the baseline", seedBack)
+        val before = File(instrumentation.targetContext.filesDir, "cancel-pixels-$tag-before.png")
+        assertTrue("baseline counter screenshot failed", device.takeScreenshot(before))
+        return Triple(seedFwd.visibleBounds, seedBack.visibleBounds, before)
+    }
+
+    /**
+     * The counters must actually come back - verified on real pixels, which the
+     * stale accessibility tree cannot fake (run 39953888432: byte-identical XML
+     * dumps across states). The tree-text assertion stays as the primary check;
+     * this is the tree-independent supplement.
+     */
+    private fun assertCountersRestored(tag: String, baseline: Triple<Rect, Rect, File>, fresh: Boolean) {
+        val after = File(instrumentation.targetContext.filesDir, "cancel-pixels-$tag-after.png")
+        assertTrue("post-gesture counter screenshot failed", device.takeScreenshot(after))
+        assertTrue(
+            "forward counter pixels differ from the seed (see cancel-pixels-$tag-*.png)",
+            regionMatches(baseline.third, after, baseline.first),
+        )
+        assertTrue(
+            "back counter pixels differ from the seed (see cancel-pixels-$tag-*.png)",
+            regionMatches(baseline.third, after, baseline.second),
+        )
+        assertTrue(
+            "no window update after the gesture ended: accessibility events not flowing, tree text unreliable",
+            fresh,
+        )
+        assertNotNull(
+            "counters did not return to the seed (see cancel-pixels-$tag-*.png)",
+            device.wait(Until.findObject(By.text("25:00")), 6000),
+        )
+    }
+
     /** "1:14:02" or "14:02", matching the app's formatTime. */
     private fun fmt(totalSeconds: Long): String {
         val s = totalSeconds.coerceAtLeast(0)
@@ -72,6 +128,7 @@ class CancelGestureTest {
         // The counters must stay live at the absolute-x target even with the
         // finger inside the circle (owner-approved; the freeze idea was rejected).
         val expSec = ((cx - 44f) / 1352f * 6624f).toLong()
+        val baseline = counterBaseline(style)
 
         var gestureError: Throwable? = null
         val gesture = thread {
@@ -101,15 +158,17 @@ class CancelGestureTest {
         assertNotNull("counters not live at the drag target inside the circle (see cancel-inside-$style.png/xml)", liveCounter)
         gesture.join()
         assertNull("gesture injection failed: $gestureError", gestureError)
+        // Freshness gate first: the counter revert on release IS a window content
+        // change, so catching it proves accessibility events are flowing before
+        // any tree text below is trusted. Asserted inside assertCountersRestored,
+        // after the pixel checks, so a stale tree cannot hide the pixel verdict.
+        val fresh = device.waitForWindowUpdate(null, 5000)
         Thread.sleep(1000)
         capture("after-$style")
         val log = bmSeekLog()
         assertFalse("release inside the circle issued a seek: $log", log.contains("seekTo"))
         assertFalse("release inside the circle toggled play/pause: $log", log.contains("togglePause"))
-        assertNotNull(
-            "counters did not return to the seed after cancel (see cancel-after-$style.png/xml)",
-            device.wait(Until.findObject(By.text("25:00")), 6000),
-        )
+        assertCountersRestored(style, baseline, fresh)
         assertNotNull(
             "play/pause flipped despite the cancel (no toggle allowed)",
             device.wait(Until.findObject(By.desc("Pause")), 2000),
@@ -126,6 +185,7 @@ class CancelGestureTest {
     fun interruptedDragDoesNothing() {
         device.executeShellCommand("logcat -c")
         launch("ring")
+        val baseline = counterBaseline("interrupted")
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
@@ -151,14 +211,12 @@ class CancelGestureTest {
         assertTrue("drag preview never went live before the interruption", moved)
         gesture.join()
         assertNull("gesture injection failed: $gestureError", gestureError)
+        val fresh = device.waitForWindowUpdate(null, 5000)
         Thread.sleep(1000)
         capture("interrupted")
         val log = bmSeekLog()
         assertFalse("interrupted drag issued a seek: $log", log.contains("seekTo"))
         assertFalse("interrupted drag toggled play/pause: $log", log.contains("togglePause"))
-        assertNotNull(
-            "counters did not return to the seed after the interruption",
-            device.wait(Until.findObject(By.text("25:00")), 6000),
-        )
+        assertCountersRestored("interrupted", baseline, fresh)
     }
 }

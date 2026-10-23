@@ -45,6 +45,15 @@ for scale in 1.0 1.3; do
   done
 done
 adb shell settings put system font_scale 1.0
+# Scrolled Settings: the Feel section (incl. "Cancel button style") sits below
+# the fold, so capture it explicitly for review.
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen settings >/dev/null
+sleep 8
+dismiss_anr
+adb shell input swipe 720 2100 720 700 400
+sleep 2
+adb exec-out screencap -p > "screenshots/settings-feel.png"
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1440x2807 emulator screenshot
 # (seek track x=44..1396, center y=913). Evidence first, assertions last: every
@@ -133,7 +142,10 @@ adb logcat -d > screenshots/cancel-logcat.txt
 grep -q '^OK (3 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-inside-ring.xml cancel-after-ring.png cancel-after-ring.xml \
          cancel-inside-fills.png cancel-inside-fills.xml cancel-after-fills.png cancel-after-fills.xml \
-         cancel-interrupted.png cancel-interrupted.xml; do
+         cancel-interrupted.png cancel-interrupted.xml \
+         cancel-pixels-ring-before.png cancel-pixels-ring-after.png \
+         cancel-pixels-fills-before.png cancel-pixels-fills-after.png \
+         cancel-pixels-interrupted-before.png cancel-pixels-interrupted-after.png; do
   adb exec-out run-as com.bingemote cat "files/$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)

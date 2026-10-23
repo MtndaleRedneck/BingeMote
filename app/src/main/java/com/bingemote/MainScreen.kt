@@ -467,13 +467,8 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
         Spacer(Modifier.height(2.dp))
         Row(Modifier.fillMaxWidth()) {
             Text(
-                when {
-                    drag.active && drag.inCircle -> "Release to cancel"
-                    drag.active -> "Release to seek"
-                    unlocked -> "Unlocked. Locks again in a few seconds"
-                    else -> "Hold the bar to unlock seeking"
-                },
-                color = if (unlocked || drag.active) Orange else Muted, fontSize = 12.sp,
+                if (unlocked) "Unlocked. Locks again in a few seconds" else "Hold the bar to unlock seeking",
+                color = if (unlocked) Orange else Muted, fontSize = 12.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, style = tight,
                 modifier = Modifier.weight(1f),
             )
