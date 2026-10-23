@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.PlatformTextStyle
@@ -32,9 +31,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -65,146 +66,70 @@ fun MainScreen(
                 },
             )
 
-            // Ezzy's responsive layout: the equal weight gaps soak up extra height on
-            // taller screens; on shorter screens the whole home shrinks uniformly to
-            // fit (text included) instead of clipping the bottom row.
-            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
-            val fontScale = LocalDensity.current.fontScale
-            // The non-gap content height, calibrated from CI reference shots:
-            // card + seek block + bottom margin measure ~152dp of frame plus
-            // ~25dp per font-scale unit of text growth (177dp at font 1.0,
-            // 185dp at 1.3). Used for the overflow factor below and for the
-            // equal horizontal share.
-            val fixedDp = 152f + 25f * fontScale +
-                (if (remote.helperDown) 96f else 0f)
-            val tilesDp = 358f
-
-            // Ezzy's responsive rules, verified 8:07 PM in his own words: a
-            // smaller phone shrinks EVERYTHING to scale; a different aspect ratio
-            // re-spaces the rows (the equal weight gaps do that), content size
-            // untouched; nothing ever grows past how it renders on his screen.
-            // One uniform factor from two axes (Tab technical agreement 8:42):
-            //  - width: a narrower phone shrinks everything (reference width
-            //    356dp INFERRED from his screenshots, not confirmed device state)
-            //  - height: only on REAL overflow of the actual available space the
-            //    WHOLE home shrinks uniformly, text included - never tile-only.
-            // Implemented as a density override, not a draw-layer scale: every dp
-            // and sp inside shrinks in the same proportion while the layout flows
-            // normally, so the equal weight gaps keep working and content can
-            // never be painted out of place. Only the dp density is scaled:
-            // sp -> px is sp * fontScale * density, so scaling density moves text
-            // by exactly the same factor as dp; scaling fontScale too would
-            // shrink text by the factor SQUARED relative to the tiles.
-            // At uniform == 1f this is a no-op.
-            val cfg = LocalConfiguration.current
-            val uniform = minOf(
-                1f,
-                cfg.screenWidthDp / 356f,
-                maxHeight.value / (fixedDp + tilesDp),
-            ).coerceAtLeast(0.75f)
-            val baseDensity = LocalDensity.current
-            // Ezzy's drawing ("The goal. All equal."): side margins and the gaps
-            // between tiles match the vertical gaps between rows. The vertical
-            // gaps are weight spacers splitting the real leftover; this computes
-            // the same share for horizontal spacing. It is divided by uniform
-            // first because these dp values render scaled by the density
-            // override, so they must be sized in the content's own coordinate
-            // space. Capped to [8,16]dp: taller phones grow the VERTICAL gaps
-            // only (his responsive rule); shorter or overflowing screens keep
-            // sane margins while the whole home scales.
-            val gapShareDp = ((maxHeight.value / uniform - fixedDp - tilesDp) / 5f)
-                .coerceIn(8f, 16f)
-            if (BuildConfig.DEBUG) {
-                android.util.Log.w(
-                    "BMLayout",
-                    "fontScale=$fontScale availW=${maxWidth.value} availH=${maxHeight.value} " +
-                        "uniform=$uniform fixedDp=$fixedDp gapShare=$gapShareDp helperDown=${remote.helperDown}",
-                )
-            }
-            CompositionLocalProvider(
-                LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale),
-            ) {
-            Column(Modifier.fillMaxSize()) {
-
-            // Now playing
-            // When the PC is unreachable the card itself says so; no overlay, no Retry.
-            // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
-            val vlcOut = remote.vlcClosed && !remote.expectingVlc
-            val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
-            Box(
-                Modifier
-                    .padding(horizontal = gapShareDp.dp)
-                    .fillMaxWidth()
-                    .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Orange, spotColor = Orange)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(OrangeGradient)
-                    .padding(horizontal = 18.dp, vertical = 16.dp),
-            ) {
-                Column {
-                    Text(
-                        if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
-                        else s?.title?.let { displayName(it).ifBlank { "Nothing playing" } } ?: "Nothing playing",
-                        color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                    )
-                    Text(
-                        if (lost) "Trying to reconnect"
-                        else if (vlcOut) "Pick a film in Movies and it starts by itself"
-                        else when (s?.state) {
-                            "playing" -> "Playing"
-                            "paused" -> "Paused"
-                            else -> "Stopped"
-                        },
-                        color = Color(0xFF3D2A12), fontSize = 14.sp,
+            // Ezzy's responsive layout, measured not estimated (Tab's ruling):
+            // a probe pass measures the true content height, then the main pass
+            // places the rows with the REAL leftover split into equal gaps. No
+            // fitted constants: equality holds on any profile, font or nav mode,
+            // and normal placement (no draw-layer scaling) means nothing can be
+            // painted out of place. Gaps are body-edge to body-edge; the card
+            // and play halos are decorative glow outside the body and stay out
+            // of the accounting (agreed with Tab).
+            SubcomposeLayout(Modifier.fillMaxWidth().weight(1f)) { constraints ->
+                val d = density
+                val fs = fontScale
+                val availWdp = constraints.maxWidth / d
+                val availHdp = constraints.maxHeight / d
+                val loose = constraints.copy(minWidth = 0, minHeight = 0)
+                // Probe pass: the true non-gap content height in dp (seed margins
+                // only affect width; the +14dp is the fixed bottom margin).
+                val probe = subcompose("probe") {
+                    HomeContent(remote, flashAll, 12f, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
+                }.map { it.measure(loose) }
+                val gapCount = (probe.size - 1).coerceAtLeast(1)
+                val contentDp = probe.sumOf { it.height } / d + 14f
+                // Ezzy's responsive rules, verified 8:07 PM in his own words: a
+                // smaller phone shrinks EVERYTHING to scale; a different aspect
+                // ratio re-spaces the rows, content size untouched; nothing ever
+                // grows past how it renders on his screen. One uniform factor
+                // from two axes (Tab technical agreement): width vs his INFERRED
+                // 356dp reference width (not confirmed device state); height only
+                // on REAL overflow of the measured content - the WHOLE home then
+                // shrinks uniformly, text included, never tile-only. Applied as a
+                // density override on the dp axis only: sp -> px is
+                // sp * fontScale * density, so scaling density moves text and
+                // tiles by the same factor; scaling fontScale too would square
+                // it for text. Exact no-op at uniform == 1f.
+                val uniform = minOf(1f, availWdp / 356f, availHdp / contentDp).coerceAtLeast(0.75f)
+                // Ezzy's drawing ("The goal. All equal."): side margins and
+                // inter-tile gaps match the vertical gaps, in the content's own
+                // coordinate space. The placed gaps below come out to exactly
+                // this many px. Capped so taller phones grow only the vertical
+                // gaps (his re-spacing rule) and tiny or overflowing screens
+                // keep usable margins.
+                val shareContent = ((availHdp / uniform - contentDp) / gapCount).coerceIn(4f, 16f)
+                val scaled = Density(d * uniform, fs)
+                val placeables = subcompose("main") {
+                    CompositionLocalProvider(LocalDensity provides scaled) {
+                        HomeContent(remote, flashAll, shareContent, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
+                    }
+                }.map { it.measure(loose) }
+                val bottomPx = 14f * d * uniform
+                val leftover = (constraints.maxHeight - placeables.sumOf { it.height } - bottomPx).coerceAtLeast(0f)
+                val realGap = leftover / gapCount
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.w(
+                        "BMLayout",
+                        "fontScale=$fs availW=$availWdp availH=$availHdp contentDp=$contentDp " +
+                            "uniform=$uniform share=$shareContent realGapPx=$realGap helperDown=${remote.helperDown}",
                     )
                 }
-            }
-
-            // Ezzy: equal distance between every row, whatever the screen.
-            // Equal flexible gaps split whatever vertical space is left, so the
-            // rhythm holds on any aspect ratio. Gaps are measured body-edge to
-            // body-edge (glyph bounds for text); the card and play halos are
-            // decorative glow outside the body and stay out of the accounting
-            // (agreed with Tab). The seek block sits on top or below the skip
-            // rows per the Settings toggle (default below).
-            val seekTop = remote.store.seekOnTop
-            Spacer(Modifier.weight(1f))
-            if (seekTop) {
-                SeekBlock(remote, gapShareDp)
-                Spacer(Modifier.weight(1f))
-            }
-            VolumeRow(remote, flashAll, gapShareDp)
-            if (remote.helperDown) {
-                Spacer(Modifier.height(10.dp))
-                Column(
-                    Modifier
-                        .padding(horizontal = gapShareDp.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Card)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    Text("Can't reach BingeMote on the PC", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Mouse, keyboard and PC volume are off for now, so the volume buttons use VLC instead. To fix it, open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
-                        color = TextC, fontSize = 13.sp,
-                    )
+                layout(constraints.maxWidth, constraints.maxHeight) {
+                    var y = 0f
+                    placeables.forEachIndexed { i, placeable ->
+                        placeable.place(0, y.roundToInt())
+                        y += placeable.height + if (i < placeables.lastIndex) realGap else bottomPx
+                    }
                 }
-            }
-            Spacer(Modifier.weight(1f))
-            SkipRow(remote, flashAll, gapShareDp)
-            Spacer(Modifier.weight(1f))
-            SecondarySkipRow(remote, gapShareDp)
-            if (!seekTop) {
-                Spacer(Modifier.weight(1f))
-                SeekBlock(remote, gapShareDp)
-            }
-            Spacer(Modifier.weight(1f))
-            BottomRow(remote, flashAll, gapShareDp, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
-            Spacer(Modifier.height(14.dp))
-            }
-            }
             }
         }
 
@@ -214,6 +139,89 @@ fun MainScreen(
         // Back closes the subtitle sheet first, like every other sheet.
         BackHandler(enabled = subtitlesOpen) { subtitlesOpen = false }
     }
+}
+
+
+/** The home rows, top to bottom. They carry NO vertical spacing of their own:
+ * the enclosing measured layout places them with equal gaps (Ezzy's drawing:
+ * "The goal. All equal."). [marginDp] is the shared horizontal share - side
+ * margins and inter-tile gaps, the same size as the vertical gaps. The seek
+ * block sits above or below the skip rows per the Settings toggle (default below). */
+@Composable
+private fun HomeContent(
+    remote: RemoteState,
+    flashAll: Boolean,
+    marginDp: Float,
+    onSubtitles: () -> Unit,
+    onMovies: () -> Unit,
+    onMouse: () -> Unit,
+) {
+    val s = remote.status
+    // Now playing
+    // When the PC is unreachable the card itself says so; no overlay, no Retry.
+    // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
+    val vlcOut = remote.vlcClosed && !remote.expectingVlc
+    val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
+    Box(
+        Modifier
+            .padding(horizontal = marginDp.dp)
+            .fillMaxWidth()
+            .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Orange, spotColor = Orange)
+            .clip(RoundedCornerShape(20.dp))
+            .background(OrangeGradient)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+    ) {
+        Column {
+            Text(
+                if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
+                else s?.title?.let { displayName(it).ifBlank { "Nothing playing" } } ?: "Nothing playing",
+                color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
+                maxLines = 2,
+            )
+            Text(
+                if (lost) "Trying to reconnect"
+                else if (vlcOut) "Pick a film in Movies and it starts by itself"
+                else when (s?.state) {
+                    "playing" -> "Playing"
+                    "paused" -> "Paused"
+                    else -> "Stopped"
+                },
+                color = Color(0xFF3D2A12), fontSize = 14.sp,
+            )
+        }
+    }
+
+    val seekTop = remote.store.seekOnTop
+    if (seekTop) {
+        SeekBlock(remote, marginDp)
+    }
+    VolumeRow(remote, flashAll, marginDp)
+    if (remote.helperDown) {
+        Column {
+            Spacer(Modifier.height(10.dp))
+            Column(
+                Modifier
+                    .padding(horizontal = marginDp.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Card)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Text("Can't reach BingeMote on the PC", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Mouse, keyboard and PC volume are off for now, so the volume buttons use VLC instead. To fix it, open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
+                    color = TextC, fontSize = 13.sp,
+                )
+            }
+        }
+    }
+    SkipRow(remote, flashAll, marginDp)
+    SecondarySkipRow(remote, marginDp)
+    if (!seekTop) {
+        SeekBlock(remote, marginDp)
+    }
+    BottomRow(remote, flashAll, marginDp, onSubtitles = onSubtitles, onMovies = onMovies, onMouse = onMouse)
 }
 
 /** The connection state, top right: a quiet dot + word. An indicator only - not tappable. */
