@@ -6,7 +6,7 @@
 - New setting: Button flash - "All buttons" or "Skip rings only"
 - The "Hold a skip button to keep skipping" line is gone from the home screen
 - The time bar moved below the skip buttons - and Settings can put it back on top (Seek bar position)
-- Home screen rows space themselves evenly on any phone
+- Home screen rows space themselves evenly
 - The 30s buttons are taller, and their rings now match the 5s rings exactly
 
 ## v1.7.0
