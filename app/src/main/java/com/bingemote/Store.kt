@@ -12,6 +12,12 @@ class Store(context: Context) {
 
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    init {
+        // 1.9 removals: the seek bar is always on top and reconnect is always on.
+        // Drop the retired keys so no stale setting lingers on existing installs.
+        prefs.edit().remove("seekOnTop").remove("autoReconnect").apply()
+    }
+
     private val secrets = EncryptedSharedPreferences.create(
         context,
         "secrets",
@@ -59,19 +65,16 @@ class Store(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
 
-    /** Seek bar position on the home screen: false = below the skip rows, true = on top. */
-    var seekOnTop: Boolean
-        get() = prefs.getBoolean("seekOnTop", false)
-        set(v) = prefs.edit().putBoolean("seekOnTop", v).apply()
+    /** Temporary 1.9 A/B: the seek-drag cancel circle treatment. Ezzy tries both
+     * ("ring" = Ring only, "fills" = Fills in) and removes the loser; the setting goes with it. */
+    var cancelStyle: String
+        get() = prefs.getString("cancelStyle", "ring") ?: "ring"
+        set(v) = prefs.edit().putString("cancelStyle", v).apply()
 
     /** Press flash on the home screen: 0 = skip rings only, 1 = every button. */
     var buttonFlash: Int
         get() = prefs.getInt("buttonFlash", 1).coerceIn(0, 1)
         set(v) = prefs.edit().putInt("buttonFlash", v).apply()
-
-    var autoReconnect: Boolean
-        get() = prefs.getBoolean("autoReconnect", true)
-        set(v) = prefs.edit().putBoolean("autoReconnect", v).apply()
 
     var setupDone: Boolean
         get() = prefs.getBoolean("setupDone", false)

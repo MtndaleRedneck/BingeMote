@@ -45,19 +45,13 @@ for scale in 1.0 1.3; do
   done
 done
 adb shell settings put system font_scale 1.0
-# Seek-on-top variant (Settings toggle), for review
-adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true
-sleep 8
-dismiss_anr
-adb exec-out screencap -p > screenshots/main-seektop.png
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1440x2807 emulator screenshot
 # (seek track x=44..1396, center y=913). Evidence first, assertions last: every
 # dump's text fields and the BMSeek log are echoed to the CI log and uploaded
 # even when a check fails, so a failure stays diagnosable.
 adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez demostatus true
 sleep 6
 dismiss_anr
 dump_texts() { # $1 basename: save the UI dump and echo its text fields to the CI log
@@ -67,7 +61,7 @@ dump_texts() { # $1 basename: save the UI dump and echo its text fields to the C
   grep -o 'text="[^"]*"' "screenshots/$1.xml" | sort -u | tee "screenshots/$1-text.txt" || true
 }
 SEEK_FAIL=0
-# 1) Stationary hold past the 850ms unlock timer (a same-point swipe is a long press).
+# 1) Stationary hold past the 500ms unlock timer (a same-point swipe is a long press).
 adb shell input swipe 400 913 400 913 1100
 sleep 0.3
 dump_texts seek-unlocked
@@ -128,6 +122,27 @@ adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
 echo '--- BMSeek (continuous) ---'
 cat screenshots/seek-slide-command.txt
 grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-slide-command.txt || { echo 'ASSERT FAIL: continuous release issued no in-range seekTo'; SEEK_FAIL=1; }
+# 4) The 1.9 cancel circle: release inside keeps the place (no seekTo/toggle),
+#    counters live inside the circle, an interrupted drag does nothing; plus the
+#    settings migration checks. Each test clears logcat first, so this runs AFTER
+#    the seek-slide log checks above.
+adb logcat -c
+adb shell am instrument -w -e class com.bingemote.CancelGestureTest,com.bingemote.StoreMigrationTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt
+adb logcat -d > screenshots/cancel-logcat.txt
+grep -q '^OK (3 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
+for f in cancel-inside-ring.png cancel-inside-ring.xml cancel-after-ring.png cancel-after-ring.xml \
+         cancel-inside-fills.png cancel-inside-fills.xml cancel-after-fills.png cancel-after-fills.xml \
+         cancel-interrupted.png cancel-interrupted.xml; do
+  adb exec-out run-as com.bingemote cat "files/$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
+  sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
+  sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
+  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image|XML|text'; then
+    echo "PULLED: $f ($sz bytes, $sig)"
+  else
+    echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
+  fi
+done
 [ "$SEEK_FAIL" -eq 0 ] || exit 1
 # Small phone, same aspect ratio as the reference (~1.94): everything should
 # shrink to one uniform scale (296/356 ~ 0.83), gaps included.

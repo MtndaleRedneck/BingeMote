@@ -15,7 +15,7 @@ import kotlin.concurrent.thread
 
 /**
  * Screenshot-rig coverage for the original complaint path: ONE continuous touch that
- * goes down on the locked seek bar, holds past the 850ms in-press unlock, then slides
+ * goes down on the locked seek bar, holds past the 500ms in-press unlock, then slides
  * (wandering off the bar) without lifting, and releases. `adb input swipe` cannot
  * pause mid-gesture, so the two-command script phases can only cover unlock-retained-
  * then-drag; this test asserts the live preview DURING a single hold-then-slide.
@@ -36,7 +36,7 @@ class SeekGestureTest {
         // am instrument force-stops the app, so the shell's seeded launch is gone:
         // relaunch with the rig extras from here (runs as shell).
         device.executeShellCommand(
-            "am start -n com.bingemote/.MainActivity --es screen main --ez seektop true --ez demostatus true"
+            "am start -n com.bingemote/.MainActivity --es screen main --ez demostatus true"
         )
         // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
         val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)

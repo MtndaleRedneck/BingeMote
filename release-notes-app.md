@@ -1,3 +1,10 @@
+## v1.9.0
+
+- Drag the time bar and the play button becomes a cancel spot: let go on it to keep your place, let go anywhere else to jump there (Settings has two looks for it while we pick one)
+- The bar unlocks faster (half a second), never locks again mid-drag, and an interrupted drag no longer jumps your place
+- The time bar lives on top now, Movies folder sits above Skip buttons in Settings, and the reconnect switch is gone - it always just finds your PC
+- Mouse: after a Wi-Fi hiccup your full swipe lands instead of being cut down
+
 ## v1.8.1
 
 - Seek bar fixed: the thumb follows your finger anywhere on the bar, keeps tracking when your finger slides off it, and the times show where you will land while you drag
