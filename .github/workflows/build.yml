@@ -153,6 +153,7 @@ jobs:
           disable-animations: true
           script: bash scripts/screenshots.sh
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: BingeMote-screenshots
           path: screenshots/*
