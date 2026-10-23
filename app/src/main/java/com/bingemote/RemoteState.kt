@@ -1,6 +1,7 @@
 package com.bingemote
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -224,7 +225,10 @@ class RemoteState(
     }
     fun toggleFullscreen() = fire { Vlc.toggleFullscreen(store.host, store.vlcPort, store.vlcPassword) }
     fun skip(seconds: Int) = fire { Vlc.skip(store.host, store.vlcPort, store.vlcPassword, seconds) }
-    fun seekTo(seconds: Long) = fire { Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword, seconds) }
+    fun seekTo(seconds: Long) {
+        if (BuildConfig.DEBUG) Log.i("BMSeek", "seekTo seconds=$seconds")
+        fire { Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword, seconds) }
+    }
 
     fun volumeStep(up: Boolean) {
         val win = winVolume
