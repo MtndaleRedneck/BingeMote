@@ -106,7 +106,8 @@ fun MainScreen(
                 // this many px. Capped so taller phones grow only the vertical
                 // gaps (his re-spacing rule) and tiny or overflowing screens
                 // keep usable margins.
-                val shareContent = ((availHdp / uniform - contentDp) / gapCount).coerceIn(4f, 16f)
+                val rawShare = (availHdp / uniform - contentDp) / gapCount
+                val shareContent = rawShare.coerceIn(4f, 16f)
                 val scaled = Density(d * uniform, fs)
                 val placeables = subcompose("main") {
                     CompositionLocalProvider(LocalDensity provides scaled) {
@@ -120,7 +121,8 @@ fun MainScreen(
                     android.util.Log.w(
                         "BMLayout",
                         "fontScale=$fs availW=$availWdp availH=$availHdp contentDp=$contentDp " +
-                            "uniform=$uniform share=$shareContent realGapPx=$realGap helperDown=${remote.helperDown}",
+                            "uniform=$uniform share=$shareContent rawShare=$rawShare " +
+                            "capLow=${rawShare < 4f} capHigh=${rawShare > 16f} realGapPx=$realGap helperDown=${remote.helperDown}",
                     )
                 }
                 layout(constraints.maxWidth, constraints.maxHeight) {
