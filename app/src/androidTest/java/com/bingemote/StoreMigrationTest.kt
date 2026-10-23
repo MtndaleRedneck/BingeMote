@@ -13,6 +13,9 @@ class StoreMigrationTest {
     fun removedTogglesAreClearedAndStyleDefaultsToRing() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        // Hermetic: other tests exercise the cancel-style rig extra, which
+        // persists a real value; the default check needs a clean file.
+        prefs.edit().clear().commit()
         prefs.edit().putBoolean("seekOnTop", false).putBoolean("autoReconnect", false).commit()
         Store(ctx) // construction runs the migration
         assertFalse("stale seekOnTop key survived", prefs.contains("seekOnTop"))

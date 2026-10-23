@@ -115,12 +115,11 @@ grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT F
 # written to the target app's internal files dir and retrieved via run-as (debug build
 # is debuggable). Each extraction is verified by size and file signature BEFORE the
 # pixels are interpreted; a bad pull is a loud rig defect, never a silent NOTE.
-adb shell "run-as com.bingemote ls -l files" || echo 'PULL DIAG: evidence dir listing failed'
-for f in seek-slide-mid.png seek-slide-mid.xml seek-slide-release.png seek-slide-release.xml seek-slide-post.png seek-slide-post.xml; do
-  adb exec-out run-as com.bingemote cat "files/$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
+for f in seek-slide-mid.png seek-slide-release.png seek-slide-post.png; do
+  adb exec-out cat "/sdcard/bm-$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
-  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image|XML|text'; then
+  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image'; then
     echo "PULLED: $f ($sz bytes, $sig)"
   else
     echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
@@ -139,20 +138,34 @@ adb logcat -c
 adb shell am instrument -w -e class com.bingemote.CancelGestureTest,com.bingemote.StoreMigrationTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt
 adb logcat -d > screenshots/cancel-logcat.txt
-grep -q '^OK (3 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
-for f in cancel-inside-ring.png cancel-inside-ring.xml cancel-after-ring.png cancel-after-ring.xml \
-         cancel-inside-fills.png cancel-inside-fills.xml cancel-after-fills.png cancel-after-fills.xml \
-         cancel-interrupted.png cancel-interrupted.xml \
+grep -q '^OK (4 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
+for f in cancel-inside-ring.png cancel-after-ring.png \
+         cancel-inside-fills.png cancel-after-fills.png \
+         cancel-interrupted.png \
          cancel-pixels-ring-before.png cancel-pixels-ring-after.png \
          cancel-pixels-fills-before.png cancel-pixels-fills-after.png \
-         cancel-pixels-interrupted-before.png cancel-pixels-interrupted-after.png; do
-  adb exec-out run-as com.bingemote cat "files/$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
+         cancel-pixels-interrupted-before.png cancel-pixels-interrupted-after.png \
+         cancel-bounds-ring.txt cancel-bounds-fills.txt cancel-bounds-interrupted.txt; do
+  adb exec-out cat "/sdcard/bm-$f" > "screenshots/$f" 2>/dev/null || echo "PULL DIAG: exec-out failed: $f"
   sz=$(stat -c%s "screenshots/$f" 2>/dev/null || echo 0)
   sig=$(file -b "screenshots/$f" 2>/dev/null | cut -c1-60)
-  if [ "$sz" -gt 100 ] && echo "$sig" | grep -Eq 'PNG image|XML|text'; then
+  if [ "$sz" -gt 20 ] && echo "$sig" | grep -Eq 'PNG image|text'; then
     echo "PULLED: $f ($sz bytes, $sig)"
   else
     echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
+  fi
+done
+# Counter-region pixel proof: the seed counters after cancel/interruption must
+# match the pre-gesture baseline exactly. This is the tree-independent check -
+# a stale accessibility tree cannot fake pixels.
+for tag in ring fills interrupted; do
+  if [ -s "screenshots/cancel-pixels-$tag-before.png" ] && [ -s "screenshots/cancel-pixels-$tag-after.png" ] && [ -s "screenshots/cancel-bounds-$tag.txt" ]; then
+    python3 scripts/pixel_region_compare.py \
+      "screenshots/cancel-pixels-$tag-before.png" \
+      "screenshots/cancel-pixels-$tag-after.png" \
+      "screenshots/cancel-bounds-$tag.txt" || { echo "ASSERT FAIL: counters did not pixel-match the seed ($tag)"; SEEK_FAIL=1; }
+  else
+    echo "PULL DIAG: missing pixel-compare inputs for $tag"; SEEK_FAIL=1
   fi
 done
 [ "$SEEK_FAIL" -eq 0 ] || exit 1
