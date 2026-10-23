@@ -158,7 +158,7 @@ class RemoteState(
                         HelperClient.ping(store.host, store.helperPort, store.helperToken) ||
                             HelperClient.ping(store.host, store.helperPort, store.helperToken)
                     }
-                if (store.autoReconnect) rediscover()
+                rediscover() // always on since 1.9 (the toggle is gone: nobody had a reason to shut it off)
             }
         }
     }
@@ -212,6 +212,7 @@ class RemoteState(
     private fun fire(block: () -> Unit) { cmds.trySend(block) }
 
     fun togglePause() {
+        if (BuildConfig.DEBUG) Log.i("BMSeek", "togglePause")
         // Flip the icon at once; the next status poll (about a second out) confirms or corrects it.
         val s = status
         if (s != null) {

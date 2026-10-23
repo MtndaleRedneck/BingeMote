@@ -47,8 +47,7 @@ fun SettingsScreen(
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
-    var seekTop by remember { mutableStateOf(store.seekOnTop) }
-    var reconnect by remember { mutableStateOf(store.autoReconnect) }
+    var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
     if (pickingMovies) {
         FolderPickerScreen(
@@ -80,19 +79,6 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
-        SettingsSection("Skip buttons") {
-            ChoiceRow(
-                options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s"),
-                selected = mainSkip,
-            ) { mainSkip = it; store.skipMainSec = it }
-            Spacer(Modifier.height(14.dp))
-            ChoiceRow(
-                options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m"),
-                selected = secondarySkip,
-            ) { secondarySkip = it; store.skipSecondarySec = it }
-        }
-        Spacer(Modifier.height(14.dp))
-
         SettingsSection("Assigned Movies folder") {
             // Read-only: Browse PC folders is the only way to change it, so a typo can't break the Movies tab.
             Box(
@@ -120,6 +106,19 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        SettingsSection("Skip buttons") {
+            ChoiceRow(
+                options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s"),
+                selected = mainSkip,
+            ) { mainSkip = it; store.skipMainSec = it }
+            Spacer(Modifier.height(14.dp))
+            ChoiceRow(
+                options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m"),
+                selected = secondarySkip,
+            ) { secondarySkip = it; store.skipSecondarySec = it }
+        }
+        Spacer(Modifier.height(14.dp))
+
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
             Spacer(Modifier.height(14.dp))
@@ -130,14 +129,12 @@ fun SettingsScreen(
                 selected = flash,
             ) { flash = it; store.buttonFlash = it }
             Spacer(Modifier.height(14.dp))
-            Text("Seek bar position", color = TextC, fontSize = 14.sp)
+            Text("Cancel button style", color = TextC, fontSize = 14.sp)
             Spacer(Modifier.height(10.dp))
             ChoiceRow(
-                options = listOf(0 to "Bottom", 1 to "Top"),
-                selected = if (seekTop) 1 else 0,
-            ) { seekTop = it == 1; store.seekOnTop = seekTop }
-            Spacer(Modifier.height(14.dp))
-            ToggleRow("Reconnect on its own", reconnect) { reconnect = it; store.autoReconnect = it }
+                options = listOf(0 to "Fills in", 1 to "Ring only"),
+                selected = if (cancelStyle == "ring") 1 else 0,
+            ) { cancelStyle = if (it == 1) "ring" else "fills"; store.cancelStyle = cancelStyle }
         }
         Spacer(Modifier.height(14.dp))
 

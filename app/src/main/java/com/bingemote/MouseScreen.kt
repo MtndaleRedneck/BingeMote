@@ -145,24 +145,22 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                 // connection - fast on a healthy LAN, self-throttling when it's not.
                                 val sendStarted = System.currentTimeMillis()
                                 landed?.await()
-                                // After a stalled send (Wi-Fi hiccup), shrink what piled up: a real
-                                // mouse loses that motion instead of landing it as one big jump.
-                                if (landed != null && System.currentTimeMillis() - sendStarted > 250)
-                                    synchronized(accLock) { accX *= 0.25f; accY *= 0.25f }
+                                val stalledMs = if (landed != null) System.currentTimeMillis() - sendStarted else 0L
                                 val pace = lastSentAt + 16 - System.currentTimeMillis()
                                 if (pace > 0) delay(pace)
                                 // Moves ride the same channel as buttons and scrolls, so a
                                 // drag can never start before its button-down reaches the PC.
                                 val dx: Float; val dy: Float; val sc: Float; val zm: Float
                                 synchronized(accLock) { dx = accX; dy = accY; accX = 0f; accY = 0f; sc = accScroll; zm = accZoom; accScroll = 0f; accZoom = 0f }
+                                val (mx, my) = MouseSendPolicy.adjust(dx, dy, stalledMs)
                                 if (sc != 0f) fire { HelperClient.scroll(host, port, token, sc) }
                                 if (zm != 0f) fire { HelperClient.zoom(host, port, token, zm) }
-                                if (dx != 0f || dy != 0f) {
+                                if (mx != 0f || my != 0f) {
                                     val speed = remote.store.mouseSpeed
                                     val done = kotlinx.coroutines.CompletableDeferred<Unit>()
                                     landed = done
                                     if (!fire {
-                                        try { HelperClient.move(host, port, token, dx * speed, dy * speed) }
+                                        try { HelperClient.move(host, port, token, mx * speed, my * speed) }
                                         finally { done.complete(Unit) }
                                     }) done.complete(Unit)
                                     lastSentAt = System.currentTimeMillis()
@@ -599,4 +597,13 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
             }
         }
     }
+}
+
+/** What a send does with motion that piled up while the previous send was in
+ * flight. 1.9 restores the 1.6 answer: ALL of it, in one batch. The 1.7-1.8
+ * stall shrink (cut to 25% after a >250ms send) visibly ate movement on a busy
+ * link - the jerky-mouse report. Kept as one tiny function so the policy has a
+ * regression test (MouseSendPolicyTest). */
+internal object MouseSendPolicy {
+    fun adjust(dx: Float, dy: Float, stalledMs: Long): Pair<Float, Float> = dx to dy
 }
