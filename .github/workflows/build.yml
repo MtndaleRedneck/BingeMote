@@ -155,7 +155,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BingeMote-screenshots
-          path: screenshots/*.png
+          path: screenshots/*
 
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
