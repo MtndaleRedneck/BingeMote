@@ -36,7 +36,6 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,26 +71,27 @@ fun MainScreen(
             // so nothing clips instead of squeezing the gaps to zero first.
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val fontScale = LocalDensity.current.fontScale
-            // Text-driven parts grow with font scale; paddings, the seek bar and gaps don't.
-            // Card text assumes a 2-line title (worst case).
-            val fixedDp = 32f + 74f * fontScale + 34f + 33f * fontScale + 44f + 14f +
+            // Shrink only on REAL overflow: the fixed parts (card, seek block,
+            // minimum gaps, bottom margin) measured on the reference profile are
+            // ~110dp of frame plus ~80dp of text that grows with the font. At
+            // font 1.0 on his geometry this leaves scale exactly 1.0, so the
+            // approved sizes render untouched; bigger fonts shrink the tiles
+            // instead of clipping the bottom row.
+            val fixedDp = 110f + 80f * fontScale +
                 (if (remote.helperDown) 96f else 0f)
             val tilesDp = 358f
             val scale = ((maxHeight.value - fixedDp) / tilesDp).coerceIn(0.75f, 1f)
 
             // Ezzy's responsive rules, verified 8:07 PM in his own words:
-            // 1) a smaller phone with the SAME aspect ratio shrinks EVERYTHING to
-            //    scale - implemented as one uniform scale of the whole home content;
-            // 2) a DIFFERENT aspect ratio only re-spaces the rows (the equal weight
-            //    gaps above/below do that), content size untouched.
-            // Reference geometry is his own phone as INFERRED from his screenshots
-            // (~356x692dp, aspect ~1.94); it is not confirmed device state. At
+            // a smaller phone shrinks EVERYTHING to scale; a different aspect
+            // ratio re-spaces the rows (the equal weight gaps do that), content
+            // size untouched. One uniform scale covers both: min of the width and
+            // height ratios to his phone, never above 1 (nothing grows past how
+            // it renders on his own screen). Reference geometry is INFERRED from
+            // his screenshots (~356x692dp), not confirmed device state. At
             // uniform == 1f this wrapper is an exact no-op.
             val cfg = LocalConfiguration.current
-            val refAspect = 692f / 356f
-            val aspect = cfg.screenHeightDp.toFloat() / cfg.screenWidthDp.toFloat()
-            val sameAspect = abs(aspect - refAspect) / refAspect < 0.04f
-            val uniform = if (sameAspect) (cfg.screenWidthDp / 356f).coerceAtMost(1f) else 1f
+            val uniform = minOf(1f, cfg.screenWidthDp / 356f, cfg.screenHeightDp / 692f)
 
             val availW = maxWidth
             val availH = maxHeight
@@ -141,16 +141,14 @@ fun MainScreen(
                 }
             }
 
-            // Ezzy: equal distance between every row, whatever the screen -
-            // VISIBLY equal, so each flexible share gets a small fixed lift where
-            // a glow eats into its gap (measured on real screenshots): the card's
-            // orange halo bleeds ~10dp below itself and the play button's halo
-            // ~2dp above and below itself. The weight shares stay equal; the
-            // lifts make the visible distances equal.
-            // The seek block sits on top or below the skip rows per the Settings
-            // toggle (default below).
+            // Ezzy: equal distance between every row, whatever the screen.
+            // Equal flexible gaps split whatever vertical space is left, so the
+            // rhythm holds on any aspect ratio. Gaps are measured body-edge to
+            // body-edge (glyph bounds for text); the card and play halos are
+            // decorative glow outside the body and stay out of the accounting
+            // (agreed with Tab). The seek block sits on top or below the skip
+            // rows per the Settings toggle (default below).
             val seekTop = remote.store.seekOnTop
-            Spacer(Modifier.height(10.dp)) // card halo lift
             Spacer(Modifier.weight(1f))
             if (seekTop) {
                 SeekBlock(remote)
@@ -175,10 +173,8 @@ fun MainScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(2.dp)) // play halo lift (above the 5s row)
             Spacer(Modifier.weight(1f))
             SkipRow(remote, flashAll, scale)
-            Spacer(Modifier.height(2.dp)) // play halo lift (below the 5s row)
             Spacer(Modifier.weight(1f))
             SecondarySkipRow(remote, scale)
             if (!seekTop) {
@@ -456,7 +452,7 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
         }
         Spacer(Modifier.width(12.dp))
-        PlayPauseButton(remote, playing, flashAll)
+        PlayPauseButton(remote, playing, flashAll, scale)
         Spacer(Modifier.width(12.dp))
         PressTile(
             onTap = { remote.skip(remote.store.skipMainSec) },
@@ -471,14 +467,14 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
 }
 
 @Composable
-private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boolean) {
+private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boolean, scale: Float = 1f) {
     PressTile(
         onTap = { remote.togglePause() },
         hapticsOn = remote.store.haptics,
         desc = if (playing) "Pause" else "Play",
         background = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Card2, Card)),
-        modifier = Modifier.size(108.dp),
-        corner = 54.dp,
+        modifier = Modifier.size((108 * scale).dp),
+        corner = (54 * scale).dp,
     ) { pressed ->
         Box(
             Modifier

@@ -61,6 +61,14 @@ adb shell am start -n com.bingemote/.MainActivity --es screen main >/dev/null
 sleep 8
 dismiss_anr
 adb exec-out screencap -p > screenshots/main-small.png
+# Taller phone, same width: nothing scales, the equal gaps just grow.
+adb shell wm size 1440x3400
+adb shell wm density 649
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > screenshots/main-tall.png
 adb shell wm size reset
 adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > screenshots/runtime-errors.txt
