@@ -72,11 +72,11 @@ adb shell input swipe 400 913 400 913 1100
 sleep 0.3
 dump_texts seek-unlocked
 grep -q 'Unlocked' screenshots/seek-unlocked.xml || { echo 'ASSERT FAIL: hold did not unlock the seek bar'; SEEK_FAIL=1; }
-# 2) Separate 5s drag while the ~5s unlock persists, wandering >70px off the bar.
+# 2) Separate 8s drag while the ~5s unlock persists, wandering >70px off the bar.
 #    Two input commands cannot be one continuous hold-then-drag, so this verifies
 #    retained unlock + absolute-x tracking, not the literal single-gesture path.
 #    Mid captures land ~2s in, safely before release: preview counters must be live.
-adb shell input swipe 400 913 1150 760 5000 &
+adb shell input swipe 400 913 1150 760 8000 &
 SWIPE_PID=$!
 sleep 2
 adb exec-out screencap -p > screenshots/main-seekdrag.png
