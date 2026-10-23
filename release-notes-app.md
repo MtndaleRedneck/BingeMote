@@ -1,3 +1,7 @@
+## v1.8.1
+
+- Seek bar fixed: the thumb follows your finger anywhere on the bar, keeps tracking when your finger slides off it, and the times show where you will land while you drag
+
 ## v1.8.0
 
 - Buttons light up when you press them: white buttons flash orange, orange ones flash white

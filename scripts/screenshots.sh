@@ -52,6 +52,21 @@ adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop 
 sleep 8
 dismiss_anr
 adb exec-out screencap -p > screenshots/main-seektop.png
+# Seek drag reproduction (Ezzy's 11:39 report): the hold fires mid-swipe, then
+# the thumb must track the finger's x even after the finger leaves the bar, and
+# the time row must preview the drag target while the finger is down.
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez demostatus true
+sleep 6
+dismiss_anr
+# The bar sits at ~y2165 on the 1440x2807 reference; the swipe ends far above it.
+adb shell input swipe 400 2165 1150 1900 3000 &
+SWIPE_PID=$!
+sleep 2.2
+adb exec-out screencap -p > screenshots/main-seekdrag.png
+wait $SWIPE_PID
+sleep 1
+adb exec-out screencap -p > screenshots/main-seekdrag-up.png
 # Small phone, same aspect ratio as the reference (~1.94): everything should
 # shrink to one uniform scale (296/356 ~ 0.83), gaps included.
 adb shell wm size 740x1438

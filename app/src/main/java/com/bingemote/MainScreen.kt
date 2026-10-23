@@ -315,9 +315,14 @@ private fun SeekBlock(remote: RemoteState, gapDp: Float) {
                 }
             },
         ) {
-            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
+            // While dragging, the times preview the drag target (Ezzy's ask:
+            // show where you're up to while moving), in the row that already
+            // exists - no new bubble.
+            val previewSec = dragPos?.takeIf { length > 0 }?.let { (it * length).toLong() } ?: s?.timeSec ?: 0
+            val previewRemain = (length - previewSec).coerceAtLeast(0)
+            Text(formatTime(previewSec), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
             Spacer(Modifier.weight(1f))
-            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
+            Text("-${formatTime(previewRemain)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
         }
         Spacer(Modifier.height(4.dp))
         Box(
@@ -343,13 +348,17 @@ private fun SeekBlock(remote: RemoteState, gapDp: Float) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.pressed) {
-                                val dx = change.positionChange().x
                                 if (!moved && kotlin.math.abs(change.position.x - down.position.x) > 14f) moved = true
                                 if (unlockedNow && (moved || dragging)) {
                                     dragging = true
                                     holdJob?.cancel()
+                                    // Ezzy's 11:39 recording: the thumb must follow the FINGER,
+                                    // YouTube-style - absolute x over the track, not a delta
+                                    // creep from a (stale-captured) seed that left it stuck
+                                    // behind. Pointer capture keeps the events coming even
+                                    // when the finger wanders off the bar.
                                     val w = size.width.toFloat().coerceAtLeast(1f)
-                                    dragPos = ((dragPos ?: position) + dx / w).coerceIn(0f, 1f)
+                                    dragPos = (change.position.x / w).coerceIn(0f, 1f)
                                     idleStamp = System.currentTimeMillis()
                                 }
                                 change.consume()
