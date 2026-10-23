@@ -24,6 +24,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.PlatformTextStyle
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,11 +74,38 @@ fun MainScreen(
             val fontScale = LocalDensity.current.fontScale
             // Text-driven parts grow with font scale; paddings, the seek bar and gaps don't.
             // Card text assumes a 2-line title (worst case).
-            val fixedDp = 32f + 74f * fontScale + 34f + 33f * fontScale + 30f + 14f +
+            val fixedDp = 32f + 74f * fontScale + 34f + 33f * fontScale + 44f + 14f +
                 (if (remote.helperDown) 96f else 0f)
             val tilesDp = 358f
             val scale = ((maxHeight.value - fixedDp) / tilesDp).coerceIn(0.75f, 1f)
-            Column(Modifier.fillMaxSize()) {
+
+            // Ezzy's responsive rules, verified 8:07 PM in his own words:
+            // 1) a smaller phone with the SAME aspect ratio shrinks EVERYTHING to
+            //    scale - implemented as one uniform scale of the whole home content;
+            // 2) a DIFFERENT aspect ratio only re-spaces the rows (the equal weight
+            //    gaps above/below do that), content size untouched.
+            // Reference geometry is his own phone as INFERRED from his screenshots
+            // (~356x692dp, aspect ~1.94); it is not confirmed device state. At
+            // uniform == 1f this wrapper is an exact no-op.
+            val cfg = LocalConfiguration.current
+            val refAspect = 692f / 356f
+            val aspect = cfg.screenHeightDp.toFloat() / cfg.screenWidthDp.toFloat()
+            val sameAspect = abs(aspect - refAspect) / refAspect < 0.04f
+            val uniform = if (sameAspect) (cfg.screenWidthDp / 356f).coerceAtMost(1f) else 1f
+
+            val availW = maxWidth
+            val availH = maxHeight
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Column(
+                Modifier
+                    .requiredWidth((availW.value / uniform).dp)
+                    .requiredHeight((availH.value / uniform).dp)
+                    .graphicsLayer {
+                        scaleX = uniform
+                        scaleY = uniform
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                    },
+            ) {
 
             // Now playing
             // When the PC is unreachable the card itself says so; no overlay, no Retry.
@@ -110,11 +141,16 @@ fun MainScreen(
                 }
             }
 
-            // Ezzy: equal distance between every row, whatever the screen.
-            // Equal flexible gaps split whatever vertical space is left, so the
-            // rhythm holds on any aspect ratio. The seek block sits on top or
-            // below the skip rows per the Settings toggle (default below).
+            // Ezzy: equal distance between every row, whatever the screen -
+            // VISIBLY equal, so each flexible share gets a small fixed lift where
+            // a glow eats into its gap (measured on real screenshots): the card's
+            // orange halo bleeds ~10dp below itself and the play button's halo
+            // ~2dp above and below itself. The weight shares stay equal; the
+            // lifts make the visible distances equal.
+            // The seek block sits on top or below the skip rows per the Settings
+            // toggle (default below).
             val seekTop = remote.store.seekOnTop
+            Spacer(Modifier.height(10.dp)) // card halo lift
             Spacer(Modifier.weight(1f))
             if (seekTop) {
                 SeekBlock(remote)
@@ -139,8 +175,10 @@ fun MainScreen(
                     )
                 }
             }
+            Spacer(Modifier.height(2.dp)) // play halo lift (above the 5s row)
             Spacer(Modifier.weight(1f))
             SkipRow(remote, flashAll, scale)
+            Spacer(Modifier.height(2.dp)) // play halo lift (below the 5s row)
             Spacer(Modifier.weight(1f))
             SecondarySkipRow(remote, scale)
             if (!seekTop) {
@@ -150,6 +188,7 @@ fun MainScreen(
             Spacer(Modifier.weight(1f))
             BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse, scale = scale)
             Spacer(Modifier.height(14.dp))
+            }
             }
             }
         }

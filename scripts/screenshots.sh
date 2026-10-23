@@ -52,6 +52,15 @@ adb shell am start -n com.bingemote/.MainActivity --es screen main --ez seektop 
 sleep 8
 dismiss_anr
 adb exec-out screencap -p > screenshots/main-seektop.png
+# Small phone, same aspect ratio as the reference (~1.94): everything should
+# shrink to one uniform scale (296/356 ~ 0.83), gaps included.
+adb shell wm size 740x1438
+adb shell wm density 400
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > screenshots/main-small.png
 adb shell wm size reset
 adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > screenshots/runtime-errors.txt

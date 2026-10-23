@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -346,6 +347,8 @@ fun SkipIcon(forward: Boolean, label: String, pressed: Boolean, tint: Color, siz
             }
             drawPath(head, ringColor)
         }
-        Text(label, color = tint, fontSize = (size.value * labelScale).sp, fontWeight = FontWeight.Bold)
+        // The label is part of the icon artwork: size it off the ring in dp, not sp,
+        // so a large system font cannot blow it out of the ring (Ezzy's scale-together rule).
+        Text(label, color = tint, fontSize = with(LocalDensity.current) { (size * labelScale).toSp() }, fontWeight = FontWeight.Bold)
     }
 }
