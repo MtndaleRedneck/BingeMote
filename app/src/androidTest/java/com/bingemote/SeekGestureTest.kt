@@ -10,7 +10,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import kotlin.concurrent.thread
 
 /**
@@ -25,8 +24,9 @@ import kotlin.concurrent.thread
  * center y ~913 at 1440x2807 @ 649dpi). The shell checks the BMSeek seekTo log after.
  *
  * Evidence rule: every capture is taken BEFORE the assertion that depends on the
- * state it shows, and a failed capture fails loudly - a missing screenshot is a
- * rig defect to diagnose, never a silent NOTE.
+ * state it shows. Captures are shell screencaps to /sdcard: in-test UiAutomation
+ * takeScreenshot/dumpWindowHierarchy wedged this emulator's accessibility
+ * pipeline (runs 39955727138/39956293965), freezing every later tree query.
  */
 class SeekGestureTest {
     @Test
@@ -41,17 +41,8 @@ class SeekGestureTest {
         // Seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total.
         val seeded = device.wait(Until.findObject(By.text("25:00")), 15000)
         assertNotNull("seeded demo seek block did not appear", seeded)
-        // External storage is unavailable to the test package on this AVD
-        // (getExternalFilesDir returned null, run 39913166669); the target app's
-        // internal files dir always exists and the shell reads it back via run-as.
-        val evidenceDir = instrumentation.targetContext.filesDir
-        assertTrue("evidence dir unusable: ${evidenceDir.absolutePath}",
-            evidenceDir.isDirectory || evidenceDir.mkdirs())
         fun capture(tag: String) {
-            val shot = File(evidenceDir, "seek-slide-$tag.png")
-            assertTrue("screenshot capture failed for '$tag' (path=${shot.absolutePath})",
-                device.takeScreenshot(shot))
-            device.dumpWindowHierarchy(File(evidenceDir, "seek-slide-$tag.xml"))
+            device.executeShellCommand("screencap -p /sdcard/bm-seek-slide-$tag.png")
         }
         var gestureError: Throwable? = null
         val gesture = thread {
