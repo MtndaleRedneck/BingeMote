@@ -109,6 +109,8 @@ dismiss_anr
 adb logcat -c
 adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/seek-slide-instrument.txt
+# Keep the full logcat whatever happened: a crashed test process leaves its stack here.
+adb logcat -d > screenshots/seek-slide-logcat.txt
 grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT FAIL: continuous hold-then-slide test failed (see seek-slide-instrument.txt)'; SEEK_FAIL=1; }
 adb exec-out screencap -p > screenshots/main-seekslide-up.png
 adb logcat -d -s BMSeek:I > screenshots/seek-slide-command.txt
