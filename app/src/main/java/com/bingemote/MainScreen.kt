@@ -85,13 +85,18 @@ fun MainScreen(
             // Ezzy's responsive rules, verified 8:07 PM in his own words:
             // a smaller phone shrinks EVERYTHING to scale; a different aspect
             // ratio re-spaces the rows (the equal weight gaps do that), content
-            // size untouched. One uniform scale covers both: min of the width and
-            // height ratios to his phone, never above 1 (nothing grows past how
-            // it renders on his own screen). Reference geometry is INFERRED from
-            // his screenshots (~356x692dp), not confirmed device state. At
-            // uniform == 1f this wrapper is an exact no-op.
+            // size untouched. The uniform scale is driven by WIDTH only: a
+            // narrower phone shrinks everything, a wider one never grows
+            // (capped at 1). A height ratio mis-fires in practice because
+            // screenHeightDp is the window height (gesture nav bar excluded),
+            // not the panel height his reference geometry describes, so it
+            // shrank content on reference-sized screens; short-height phones
+            // are already covered by the shrink-to-fit tiles above and the
+            // equal weight gaps. Reference width 356dp is INFERRED from his
+            // screenshots, not confirmed device state. At uniform == 1f this
+            // wrapper is an exact no-op.
             val cfg = LocalConfiguration.current
-            val uniform = minOf(1f, cfg.screenWidthDp / 356f, cfg.screenHeightDp / 692f)
+            val uniform = minOf(1f, cfg.screenWidthDp / 356f)
 
             val availW = maxWidth
             val availH = maxHeight
