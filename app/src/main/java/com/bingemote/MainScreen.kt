@@ -70,10 +70,12 @@ fun MainScreen(
             // fit (text included) instead of clipping the bottom row.
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val fontScale = LocalDensity.current.fontScale
-            // Shrink only on REAL overflow: the fixed parts (card, seek block,
-            // minimum gaps, bottom margin) measured on the reference profile are
-            // ~110dp of frame plus ~80dp of text that grows with the font.
-            val fixedDp = 110f + 80f * fontScale +
+            // The non-gap content height, calibrated from CI reference shots:
+            // card + seek block + bottom margin measure ~152dp of frame plus
+            // ~25dp per font-scale unit of text growth (177dp at font 1.0,
+            // 185dp at 1.3). Used for the overflow factor below and for the
+            // equal horizontal share.
+            val fixedDp = 152f + 25f * fontScale +
                 (if (remote.helperDown) 96f else 0f)
             val tilesDp = 358f
 
@@ -101,6 +103,17 @@ fun MainScreen(
                 maxHeight.value / (fixedDp + tilesDp),
             ).coerceAtLeast(0.75f)
             val baseDensity = LocalDensity.current
+            // Ezzy's drawing ("The goal. All equal."): side margins and the gaps
+            // between tiles match the vertical gaps between rows. The vertical
+            // gaps are weight spacers splitting the real leftover; this computes
+            // the same share for horizontal spacing. It is divided by uniform
+            // first because these dp values render scaled by the density
+            // override, so they must be sized in the content's own coordinate
+            // space. Capped to [8,16]dp: taller phones grow the VERTICAL gaps
+            // only (his responsive rule); shorter or overflowing screens keep
+            // sane margins while the whole home scales.
+            val gapShareDp = ((maxHeight.value / uniform - fixedDp - tilesDp) / 5f)
+                .coerceIn(8f, 16f)
             CompositionLocalProvider(
                 LocalDensity provides Density(baseDensity.density * uniform, baseDensity.fontScale),
             ) {
@@ -113,7 +126,7 @@ fun MainScreen(
             val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
             Box(
                 Modifier
-                    .padding(horizontal = 16.dp)
+                    .padding(horizontal = gapShareDp.dp)
                     .fillMaxWidth()
                     .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Orange, spotColor = Orange)
                     .clip(RoundedCornerShape(20.dp))
@@ -150,15 +163,15 @@ fun MainScreen(
             val seekTop = remote.store.seekOnTop
             Spacer(Modifier.weight(1f))
             if (seekTop) {
-                SeekBlock(remote)
+                SeekBlock(remote, gapShareDp)
                 Spacer(Modifier.weight(1f))
             }
-            VolumeRow(remote, flashAll)
+            VolumeRow(remote, flashAll, gapShareDp)
             if (remote.helperDown) {
                 Spacer(Modifier.height(10.dp))
                 Column(
                     Modifier
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = gapShareDp.dp)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(Card)
@@ -173,15 +186,15 @@ fun MainScreen(
                 }
             }
             Spacer(Modifier.weight(1f))
-            SkipRow(remote, flashAll)
+            SkipRow(remote, flashAll, gapShareDp)
             Spacer(Modifier.weight(1f))
-            SecondarySkipRow(remote)
+            SecondarySkipRow(remote, gapShareDp)
             if (!seekTop) {
                 Spacer(Modifier.weight(1f))
-                SeekBlock(remote)
+                SeekBlock(remote, gapShareDp)
             }
             Spacer(Modifier.weight(1f))
-            BottomRow(remote, flashAll, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
+            BottomRow(remote, flashAll, gapShareDp, onSubtitles = { subtitlesOpen = true }, onMovies = onMovies, onMouse = onMouse)
             Spacer(Modifier.height(14.dp))
             }
             }
@@ -223,7 +236,7 @@ private fun StatusPill(connected: Boolean, modifier: Modifier = Modifier) {
 
 /** Progress bar with hold-to-unlock seeking. Locked by default; hold 1-2s to unlock, relocks after ~5s idle. */
 @Composable
-private fun SeekBlock(remote: RemoteState) {
+private fun SeekBlock(remote: RemoteState, gapDp: Float) {
     val s = remote.status
     val length = s?.lengthSec ?: 0
     val position = if (length > 0) (s?.timeSec ?: 0).toFloat() / length else 0f
@@ -257,11 +270,17 @@ private fun SeekBlock(remote: RemoteState) {
             trim = LineHeightStyle.Trim.Both,
         ),
     )
-    Column(Modifier.padding(horizontal = 16.dp)) {
+    // Digits don't reach their line box's ascent (cap height only), leaving
+    // ~11px of invisible reserve above the time row that broke the equal
+    // glyph-to-glyph gaps. A 0.75em line box (still trimmed both ends) fits
+    // the digits' actual ink, so the seek block's outer gaps measure like
+    // every other row's. The ink itself is unchanged.
+    val tightDigits = tight.copy(lineHeight = 10.5.sp)
+    Column(Modifier.padding(horizontal = gapDp.dp)) {
         Row(Modifier.fillMaxWidth()) {
-            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
+            Text(formatTime(s?.timeSec ?: 0), color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tightDigits)
             Spacer(Modifier.weight(1f))
-            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tight)
+            Text("-${formatTime(s?.remainingSec ?: 0)}", color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, style = tightDigits)
         }
         Spacer(Modifier.height(4.dp))
         Box(
@@ -371,11 +390,11 @@ private fun Modifier.graphicsLayoutX(fraction: Float, thumbSize: androidx.compos
     })
 
 @Composable
-private fun VolumeRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
+private fun VolumeRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, scale: Float = 1f) {
     val s = remote.status
     val muted = remote.muted
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().padding(horizontal = gapDp.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PressTile(
@@ -387,7 +406,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f)
         ) { pressed ->
             VolumeDownIcon(if (pressed && flashAll) Orange else TextC, size = 30.dp, extraWave = pressed && flashAll)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         // Percent readout: tap toggles mute. Muted: dimmed 0% + MUTED, thin red strike corner to corner.
         PressTile(
             onTap = { remote.toggleMute() },
@@ -420,7 +439,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f)
                 }
             }
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(
             onTap = { remote.volumeStep(true) },
             onHoldRepeat = { remote.volumeStep(true) },
@@ -434,11 +453,11 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f)
 }
 
 @Composable
-private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
+private fun SkipRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, scale: Float = 1f) {
     val label = formatSkip(remote.store.skipMainSec)
     val playing = remote.status?.playing == true
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().padding(horizontal = gapDp.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PressTile(
@@ -450,9 +469,9 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean, scale: Float = 1f) {
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = TextC, size = 44.dp, ringScale = 40f / 44f)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PlayPauseButton(remote, playing, flashAll)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(
             onTap = { remote.skip(remote.store.skipMainSec) },
             onHoldRepeat = { remote.skip(remote.store.skipMainSec) },
@@ -495,13 +514,13 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
 }
 
 @Composable
-private fun SecondarySkipRow(remote: RemoteState, scale: Float = 1f) {
+private fun SecondarySkipRow(remote: RemoteState, gapDp: Float, scale: Float = 1f) {
     val label = formatSkip(remote.store.skipSecondarySec)
     // Ezzy's call: the 30s ring + label are the exact 5s size, fixed. The tiles
     // grew into the space the removed skip-hint line freed (8dp spacer + ~16dp
     // text line), so the row top and everything below stay exactly where they
     // were and the icon sits centered.
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = gapDp.dp)) {
         PressTile(
             onTap = { remote.skip(-remote.store.skipSecondarySec) },
             onHoldRepeat = { remote.skip(-remote.store.skipSecondarySec) },
@@ -511,7 +530,7 @@ private fun SecondarySkipRow(remote: RemoteState, scale: Float = 1f) {
         ) { pressed ->
             SkipIcon(forward = false, label = label, pressed = pressed, tint = Orange, size = 44.dp, labelScale = 0.30f, ringScale = 40f / 44f)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(
             onTap = { remote.skip(remote.store.skipSecondarySec) },
             onHoldRepeat = { remote.skip(remote.store.skipSecondarySec) },
@@ -525,21 +544,21 @@ private fun SecondarySkipRow(remote: RemoteState, scale: Float = 1f) {
 }
 
 @Composable
-private fun BottomRow(remote: RemoteState, flashAll: Boolean, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit, scale: Float = 1f) {
+private fun BottomRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, onSubtitles: () -> Unit, onMovies: () -> Unit, onMouse: () -> Unit, scale: Float = 1f) {
     // 1.5.0: icons only, no captions. Order: Movies, Subtitles, Fullscreen, Mouse.
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = gapDp.dp)) {
         PressTile(onTap = onMovies, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Movies") { pressed ->
             FolderIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(onTap = onSubtitles, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Subtitles") { pressed ->
             SubtitleIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(onTap = { remote.toggleFullscreen() }, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Fullscreen") { pressed ->
             FullscreenIcon(if (pressed && flashAll) Orange else TextC, size = 47.5.dp, pressed = pressed && flashAll)
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(gapDp.dp))
         PressTile(onTap = onMouse, hapticsOn = remote.store.haptics, modifier = Modifier.weight(1f).height((80 * scale).dp), desc = "Mouse") { pressed ->
             CursorIcon(if (pressed && flashAll) Orange else TextC, size = 46.dp)
         }
