@@ -377,8 +377,8 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
                 .height(28.dp)
                 .semantics {
                     testTagsAsResourceId = true
-                    testTag = "seekbar"
                 }
+                .testTag("seekbar")
                 .onGloballyPositioned { drag.barOrigin = it.localToWindow(Offset.Zero) }
                 .pointerInput(length) {
                     awaitEachGesture {
