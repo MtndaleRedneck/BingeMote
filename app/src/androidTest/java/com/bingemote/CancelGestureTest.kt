@@ -19,7 +19,7 @@ import kotlin.concurrent.thread
  * toggle, counters return to the polled time); an interrupted drag does nothing.
  *
  * Rig: demo seed 25:00 / -1:25:24 of 1:50:24 (length 6624s); the bar is always
- * on top since 1.9; track x 44..1396, center y ~913 at 1440x2807 @ 649dpi. The
+ * on top since 1.9; track x 33..1047, center y ~751 at 1080x2310 @ 480dpi. The
  * circle's real bounds come from the "Pause" semantics node, not constants.
  *
  * Hard-won rig rules (runs 39953888432, 39955727138, 39956293965, 39958872473):
@@ -105,7 +105,7 @@ class CancelGestureTest {
         // The counters must stay live at the absolute-x target even with the
         // finger inside the circle; the in-circle freeze variant was dropped
         // in review.
-        val expSec = ((cx - 44f) / 1352f * 6624f).toLong()
+        val expSec = ((cx - 33f) / 1014f * 6624f).toLong()
         counterBaseline(style)
 
         var gestureError: Throwable? = null
@@ -118,10 +118,10 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                inject(MotionEvent.ACTION_DOWN, 300f, 751f)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50) // past the 500ms hold
                 for (i in 1..20) {
-                    inject(MotionEvent.ACTION_MOVE, 400f + (cx - 400f) * i / 20, 913f + (cy - 913f) * i / 20)
+                    inject(MotionEvent.ACTION_MOVE, 300f + (cx - 300f) * i / 20, 751f + (cy - 751f) * i / 20)
                     Thread.sleep(75)
                 }
                 Thread.sleep(2000) // held stationary inside the circle: the drag must survive
@@ -176,10 +176,10 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                inject(MotionEvent.ACTION_DOWN, 300f, 751f)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..10) {
-                    inject(MotionEvent.ACTION_MOVE, 400f + i * 50f, 913f - i * 20f)
+                    inject(MotionEvent.ACTION_MOVE, 300f + i * 38f, 751f - i * 16f)
                     Thread.sleep(75)
                 }
                 Thread.sleep(5000) // finger held; the system takes over mid-drag
@@ -242,7 +242,7 @@ class CancelGestureTest {
         // inscribed circle (corner distance is ~41% beyond the radius).
         val px = (b.left + 6).toFloat()
         val py = (b.top + 6).toFloat()
-        val expSec = ((px - 44f) / 1352f * 6624f).toLong()
+        val expSec = ((px - 33f) / 1014f * 6624f).toLong()
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
@@ -253,14 +253,14 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                inject(MotionEvent.ACTION_DOWN, 300f, 751f)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..15) { // along the bar row to the corner's x
-                    inject(MotionEvent.ACTION_MOVE, 400f + (px - 400f) * i / 15, 913f)
+                    inject(MotionEvent.ACTION_MOVE, 300f + (px - 300f) * i / 15, 751f)
                     Thread.sleep(75)
                 }
                 for (i in 1..10) { // straight down onto the corner
-                    inject(MotionEvent.ACTION_MOVE, px, 913f + (py - 913f) * i / 10)
+                    inject(MotionEvent.ACTION_MOVE, px, 751f + (py - 751f) * i / 10)
                     Thread.sleep(75)
                 }
                 Thread.sleep(1000)
@@ -315,14 +315,14 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 400f, 913f)
+                inject(MotionEvent.ACTION_DOWN, 300f, 751f)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..10) {
-                    inject(MotionEvent.ACTION_MOVE, 400f + i * 50f, 913f - i * 20f)
+                    inject(MotionEvent.ACTION_MOVE, 300f + i * 38f, 751f - i * 16f)
                     Thread.sleep(75)
                 }
                 Thread.sleep(400)
-                inject(MotionEvent.ACTION_CANCEL, 900f, 713f)
+                inject(MotionEvent.ACTION_CANCEL, 675f, 587f)
             } catch (t: Throwable) { gestureError = t }
         }
         val t0 = SystemClock.uptimeMillis()
