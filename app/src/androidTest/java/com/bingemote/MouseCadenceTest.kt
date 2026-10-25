@@ -96,7 +96,6 @@ class MouseCadenceTest {
         // wait (androidTest-only variant, dead in release).
         pass(instrumentation, "dwait-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180, deltaWait = true)
         pass(instrumentation, "dwait-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90, deltaWait = true)
-        MouseSendDebugHooks.deltaWaitEnabled = false
 
         serverRunning = false
         try { server.close() } catch (_: Exception) {}
