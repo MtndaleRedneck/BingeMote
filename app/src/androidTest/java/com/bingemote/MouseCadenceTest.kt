@@ -37,11 +37,10 @@ import kotlin.concurrent.thread
  * - True sub-17 ms steady injection is beyond this rig; faster-than-60 Hz input
  *   is an on-device question, not answered here.
  *
- * Pass families: base-* = shipped sender loop (16 ms floor, 20 ms empty-window
- * nap); dwait-* = androidTest-only delta-driven empty-window wait
- * (MouseSendDebugHooks, dead code in release). The dwait prediction: output
- * follows input ~1:1 (even gaps at the input cadence) instead of the nap's
- * quantized uneven pattern.
+ * Pass families: base-* and dwait-* now exercise the SAME shipped loop (the
+ * delta-driven empty-window wait replaced the 20 ms nap in 1.11.0); the dwait
+ * names are kept so runs compare across history. Expected post-fix: output
+ * follows input ~1:1 (even gaps at the input cadence) at every cadence.
  *
  * Numbers go to logcat under BMMouse and are the deliverable. The fake helper
  * answers /ping and /volume/get (so the 1 Hz poll stays quiet), refuses /ws (so
@@ -136,9 +135,8 @@ class MouseCadenceTest {
 
     private fun pass(
         instrumentation: android.app.Instrumentation,
-        label: String, startX: Float, stepPx: Float, intervalMs: Long, moves: Int, deltaWait: Boolean
+        label: String, startX: Float, stepPx: Float, intervalMs: Long, moves: Int
     ) {
-        MouseSendDebugHooks.deltaWaitEnabled = deltaWait
         MouseSendDebugHooks.traceEnabled = true
         runDrag(instrumentation, label, startX = startX, y = 1000f, stepPx = stepPx, intervalMs = intervalMs, moves = moves)
         Thread.sleep(800)

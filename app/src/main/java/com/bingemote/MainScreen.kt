@@ -201,6 +201,18 @@ private fun HomeContent(
                 },
                 color = Color(0xFF3D2A12), fontSize = 14.sp,
             )
+            // Strictly-necessary helper notices ride the hero itself - no second card.
+            // A removed pairing says pair again; a silent helper says what it affects.
+            // Neither shows while the hero already says the PC is unreachable.
+            if (!lost) {
+                if (remote.unpaired) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("This phone isn't paired with the PC anymore - pair again.", color = Color(0xFF3D2A12), fontSize = 13.sp)
+                } else if (remote.helperNotice) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume.", color = Color(0xFF3D2A12), fontSize = 13.sp)
+                }
+            }
             // Screenshot-rig only: the proposed helper/unpaired note rendered inside the
             // hero for the review captures. Never set outside the rig; release never shows it.
             if (BuildConfig.DEBUG) remote.mockHeroNote?.let {
@@ -213,26 +225,6 @@ private fun HomeContent(
     val seekDrag = remember { SeekDrag() }
     SeekBlock(remote, marginDp, seekDrag)
     VolumeRow(remote, flashAll, marginDp)
-    if (remote.helperDown) {
-        Column {
-            Spacer(Modifier.height(10.dp))
-            Column(
-                Modifier
-                    .padding(horizontal = marginDp.dp)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Card)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                Text("Can't reach BingeMote on the PC", color = Orange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Mouse, keyboard and PC volume are off for now, so the volume buttons use VLC instead. To fix it, open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
-                    color = TextC, fontSize = 13.sp,
-                )
-            }
-        }
-    }
     SkipRow(remote, flashAll, marginDp, seekDrag = seekDrag)
     SecondarySkipRow(remote, marginDp)
     BottomRow(remote, flashAll, marginDp, onSubtitles = onSubtitles, onMovies = onMovies, onMouse = onMouse)
