@@ -39,7 +39,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
         // silence, so a quietly-dead app can't leave the PC's mouse pressed.
         heartbeat = try {
             scheduler.scheduleWithFixedDelay({
-                try { ws?.send("{"cmd":"heartbeat"}") } catch (_: Exception) {}
+                try { ws?.send("{\"cmd\":\"heartbeat\"}") } catch (_: Exception) {}
             }, 2, 2, TimeUnit.SECONDS)
         } catch (_: Exception) { null }
     }
