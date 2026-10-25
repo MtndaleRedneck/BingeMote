@@ -81,18 +81,31 @@ sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
 adb shell cmd statusbar collapse
 sleep 2
-# The keyguard attempt + the shade: media controls render on both on a locked
-# device; on this emulator the screen simply returns to the app.
-adb shell input keyevent 26
+# The real keyguard: the emulator ships with no screen lock, so give it a rig-local
+# PIN for exactly these two captures (cleared right after; never a user credential).
+# adb root works on the google_apis (userdebug) image; if locksettings is unavailable
+# the captures simply show the unlocked surface and the limitation is reported.
+adb root >/dev/null 2>&1 || true
 sleep 2
+adb wait-for-device
+sleep 2
+PIN_OK=0
+if adb shell locksettings set-pin 1234 2>/dev/null; then PIN_OK=1; fi
 adb shell input keyevent 26
 sleep 3
+adb shell input keyevent 224
+sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-keyguard.png"
+echo "keyguard pin set: $PIN_OK" > "screenshots/lockscreen-keyguard-note.txt"
 adb shell cmd statusbar expand-notifications
 sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls-shade.png"
 # Session evidence after the toggles: still active, with which actions.
 adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
+# Back to no screen lock and an unlocked device for every phase after this.
+if [ "$PIN_OK" = "1" ]; then adb shell locksettings clear --old 1234 || true; fi
+adb shell input keyevent 82
+sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.
 adb shell input keyevent 4
 sleep 1
