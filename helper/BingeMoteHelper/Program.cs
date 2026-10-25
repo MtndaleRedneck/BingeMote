@@ -444,6 +444,7 @@ internal static class Program
 
     internal static void SaveConfig()
     {
+        Directory.CreateDirectory(DataDir);
         var json = JsonSerializer.Serialize(new
         {
             phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),

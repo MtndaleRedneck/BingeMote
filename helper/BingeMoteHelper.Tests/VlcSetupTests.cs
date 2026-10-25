@@ -56,7 +56,8 @@ public class VlcSetupTests : IDisposable
     [Fact]
     public void PasswordAloneIsNotConfigured()
     {
-        File.Delete(VlcrcPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(VlcrcPath)!);
+        if (File.Exists(VlcrcPath)) File.Delete(VlcrcPath);
         WriteVlcrc("http-password=pw-1");
         Assert.False(VlcSetup.Configured); // no interface, no bind: never a green attestation
     }
