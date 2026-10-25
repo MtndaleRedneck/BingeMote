@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (::remote.isInitialized && store.setupDone) remote.start()
+        MediaControls.sync(this, store)
     }
 
     override fun onStop() {

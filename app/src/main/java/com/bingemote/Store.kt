@@ -65,6 +65,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
 
+    /** Play/pause/skip + position on the lock screen while a movie plays. Off by default. */
+    var lockScreenControls: Boolean
+        get() = prefs.getBoolean("lockScreenControls", false)
+        set(v) = prefs.edit().putBoolean("lockScreenControls", v).apply()
+
     /** Temporary 1.9 A/B: the seek-drag cancel circle treatment. Ezzy tries both
      * ("ring" = Ring only, "fills" = Fills in) and removes the loser; the setting goes with it. */
     var cancelStyle: String

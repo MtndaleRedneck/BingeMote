@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,9 +44,11 @@ fun SettingsScreen(
     onFeedback: () -> Unit,
 ) {
     val store = remote.store
+    val context = LocalContext.current
     var mainSkip by remember { mutableStateOf(store.skipMainSec) }
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
+    var lockControls by remember { mutableStateOf(store.lockScreenControls) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
     var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
@@ -135,6 +138,16 @@ fun SettingsScreen(
                 options = listOf(0 to "Fills in", 1 to "Ring only"),
                 selected = if (cancelStyle == "ring") 1 else 0,
             ) { cancelStyle = if (it == 1) "ring" else "fills"; store.cancelStyle = cancelStyle }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsSection("Lock screen") {
+            ToggleRow("Controls on lock screen", lockControls) {
+                lockControls = it; store.lockScreenControls = it
+                MediaControls.sync(context, store)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Play, pause, and skip from your lock screen while a movie plays.", color = Muted, fontSize = 13.sp)
         }
         Spacer(Modifier.height(14.dp))
 
