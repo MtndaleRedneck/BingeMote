@@ -326,6 +326,32 @@ try {
         Assert (-not ($cfgText -match '"pendingVlcPassword":"')) "the completed pending write is cleared from config.json"
         $r = Invoke-HelperGet '/vlc/setup-status' $token
         Assert (($r.body | ConvertFrom-Json).configured -eq $true) "setup-status attests configured after the completed write"
+
+        # Re-pairing while VLC runs with those exact settings must NOT defer: the running
+        # VLC read this vlcrc at startup, so control works now - a pending write here would
+        # falsely tell the owner a reopen is required.
+        $fakeVlc2 = Start-Process (Join-Path $env:TEMP 'vlc.exe') -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 600' -PassThru
+        Start-Sleep -Seconds 2
+        Assert (-not $fakeVlc2.HasExited) "the simulated VLC is running for the re-pair test"
+        Stop-Process -Id $p.Id -Force
+        Start-Sleep -Seconds 1
+        $env:BINGEMOTE_PAIR_CODE = '777777'
+        $p = Start-Process $exe -PassThru
+        $up = $false
+        foreach ($i in 1..40) {
+            try {
+                $c = New-Object Net.Sockets.TcpClient
+                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $up) { throw "helper did not restart for the re-pair test" }
+        $r = Invoke-Helper '/pair' '{"code":"777777"}' $null
+        Assert ($r.code -eq 200) "fourth phone pairs while VLC runs with the settings already written"
+        Assert ((($r.body | ConvertFrom-Json).vlcPending) -ne $true) "no false pending when vlcrc already has the settings"
+        $r = Invoke-HelperGet '/vlc/setup-status' $token
+        $ss = $r.body | ConvertFrom-Json
+        Assert ($ss.configured -eq $true -and $ss.pending -eq $false) "setup-status attests configured, not pending, while VLC runs with the settings"
+        Stop-Process -Id $fakeVlc2.Id -Force -ErrorAction SilentlyContinue
     } finally {
         Get-Process vlc -ErrorAction SilentlyContinue | Stop-Process -Force
     }
