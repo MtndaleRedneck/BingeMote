@@ -5,13 +5,13 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-
-[assembly: InternalsVisibleTo("BingeMoteHelper.Tests")]
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using WinForms = System.Windows.Forms;
+
+[assembly: InternalsVisibleTo("BingeMoteHelper.Tests")]
 
 namespace BingeMoteHelper;
 

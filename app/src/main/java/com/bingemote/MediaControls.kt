@@ -229,7 +229,7 @@ class MediaControlsService : Service() {
                     Notification.Action.Builder(icon(android.R.drawable.ic_media_play), "Play", actionIntent(ACTION_MEDIA_PLAY_PAUSE)).build(),
             )
             .addAction(Notification.Action.Builder(icon(android.R.drawable.ic_media_ff), "Forward 30s", actionIntent(ACTION_MEDIA_FAST_FORWARD)).build())
-            .setStyle(Notification.MediaStyle().setMediaToken(s.sessionToken).setShowActionsInCompactView(0, 1, 2))
+            .setStyle(Notification.MediaStyle().setMediaSession(s.sessionToken).setShowActionsInCompactView(0, 1, 2))
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
