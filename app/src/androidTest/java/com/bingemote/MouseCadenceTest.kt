@@ -23,18 +23,30 @@ import kotlin.concurrent.thread
 
 /**
  * Diagnosis harness for the jerky-mouse report - NOT a product gate. Injects a
- * perfectly steady synthetic drag and records the move frames the app actually
- * emits to a fake helper on localhost (a near-perfect link), so sender-loop
- * cadence artifacts show up without any LAN in the way.
+ * synthetic drag and records the move frames the app actually emits to a fake
+ * helper on localhost (a near-perfect link), so sender-loop cadence artifacts
+ * show up without any LAN in the way.
  *
- * Two passes: ~60 Hz input (16 ms) and ~120 Hz input (8 ms). The display pipeline
- * on this emulator is 60 Hz, so the second pass measures what the pipeline does
- * with faster input delivery, not a true 120 Hz screen.
+ * Honesty rules, learned the hard way:
+ * - SystemClock.sleep() overshoots by ~17 ms on this emulator, so pass labels
+ *   never claim a cadence. Every pass logs its MEASURED injected intervals AND
+ *   the app-side delta arrivals (a DEBUG-only ring buffer in the gesture
+ *   handler), and conclusions come only from measured cadences.
+ * - Every pass must capture frames or the test FAILS - a missed pass is an
+ *   invalid rig, never a silent conclusion.
+ * - True sub-17 ms steady injection is beyond this rig; faster-than-60 Hz input
+ *   is an on-device question, not answered here.
  *
- * Numbers go to logcat under BMMouse and are the deliverable; the assertions only
- * prove the capture ran. The fake helper answers /ping and /volume/get (so the
- * 1 Hz poll stays quiet), refuses /ws (so frames take the per-batch HTTP path and
- * each emission is a separately timed request), and times every /mouse/move.
+ * Pass families: base-* = shipped sender loop (16 ms floor, 20 ms empty-window
+ * nap); dwait-* = androidTest-only delta-driven empty-window wait
+ * (MouseSendDebugHooks, dead code in release). The dwait prediction: output
+ * follows input ~1:1 (even gaps at the input cadence) instead of the nap's
+ * quantized uneven pattern.
+ *
+ * Numbers go to logcat under BMMouse and are the deliverable. The fake helper
+ * answers /ping and /volume/get (so the 1 Hz poll stays quiet), refuses /ws (so
+ * frames take the per-batch HTTP path and each emission is a separately timed
+ * request), and times every /mouse/move.
  */
 class MouseCadenceTest {
     data class Frame(val atNanos: Long, val dx: Double, val dy: Double)
@@ -75,26 +87,17 @@ class MouseCadenceTest {
         )
         Thread.sleep(1500)
 
-        // Pass 1a/1b: ~60 Hz steady drag, +4 px every 16 ms, twice for rhythm stability.
-        runDrag(instrumentation, "60Hz-a", startX = 240f, y = 1000f, stepPx = 4f, intervalMs = 16L, moves = 180)
-        Thread.sleep(800)
-        report("60Hz-a", snapshotAndReset())
-        runDrag(instrumentation, "60Hz-b", startX = 960f, y = 1000f, stepPx = -4f, intervalMs = 16L, moves = 180)
-        Thread.sleep(800)
-        report("60Hz-b", snapshotAndReset())
-
-        // Pass 2: ~120 Hz input, +2 px every 8 ms (60 Hz display: measures how the
-        // pipeline reshapes faster input, not a true 120 Hz panel).
-        runDrag(instrumentation, "120Hz-input", startX = 240f, y = 1000f, stepPx = 2f, intervalMs = 8L, moves = 360)
-        Thread.sleep(800)
-        report("120Hz-input", snapshotAndReset())
-
-        // Control: ~30 Hz input (33 ms), +4 px. Slower than the 16 ms pace + 20 ms nap,
-        // so every flush window carries delta: the mechanism predicts an EVEN ~36 ms
-        // cadence at the same ~28/sec rate - isolating unevenness from rate.
-        runDrag(instrumentation, "control-33ms", startX = 240f, y = 1000f, stepPx = 4f, intervalMs = 33L, moves = 90)
-        Thread.sleep(800)
-        report("control-33ms", snapshotAndReset())
+        // Baseline passes (shipped loop). Requested cadences land ~17 ms slower
+        // than asked - the measured histograms are the truth, not the labels.
+        pass(instrumentation, "base-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180, deltaWait = false)
+        pass(instrumentation, "base-16rev", startX = 900f, stepPx = -4f, intervalMs = 16L, moves = 150, deltaWait = false)
+        pass(instrumentation, "base-8", startX = 240f, stepPx = 2f, intervalMs = 8L, moves = 360, deltaWait = false)
+        pass(instrumentation, "base-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90, deltaWait = false)
+        // Fix-validation passes: same input against the delta-driven empty-window
+        // wait (androidTest-only variant, dead in release).
+        pass(instrumentation, "dwait-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180, deltaWait = true)
+        pass(instrumentation, "dwait-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90, deltaWait = true)
+        MouseSendDebugHooks.deltaWaitEnabled = false
 
         serverRunning = false
         try { server.close() } catch (_: Exception) {}
@@ -131,6 +134,26 @@ class MouseCadenceTest {
         Log.i("BMMouse", "$label: injectedIntervals(ms->count)=$hist")
     }
 
+    private fun pass(
+        instrumentation: android.app.Instrumentation,
+        label: String, startX: Float, stepPx: Float, intervalMs: Long, moves: Int, deltaWait: Boolean
+    ) {
+        MouseSendDebugHooks.deltaWaitEnabled = deltaWait
+        MouseSendDebugHooks.traceEnabled = true
+        runDrag(instrumentation, label, startX = startX, y = 1000f, stepPx = stepPx, intervalMs = intervalMs, moves = moves)
+        Thread.sleep(800)
+        reportArrivals(label)
+        report(label, snapshotAndReset())
+    }
+
+    private fun reportArrivals(label: String) {
+        MouseSendDebugHooks.traceEnabled = false
+        val arr = MouseSendDebugHooks.drainArrivals()
+        val gaps = arr.toList().zipWithNext { a, b -> b - a }
+        val hist = gaps.groupingBy { it }.eachCount().toSortedMap()
+        Log.i("BMMouse", "$label: appArrivals=${arr.size} interArrival(ms->count)=$hist")
+    }
+
     private fun snapshotAndReset(): List<Frame> {
         val out: List<Frame>
         synchronized(frames) { out = frames.toList(); frames.clear() }
@@ -138,7 +161,7 @@ class MouseCadenceTest {
     }
 
     private fun report(label: String, frames: List<Frame>) {
-        if (frames.isEmpty()) { Log.i("BMMouse", "$label: NO FRAMES CAPTURED"); return }
+        assertTrue("$label: NO FRAMES CAPTURED - pass invalid, rig broken", frames.isNotEmpty())
         val gaps = frames.zipWithNext { a, b -> (b.atNanos - a.atNanos) / 1_000_000.0 }
         val steps = frames.map { kotlin.math.abs(it.dx) }
         val sortedSteps = steps.sorted()

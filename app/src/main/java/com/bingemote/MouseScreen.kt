@@ -134,6 +134,9 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                     var dragLatched = false
                     var sender: Job? = null
                     var lpJob: Job? = null
+                    // androidTest diagnosis only: delta-arrival signal for the delta-wait
+                    // sender variant. In release builds nothing ever sends on it.
+                    val deltaSignal = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
                     fun startSender() {
                         if (sender?.isActive == true) return
                         sender = scope.launch {
@@ -165,7 +168,11 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                     }) done.complete(Unit)
                                     lastSentAt = System.currentTimeMillis()
                                 } else {
-                                    delay(20)
+                                    // androidTest variant (dead in release): wait for the next
+                                    // delta instead of the fixed 20 ms nap.
+                                    if (BuildConfig.DEBUG && MouseSendDebugHooks.deltaWaitEnabled) {
+                                        kotlinx.coroutines.withTimeoutOrNull(1000) { deltaSignal.receive() }
+                                    } else delay(20)
                                 }
                             }
                         }
@@ -218,6 +225,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                         // Pinch: zoom on the PC via Ctrl+wheel. Bundled like moves,
                                         // so a fast pinch can't queue a backlog that outlives the fingers.
                                         synchronized(accLock) { accZoom += (newDist - pinchDist) / 6f }
+                                        if (BuildConfig.DEBUG && MouseSendDebugHooks.deltaWaitEnabled) deltaSignal.trySend(Unit)
                                         pinchDist = newDist
                                         moved = true
                                     } else {
@@ -227,6 +235,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                         // leftover fraction rides the next flush (or the lift flush), so
                                         // slow careful scrolling loses nothing.
                                         synchronized(accLock) { accScroll += -avg / 4f }
+                                        if (BuildConfig.DEBUG && MouseSendDebugHooks.deltaWaitEnabled) deltaSignal.trySend(Unit)
                                         if (abs(avg) > 1f) moved = true
                                     }
                                     pressed.forEach { it.consume() }
@@ -242,6 +251,9 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                     if (moved) {
                                         synchronized(accLock) { accX += pendX + delta.x; accY += pendY + delta.y }
                                         pendX = 0f; pendY = 0f
+                                        // androidTest diagnosis only (dead in release).
+                                        if (BuildConfig.DEBUG && MouseSendDebugHooks.traceEnabled) MouseSendDebugHooks.noteArrival()
+                                        if (BuildConfig.DEBUG && MouseSendDebugHooks.deltaWaitEnabled) deltaSignal.trySend(Unit)
                                     } else { pendX += delta.x; pendY += delta.y }
                                     ch.consume()
                                 }
