@@ -70,6 +70,11 @@ class Store(context: Context) {
         get() = prefs.getBoolean("lockScreenControls", false)
         set(v) = prefs.edit().putBoolean("lockScreenControls", v).apply()
 
+    // CI screenshot state (debug builds only): MediaControlsService seeds a demo session.
+    var demoControls: Boolean
+        get() = prefs.getBoolean("demoControls", false)
+        set(v) = prefs.edit().putBoolean("demoControls", v).apply()
+
     /** Temporary 1.9 A/B: the seek-drag cancel circle treatment. Ezzy tries both
      * ("ring" = Ring only, "fills" = Fills in) and removes the loser; the setting goes with it. */
     var cancelStyle: String

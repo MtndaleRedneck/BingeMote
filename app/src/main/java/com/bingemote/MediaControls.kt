@@ -70,6 +70,8 @@ class MediaControlsService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // CI screenshot state (debug builds only): seeded controls without a PC.
+        if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
             pollJob = scope.launch {
                 while (isActive) {
@@ -118,6 +120,29 @@ class MediaControlsService : Service() {
             .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
             .build()
         s.setMetadata(meta)
+        s.isActive = true
+    }
+
+    // CI screenshot state (debug builds only): the seeded session as it looks mid-movie.
+    private fun seedDemo() {
+        val s = session ?: return
+        s.setPlaybackState(
+            PlaybackState.Builder()
+                .setActions(
+                    PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
+                        PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_REWIND or
+                        PlaybackState.ACTION_FAST_FORWARD,
+                )
+                .setState(PlaybackState.STATE_PLAYING, (34 * 60 + 12) * 1000L, 1f)
+                .setBufferedPosition((110 * 60 + 24) * 1000L)
+                .build(),
+        )
+        s.setMetadata(
+            android.media.MediaMetadata.Builder()
+                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, (110 * 60 + 24) * 1000L)
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "demo.mkv")
+                .build(),
+        )
         s.isActive = true
     }
 
