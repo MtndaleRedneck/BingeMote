@@ -1,3 +1,12 @@
+## v1.7.0
+
+- Sets up VLC's web remote by itself: the PC picks the password, writes VLC's settings (or finishes the moment VLC closes), and shares it with the phone at pairing
+- Remembers each movie's place on disk and resumes it for movies started from the phone
+- Held buttons let go if the phone's live connection goes quiet for 8 seconds - no stuck keys
+- VLC's web remote listens behind its password, with its own Private-networks-only firewall rule
+- Reports what firewall rules exist for VLC in Feedback (a list only, nothing changes)
+- The VLC settings write retries on its own when VLC was open during setup
+
 ## v1.6.0
 
 - Mouse input from the phone answers right away, with no more stutter on busy moves
