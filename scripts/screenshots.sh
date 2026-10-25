@@ -226,6 +226,16 @@ grep -q '^OK (6 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL
 for tag in ring fills interrupted; do
   extract_bounds screenshots/cancel-logcat.txt "$tag" "screenshots/cancel-bounds-$tag.txt"
 done
+# 4b) Mouse cadence diagnosis (jerky-mouse report): steady synthetic drags against a
+#     fake helper on localhost; emitted frames' step sizes and inter-arrival gaps
+#     land in logcat under BMMouse. Assertions are minimal by design - the numbers
+#     are the deliverable, not a gate on the cadence itself.
+adb logcat -c
+adb shell am instrument -w -e class com.bingemote.MouseCadenceTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/mouse-cadence-instrument.txt
+adb logcat -d -s BMMouse:I > screenshots/mouse-cadence.txt
+cat screenshots/mouse-cadence.txt
+grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSERT FAIL: mouse cadence test failed (see mouse-cadence-instrument.txt)'; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \
