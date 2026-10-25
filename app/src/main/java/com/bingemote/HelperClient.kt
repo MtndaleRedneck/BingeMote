@@ -36,6 +36,12 @@ object HelperClient {
      * out as fire-and-forget frames on it and the HTTP request below never happens. */
     @Volatile var live: LiveWs? = null
 
+    /** One shared worker for fire-and-forget calls (button release on background/leave) -
+     * replaces ad-hoc `Thread {}` spawns that piled up one executor per gesture. */
+    val io: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "bingemote-io").apply { isDaemon = true }
+    }
+
     private fun post(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000) {
         val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
         try {

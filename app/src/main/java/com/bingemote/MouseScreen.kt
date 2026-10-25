@@ -113,10 +113,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
     DisposableEffect(commands) { onDispose {
         commands.close()
         // Always release a held mouse button when leaving this screen.
-        java.util.concurrent.Executors.newSingleThreadExecutor().also { executor ->
-            executor.execute { try { HelperClient.button(host, port, token, "left", false) } catch (_: Exception) {} }
-            executor.shutdown()
-        }
+        HelperClient.io.execute { try { HelperClient.button(host, port, token, "left", false) } catch (_: Exception) {} }
     } }
     fun fire(block: () -> Unit): Boolean {
         val queued = commands.trySend(block).isSuccess
