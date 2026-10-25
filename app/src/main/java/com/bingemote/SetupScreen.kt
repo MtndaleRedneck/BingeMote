@@ -39,7 +39,12 @@ fun SetupScreen(
     val scope = rememberCoroutineScope()
 
     // Re-entering setup with a saved pairing opens on the pair step, which offers to continue with it.
-    var step by remember { mutableStateOf(if (store.helperToken.isBlank()) 1 else 2) }
+    var step by remember {
+        mutableStateOf(
+            // CI screenshot state (debug builds only): straight to the finish step.
+            if (demoVlcPending && BuildConfig.DEBUG) 3 else if (store.helperToken.isBlank()) 1 else 2,
+        )
+    }
     var scanning by remember { mutableStateOf(false) }
     var found by remember { mutableStateOf<List<DiscoveredHelper>>(emptyList()) }
     var chosen by remember { mutableStateOf<DiscoveredHelper?>(null) }
