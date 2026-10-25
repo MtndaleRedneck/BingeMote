@@ -304,7 +304,6 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
         Spacer(Modifier.height(12.dp))
     }
-}
     resumeAsk?.let { ask ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { resumeAsk = null },
@@ -330,6 +329,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             containerColor = Card,
         )
     }
+}
+
 
 
 /** The saved place the PC reported for a movie. */
