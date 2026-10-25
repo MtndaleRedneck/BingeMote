@@ -1,6 +1,10 @@
 package com.bingemote
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.media.session.MediaSession
@@ -33,6 +37,18 @@ object MediaControls {
  * The service polls VLC itself (the app's own poll stops when the screen is off); every
  * two seconds on the home Wi-Fi, only while the setting is on.
  */
+/** 34:12 or 1:50:24. */
+private fun fmtClockSec(sec: Long): String {
+    val h = sec / 3600; val m = (sec % 3600) / 60; val ss = sec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, ss) else "%d:%02d".format(m, ss)
+}
+
+private const val NOTIF_ID = 101
+private const val CHANNEL_ID = "playback"
+private const val ACTION_MEDIA_REWIND = "com.bingemote.action.REWIND"
+private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD"
+private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
+
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var session: MediaSession? = null
@@ -81,6 +97,15 @@ class MediaControlsService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // CI screenshot state (debug builds only): seeded controls without a PC.
+        when (intent?.action) {
+            ACTION_MEDIA_REWIND -> { callback?.onRewind(); return START_STICKY }
+            ACTION_MEDIA_FAST_FORWARD -> { callback?.onFastForward(); return START_STICKY }
+            ACTION_MEDIA_PLAY_PAUSE -> {
+                val st = try { Vlc.status(Store(this).host, Store(this).vlcPort, Store(this).vlcPassword) } catch (_: Exception) { null }
+                if (st?.playing == true) callback?.onPause() else callback?.onPlay()
+                return START_STICKY
+            }
+        }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
             pollJob = scope.launch {
@@ -131,6 +156,7 @@ class MediaControlsService : Service() {
             .build()
         s.setMetadata(meta)
         s.isActive = true
+        postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
     }
 
     // CI screenshot state (debug builds only): the seeded session as it looks mid-movie.
@@ -154,9 +180,55 @@ class MediaControlsService : Service() {
                 .build(),
         )
         s.isActive = true
+        postMediaNotification(true, (34 * 60 + 12).toLong(), (110 * 60 + 24).toLong(), "demo.mkv")
+    }
+
+    // The system media surface (quick settings / lock screen) is sourced from this
+    // media-session notification: it renders as the media card, not a normal shade
+    // row, and media-session notifications are exempt from the Android 13
+    // notification permission, so it never prompts.
+    private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW),
+            )
+        }
+        val s = session ?: return
+        val openApp = android.app.PendingIntent.getActivity(
+            this, 1, Intent(this, MainActivity::class.java),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        fun actionIntent(action: String) = android.app.PendingIntent.getService(
+            this, action.hashCode(), Intent(this, MediaControlsService::class.java).setAction(action),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        fun icon(res: Int) = android.graphics.drawable.Icon.createWithResource(this, res)
+        val n = Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title?.ifBlank { null } ?: "Playing")
+            .setContentText("${fmtClockSec(timeSec)} of ${fmtClockSec(lengthSec)}")
+            .setContentIntent(openApp)
+            .setOngoing(playing)
+            .addAction(Notification.Action.Builder(icon(android.R.drawable.ic_media_rew), "Back 30s", actionIntent(ACTION_MEDIA_REWIND)).build())
+            .addAction(
+                if (playing)
+                    Notification.Action.Builder(icon(android.R.drawable.ic_media_pause), "Pause", actionIntent(ACTION_MEDIA_PLAY_PAUSE)).build()
+                else
+                    Notification.Action.Builder(icon(android.R.drawable.ic_media_play), "Play", actionIntent(ACTION_MEDIA_PLAY_PAUSE)).build(),
+            )
+            .addAction(Notification.Action.Builder(icon(android.R.drawable.ic_media_ff), "Forward 30s", actionIntent(ACTION_MEDIA_FAST_FORWARD)).build())
+            .setStyle(Notification.MediaStyle().setMediaToken(s.sessionToken).setShowActionsInCompactView(0, 1, 2))
+            .build()
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIF_ID, n)
+        }
     }
 
     override fun onDestroy() {
+        stopForeground(STOP_FOREGROUND_REMOVE)
         pollJob?.cancel()
         session?.let { it.isActive = false; it.release() }
         session = null
