@@ -1,3 +1,14 @@
+## v1.10.0
+
+- Setup does VLC for you: pair with the PC and the web remote is set up on its own - nothing to find in VLC's settings
+- If VLC ever refuses the password, the phone fetches the current one from the PC once; if that can't work it says so, and it never overwrites a password you changed on the PC
+- Pick up where you left off: when a movie has a saved place, the phone asks Resume or Start over
+- Lock-screen controls (off by default - turn them on in Settings): play/pause, your two skip buttons, and a bar that shows where you are
+- Movies resume even from a VLC you opened by hand: BingeMote on the PC remembers each movie's place
+- Mouse: one ordered line to the PC, so a swipe after a Wi-Fi hiccup lands whole; a stuck pointer after the app was away is gone; keyboard keys vibrate with your Feel setting; Send clears the box cleanly
+- Volume answers right away, even while the PC is reconnecting
+- Setup tells you when the PC will finish VLC's setup the next time VLC closes
+
 ## v1.9.0
 
 - Drag the time bar and the play button becomes a cancel spot: let go on it to keep your place, let go anywhere else to jump there (Settings has two looks for it while we pick one)
