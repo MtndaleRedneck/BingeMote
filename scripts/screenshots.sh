@@ -69,17 +69,16 @@ adb shell input swipe 540 1900 540 700 400
 sleep 2
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 
-# Lock-screen media controls (Phone 8): seeded session, screen off/on, capture the
-# lock screen, then unlock again for the steps after.
+# Lock-screen media controls (Phone 8): seeded session, then the system media
+# surface itself (quick settings media card = the same controls the lock screen
+# hosts; this emulator has no keyguard to capture). Collapse after.
 adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true >/dev/null
 sleep 6
-adb shell input keyevent 26
-sleep 2
-adb shell input keyevent 26
+adb shell cmd statusbar expand-settings
 sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
-adb shell input swipe 540 1800 540 600 300
+adb shell input keyevent 4
 sleep 2
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1080x2310 emulator screenshot
