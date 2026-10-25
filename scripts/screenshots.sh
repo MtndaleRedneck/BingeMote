@@ -78,7 +78,20 @@ sleep 6
 adb shell cmd statusbar expand-settings
 sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
+# Text evidence of the seeded session (the emulator SystemUI may not render a
+# media card): session state, actions (no SEEK_TO), metadata.
+adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
 adb shell input keyevent 4
+sleep 1
+# Whatever state the shade left behind, end UNLOCKED: everything after this
+# block launches the app and must see it.
+adb shell input keyevent 26
+sleep 1
+adb shell input keyevent 26
+sleep 2
+adb shell input swipe 540 1900 540 600 400
+sleep 2
+adb shell input keyevent 3
 sleep 2
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1080x2310 emulator screenshot
