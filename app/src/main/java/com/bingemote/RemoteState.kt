@@ -60,14 +60,18 @@ class RemoteState(
 
     /** True when the helper is paired but not answering, so the volume row fell back to VLC volume. */
     var helperDown by mutableStateOf(false)
+        private set
     // The PC answered 401: this phone's pairing was removed. Definitive, not a blip.
     var unpaired by mutableStateOf(false)
+        private set
     // The helper-down NOTICE waits ~5s of continuous failure; the VLC volume
     // fallback (2 strikes) still kicks in immediately - a brief blip falls back
     // quietly without nagging.
     var helperNotice by mutableStateOf(false)
-    private var helperDownAt = 0L
         private set
+    private var helperDownAt = 0L
+    // The pairing token the notice state above belongs to (see pollOnce).
+    private var noticeToken: String? = null
     private var preMuteRaw = 0
 
     /** Last subtitle track picked in the app, per media title. VLC's status doesn't report the current track on all versions. */
@@ -142,6 +146,17 @@ class RemoteState(
 
     suspend fun pollOnce() {
         if (!store.isConfigured) return
+        // The helper-notice state belongs to the pairing it was learned from: a new
+        // or cleared token makes it stale. Reset it here so a re-paired phone never
+        // sees "pair again" (or a leftover helper warning) about its NEW pairing.
+        if (noticeToken != store.helperToken) {
+            noticeToken = store.helperToken
+            unpaired = false
+            helperNotice = false
+            helperDown = false
+            helperFailures = 0
+            helperDownAt = 0L
+        }
         // Status and Windows volume in parallel: a blocked helper used to stall the whole
         // poll (time and seek bar only updated every ~11s when VLC answered but the helper didn't).
         // While VLC is closed, re-check it every 4th cycle instead of every cycle (fewer
