@@ -66,7 +66,7 @@ sleep 8
 dismiss_anr
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
-# (length 1:50:24). Raw pixels from the 1440x2807 emulator screenshot
+# (length 1:50:24). Raw pixels from the 1080x2310 emulator screenshot
 # (seek track x=33..1047, center y=751). Evidence first, assertions last: every
 # dump's text fields and the BMSeek log are echoed to the CI log and uploaded
 # even when a check fails, so a failure stays diagnosable.
