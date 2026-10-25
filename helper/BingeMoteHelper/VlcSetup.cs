@@ -14,13 +14,6 @@ internal static class VlcSetup
     {
         if (password.Length == 0 || password.Length > 200 || password.Contains('\r') || password.Contains('\n'))
             return JsonSerializer.Serialize(new { ok = false, reason = "bad password" });
-        if (Process.GetProcessesByName("vlc").Length > 0)
-        {
-            lock (Gate) _pendingPassword = password;
-            Program.SaveConfig(); // the deferred write must survive a helper restart
-            Program.Log("vlcrc write skipped - VLC is running (it rewrites vlcrc on exit). Will retry when VLC closes.");
-            return JsonSerializer.Serialize(new { ok = false, reason = "vlc running" });
-        }
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "vlc");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "vlcrc");
@@ -28,7 +21,8 @@ internal static class VlcSetup
         // Unchanged settings need no write - and no deferral: a running VLC read exactly
         // this vlcrc at startup, so control already works now. Saying "pending" here would
         // falsely tell the owner a reopen is required. Any older pending value is stale:
-        // the newest request is already on disk.
+        // the newest request is already on disk. This check must come BEFORE the
+        // VLC-running deferral, or it can never fire when VLC is up.
         if (FindValue(lines, "http-password") == password
             && (FindValue(lines, "extraintf") ?? "") == MergeValue(FindValue(lines, "extraintf"), "http")
             && FindValue(lines, "http-host") == "0.0.0.0")
@@ -38,6 +32,13 @@ internal static class VlcSetup
             if (hadPending) Program.SaveConfig();
             Program.Log("vlcrc already has the web remote set up - nothing to write.");
             return JsonSerializer.Serialize(new { ok = true });
+        }
+        if (Process.GetProcessesByName("vlc").Length > 0)
+        {
+            lock (Gate) _pendingPassword = password;
+            Program.SaveConfig(); // the deferred write must survive a helper restart
+            Program.Log("vlcrc write skipped - VLC is running (it rewrites vlcrc on exit). Will retry when VLC closes.");
+            return JsonSerializer.Serialize(new { ok = false, reason = "vlc running" });
         }
         // Merge, don't overwrite: another interface may already sit in extraintf.
         Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
