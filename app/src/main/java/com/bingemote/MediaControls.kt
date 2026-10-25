@@ -53,6 +53,14 @@ class MediaControlsService : Service() {
             // No onSeekTo and no ACTION_SEEK_TO: the bar shows the place but can't be dragged.
         })
         s.setFlags(MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
+        // The system media surface opens the app from this (docs: must launch an activity).
+        s.setSessionActivity(
+            android.app.PendingIntent.getActivity(
+                this, 0,
+                Intent(this, MainActivity::class.java),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
         session = s
     }
 
