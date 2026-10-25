@@ -101,8 +101,8 @@ class MediaControlsService : Service() {
             ACTION_MEDIA_REWIND -> { callback?.onRewind(); return START_STICKY }
             ACTION_MEDIA_FAST_FORWARD -> { callback?.onFastForward(); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
-                val st = try { Vlc.status(Store(this).host, Store(this).vlcPort, Store(this).vlcPassword) } catch (_: Exception) { null }
-                if (st?.playing == true) callback?.onPause() else callback?.onPlay()
+                // Main thread: no network here; the poll keeps lastPlaying fresh.
+                if (lastPlaying) callback?.onPause() else callback?.onPlay()
                 return START_STICKY
             }
         }
@@ -119,6 +119,7 @@ class MediaControlsService : Service() {
     }
 
     @Volatile private var refreshRequested = false
+    @Volatile private var lastPlaying = false
     private fun refreshNow() { refreshRequested = true }
 
     private suspend fun pollOnce() {
@@ -136,6 +137,7 @@ class MediaControlsService : Service() {
         failures = 0
         val s = session ?: return
         val playing = st.playing
+        lastPlaying = playing
         val state = PlaybackState.Builder()
             .setActions(
                 PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
