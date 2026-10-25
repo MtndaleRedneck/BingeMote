@@ -67,6 +67,10 @@ class MediaControlsService : Service() {
             override fun onPause() { run { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) } }
             override fun onRewind() { jump(store, -store.skipSecondarySec) }
             override fun onFastForward() { jump(store, store.skipMainSec) }
+            // The system media surface renders its two extra slots from these actions;
+            // they fire his two chosen skip intervals (main forward, secondary back).
+            override fun onSkipToPrevious() { jump(store, -store.skipSecondarySec) }
+            override fun onSkipToNext() { jump(store, store.skipMainSec) }
             // No onSeekTo and no ACTION_SEEK_TO: the bar shows the place but can't be dragged.
         }
         callback = cb
@@ -151,7 +155,8 @@ class MediaControlsService : Service() {
             .setActions(
                 PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
                     PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_REWIND or
-                    PlaybackState.ACTION_FAST_FORWARD,
+                    PlaybackState.ACTION_FAST_FORWARD or
+                    PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
             )
             .setState(
                 if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
@@ -178,7 +183,8 @@ class MediaControlsService : Service() {
                 .setActions(
                     PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
                         PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_REWIND or
-                        PlaybackState.ACTION_FAST_FORWARD,
+                        PlaybackState.ACTION_FAST_FORWARD or
+                    PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
                 )
                 .setState(PlaybackState.STATE_PLAYING, (34 * 60 + 12) * 1000L, 1f)
                 .setBufferedPosition((110 * 60 + 24) * 1000L)
