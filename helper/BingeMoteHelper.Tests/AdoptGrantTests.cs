@@ -54,7 +54,7 @@ public class AdoptGrantTests
         Assert.True(r.Conflict);
         Assert.False(r.Served);
         Assert.False(phone.AdoptSpent);
-        Assert.Empty(saves);
+        Assert.Single(saves); // only the serve-time marker persist; the conflict adds nothing
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class AdoptGrantTests
         var ack = AdoptGrant.Ack(phone, "req-1", () => saves.Add(true));
         Assert.True(ack.Acked);
         Assert.True(phone.AdoptSpent);
-        Assert.Single(saves);
+        Assert.Equal(2, saves.Count); // serve-time marker + the ack spend
         var again = AdoptGrant.Serve(phone, () => "pw-1", "req-9", DateTime.UtcNow, () => saves.Add(true));
         Assert.True(again.AlreadySpent);
         Assert.False(again.Served);
@@ -90,7 +90,7 @@ public class AdoptGrantTests
         var late = AdoptGrant.Serve(phone, () => "pw-1", "req-1", t0.Add(AdoptGrant.RetryWindow).AddSeconds(1), () => saves.Add(true));
         Assert.True(late.AlreadySpent);
         Assert.True(phone.AdoptSpent);
-        Assert.Single(saves); // the spend persisted
+        Assert.Equal(2, saves.Count); // serve-time marker + the window-expiry spend
     }
 
     [Fact]

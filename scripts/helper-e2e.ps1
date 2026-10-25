@@ -273,9 +273,10 @@ try {
     Write-Host "== pending vlcrc write survives a restart =="
     # Clear vlcrc so the completed write is proof, not a leftover of the first pair's write.
     Remove-Item (Join-Path $env:APPDATA 'vlc\vlcrc') -Force -ErrorAction SilentlyContinue
-    Copy-Item "$env:WINDIR\System32\notepad.exe" (Join-Path $env:TEMP 'vlc.exe') -Force
-    $fakeVlc = Start-Process (Join-Path $env:TEMP 'vlc.exe') -PassThru
-    Start-Sleep -Seconds 1
+    Copy-Item "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" (Join-Path $env:TEMP 'vlc.exe') -Force
+    $fakeVlc = Start-Process (Join-Path $env:TEMP 'vlc.exe') -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 600' -PassThru
+    Start-Sleep -Seconds 2
+    Assert (-not $fakeVlc.HasExited) "the simulated VLC process is running"
     try {
         Stop-Process -Id $p.Id -Force
         Start-Sleep -Seconds 1
