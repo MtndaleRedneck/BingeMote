@@ -145,10 +145,10 @@ class RemoteState(
     }
 
     suspend fun pollOnce() {
-        if (!store.isConfigured) return
         // The helper-notice state belongs to the pairing it was learned from: a new
         // or cleared token makes it stale. Reset it here so a re-paired phone never
         // sees "pair again" (or a leftover helper warning) about its NEW pairing.
+        // Runs before the isConfigured early-return so a cleared token also resets.
         if (noticeToken != store.helperToken) {
             noticeToken = store.helperToken
             unpaired = false
@@ -157,6 +157,7 @@ class RemoteState(
             helperFailures = 0
             helperDownAt = 0L
         }
+        if (!store.isConfigured) return
         // Status and Windows volume in parallel: a blocked helper used to stall the whole
         // poll (time and seek bar only updated every ~11s when VLC answered but the helper didn't).
         // While VLC is closed, re-check it every 4th cycle instead of every cycle (fewer
