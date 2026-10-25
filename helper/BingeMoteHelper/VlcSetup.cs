@@ -17,6 +17,7 @@ internal static class VlcSetup
         if (Process.GetProcessesByName("vlc").Length > 0)
         {
             lock (Gate) _pendingPassword = password;
+            Program.SaveConfig(); // the deferred write must survive a helper restart
             Program.Log("vlcrc write skipped - VLC is running (it rewrites vlcrc on exit). Will retry when VLC closes.");
             return JsonSerializer.Serialize(new { ok = false, reason = "vlc running" });
         }
@@ -32,7 +33,8 @@ internal static class VlcSetup
         Upsert(lines, "http-host", "0.0.0.0");
         File.WriteAllLines(path, lines);
         lock (Gate) _pendingPassword = null;
-        Program.Log("VLC web remote written into vlcrc from the phone's Finish step.");
+        Program.SaveConfig(); // clear any persisted deferred write
+        Program.Log("VLC web remote written into vlcrc.");
         return JsonSerializer.Serialize(new { ok = true });
     }
 
@@ -41,6 +43,30 @@ internal static class VlcSetup
 
     /// <summary>VLC was open, so the write was skipped; retry when VLC closes.</summary>
     public static bool Pending => _pendingPassword != null;
+
+    /// <summary>The deferred value itself (for config.json; vlcrc is plain text anyway).
+    /// Null when nothing waits.</summary>
+    public static string? PendingValue { get { lock (Gate) return _pendingPassword; } }
+
+    /// <summary>The PC's attestation for the phone's setup check: the phone's password is
+    /// the live one in vlcrc right now (no write waiting). A running VLC that has not
+    /// reloaded yet reports Pending instead.</summary>
+    public static bool Configured => !Pending && !string.IsNullOrEmpty(ReadVlcrcValue("http-password"));
+
+    /// <summary>Re-arm a deferred write after a helper restart: VLC still running keeps it
+    /// waiting for the retry timer; VLC already closed completes it immediately.</summary>
+    public static void RestorePending(string password)
+    {
+        if (Process.GetProcessesByName("vlc").Length > 0)
+        {
+            lock (Gate) _pendingPassword = password;
+            Program.SaveConfig();
+            Program.Log("Restored the vlcrc write deferred before the restart - it completes when VLC closes.");
+            return;
+        }
+        Program.Log("VLC closed while BingeMote was off - completing the deferred vlcrc write now.");
+        WriteVlcrc(password);
+    }
 
     /// <summary>Called on a timer: if an earlier write lost to a running VLC and VLC has
     /// since closed, write now. True while a write is still waiting.</summary>
@@ -70,7 +96,13 @@ internal static class VlcSetup
     public static string ReadOrCreatePassword()
     {
         var existing = EffectivePassword();
-        if (!string.IsNullOrEmpty(existing)) return existing;
+        if (!string.IsNullOrEmpty(existing))
+        {
+            // A vlcrc can carry a password with the web interface itself off: the idempotent
+            // write also ensures extraintf=http and http-host, not just the password.
+            WriteVlcrc(existing);
+            return existing;
+        }
         var pw = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
         WriteVlcrc(pw); // defers to the pending write when VLC is running; EffectivePassword still serves it
         Program.Log("VLC web-remote password generated for the phone (value never logged).");

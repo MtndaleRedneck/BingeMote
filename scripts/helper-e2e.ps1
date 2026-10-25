@@ -189,6 +189,8 @@ try {
     Assert ($r.code -eq 200) "saved token still works after restart"
     $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-restart"}' $token
     Assert ($r.code -eq 410) "the spent adopt grant stays spent across a helper restart"
+    $pObj = Get-Process -Id $p.Id
+    Assert ($pObj.MainWindowHandle -eq 0) "the listener stays bound with no visible window (tray-hidden/headless), handle=$($pObj.MainWindowHandle)"
 
     # A second phone pairs with a fresh code and both phones stay connected.
     Write-Host "== multi-phone pairing =="
@@ -215,6 +217,36 @@ try {
     $r = Invoke-Helper '/ping' '{}' ('0' * 64)
     Assert ($r.code -eq 401) "unknown token is still 401 with two phones paired"
 
+    # An unacked adopt grant must survive a helper restart from its PERSISTED marker:
+    # same request id replays, a different one conflicts, and the ack still spends it.
+    Write-Host "== pre-ack adopt survives a restart =="
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-pre-restart"}' $token2
+    Assert ($r.code -eq 200) "second phone fetches its VLC password"
+    $preRestart = ($r.body | ConvertFrom-Json).password
+    $cfgText = Get-Content $cfg -Raw
+    Assert ($cfgText -match '"adoptRequestId":"req-pre-restart"') "the served marker is persisted at serve time"
+    Assert (-not ($cfgText -match $preRestart)) "the password value is never written to config.json"
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart with an unacked adopt" }
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-pre-restart"}' $token2
+    Assert ($r.code -eq 200) "same request id replays after the restart (no re-arm)"
+    Assert ((($r.body | ConvertFrom-Json).password) -eq $preRestart) "replay returns the same password after restart"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-different"}' $token2
+    Assert ($r.code -eq 409) "a different request id still conflicts after the restart"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-pre-restart","ack":true}' $token2
+    Assert ($r.code -eq 200) "the ack still spends the persisted grant"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-ack"}' $token2
+    Assert ($r.code -eq 410) "the spent grant stays spent"
+
     # A 1.0/1.1 config stored one token; that phone must stay paired after upgrading.
     Write-Host "== old config migration =="
     Stop-Process -Id $p.Id -Force
@@ -235,6 +267,64 @@ try {
     Assert ($r.code -eq 200) "old single-token config keeps the phone paired"
     $r = Invoke-Helper '/ping' '{}' $token2
     Assert ($r.code -eq 401) "old config no longer carries the second phone (fresh format rewrites on next save)"
+
+    # A vlcrc write deferred because VLC was open must survive a helper restart:
+    # the pending value is persisted, and a restarted helper completes it once VLC is gone.
+    Write-Host "== pending vlcrc write survives a restart =="
+    # Clear vlcrc so the completed write is proof, not a leftover of the first pair's write.
+    Remove-Item (Join-Path $env:APPDATA 'vlc\vlcrc') -Force -ErrorAction SilentlyContinue
+    Copy-Item "$env:WINDIR\System32\notepad.exe" (Join-Path $env:TEMP 'vlc.exe') -Force
+    $fakeVlc = Start-Process (Join-Path $env:TEMP 'vlc.exe') -PassThru
+    Start-Sleep -Seconds 1
+    try {
+        Stop-Process -Id $p.Id -Force
+        Start-Sleep -Seconds 1
+        $env:BINGEMOTE_PAIR_CODE = '555555'
+        $p = Start-Process $exe -PassThru
+        $up = $false
+        foreach ($i in 1..40) {
+            try {
+                $c = New-Object Net.Sockets.TcpClient
+                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $up) { throw "helper did not restart for the pending-write test" }
+        $r = Invoke-Helper '/pair' '{"code":"555555"}' $null
+        Assert ($r.code -eq 200) "third phone pairs while VLC is running"
+        $paired3 = $r.body | ConvertFrom-Json
+        Assert ($paired3.vlcPending -eq $true) "pair reports the vlcrc write is pending while VLC runs"
+        $pendingPw = $paired3.vlcPassword
+        Assert ($pendingPw.Length -ge 16) "pair hands over the pending password"
+        $cfgText = Get-Content $cfg -Raw
+        Assert ($cfgText -match '"pendingVlcPassword"') "the pending write is persisted in config.json"
+        Stop-Process -Id $p.Id -Force
+        Start-Sleep -Seconds 1
+        Stop-Process -Id $fakeVlc.Id -Force
+        Start-Sleep -Seconds 1
+        Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
+        $p = Start-Process $exe -PassThru
+        $up = $false
+        foreach ($i in 1..40) {
+            try {
+                $c = New-Object Net.Sockets.TcpClient
+                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $up) { throw "helper did not restart after VLC closed" }
+        $vlcrc = Join-Path $env:APPDATA 'vlc\vlcrc'
+        Assert (Test-Path $vlcrc) "the restarted helper completed the deferred vlcrc write"
+        $vlcrcText = Get-Content $vlcrc -Raw
+        Assert ($vlcrcText -match "http-password=$pendingPw") "vlcrc has the pending password"
+        Assert ($vlcrcText -match 'extraintf=http') "vlcrc enables the web interface"
+        Assert ($vlcrcText -match 'http-host=0.0.0.0') "vlcrc listens on the LAN"
+        Start-Sleep -Seconds 1
+        $cfgText = Get-Content $cfg -Raw
+        Assert (-not ($cfgText -match '"pendingVlcPassword":"')) "the completed pending write is cleared from config.json"
+        $r = Invoke-HelperGet '/vlc/setup-status' $token
+        Assert (($r.body | ConvertFrom-Json).configured -eq $true) "setup-status attests configured after the completed write"
+    } finally {
+        Get-Process vlc -ErrorAction SilentlyContinue | Stop-Process -Force
+    }
 
     # Movies: the folder is jailed, listed, and a real launch starts VLC.
     Write-Host "== movies =="

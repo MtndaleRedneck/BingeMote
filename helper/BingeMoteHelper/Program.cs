@@ -81,6 +81,11 @@ internal static class Program
         /// <summary>The one-shot VLC-password fetch was consumed (adopt flow). Persisted,
         /// so a helper restart never re-arms it.</summary>
         public bool AdoptSpent { get; set; }
+        /// <summary>The in-flight adopt fetch's request ID (persisted at serve time, so a
+        /// helper restart replays/spends from the record instead of re-arming the grant).
+        /// The password value itself is never stored here.</summary>
+        public string? AdoptRequestId { get; set; }
+        public DateTime? AdoptServedAtUtc { get; set; }
     }
 
     /// <summary>One entry per paired phone. Pairing adds one; Remove takes one out.</summary>
@@ -390,7 +395,12 @@ internal static class Program
                     if (t == null) continue;
                     var n = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
                     var spent = p.TryGetProperty("adoptSpent", out var asp) && asp.GetBoolean();
-                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n, AdoptSpent = spent });
+                    string? adoptReq = p.TryGetProperty("adoptRequestId", out var ari) ? ari.GetString() : null;
+                    DateTime? adoptAt = null;
+                    if (p.TryGetProperty("adoptServedAtUtc", out var asa) && asa.GetString() is string asas
+                        && DateTime.TryParse(asas, null, System.Globalization.DateTimeStyles.RoundtripKind, out var asad))
+                        adoptAt = asad;
+                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n, AdoptSpent = spent, AdoptRequestId = adoptReq, AdoptServedAtUtc = adoptAt });
                 }
             // 1.2 stored bare tokens without names; those phones show as "Phone 1" etc.
             if (Phones.Count == 0 && doc.RootElement.TryGetProperty("tokens", out var ts))
@@ -419,16 +429,25 @@ internal static class Program
                 }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
             LastRunVersion = doc.RootElement.TryGetProperty("lastRunVersion", out var lv) ? lv.GetString() : null;
+            _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
             }
         }
         catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+        // A vlcrc write that was waiting for VLC to close survives a helper restart:
+        // complete it now when VLC is already closed, or re-arm the retry when it is not.
+        var pendingVlc = _pendingVlcFromConfig;
+        _pendingVlcFromConfig = null;
+        if (!string.IsNullOrEmpty(pendingVlc)) VlcSetup.RestorePending(pendingVlc);
     }
+
+    private static string? _pendingVlcFromConfig;
 
     internal static void SaveConfig()
     {
         var json = JsonSerializer.Serialize(new
         {
-            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent }).ToArray(),
+            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),
+            pendingVlcPassword = VlcSetup.PendingValue,
             moviesFolder = MoviesFolder,
             declinedNetworks = DeclinedNetworks.ToArray(),
             homeNetworks = HomeNetworks.ToArray(),

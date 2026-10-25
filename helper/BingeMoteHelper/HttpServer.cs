@@ -86,6 +86,13 @@ internal sealed class HttpServer : IDisposable
                     }
                     return;
 
+                // The phone's automatic setup check asks the PC what is actually configured:
+                // a network error must never become a green Done on the phone by itself.
+                case "/vlc/setup-status":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    Reply(res, 200, JsonSerializer.Serialize(new { configured = VlcSetup.Configured, pending = VlcSetup.Pending }));
+                    return;
+
                 // The one-shot adoption fetch: a paired phone that lost its copy of the VLC
                 // password (or never finished setup) may fetch it exactly once, by request ID.
                 case "/vlc/adopt":
