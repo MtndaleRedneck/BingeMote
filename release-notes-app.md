@@ -1,3 +1,10 @@
+## v1.11.0
+
+- Warnings about the PC now sit inside the orange banner - the second card that pushed the controls around is gone
+- If the PC says this phone isn't paired anymore, the banner says to pair again instead of giving the wrong advice
+- The banner waits a few seconds before warning about a quiet PC helper, so a brief hiccup stays silent (the volume buttons still switch to VLC right away)
+- Mouse movement is sent as your finger moves instead of on a fixed timer
+
 ## v1.10.0
 
 - Setup does VLC for you: pair with the PC and the web remote is set up on its own - nothing to find in VLC's settings
