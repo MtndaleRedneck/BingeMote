@@ -94,7 +94,9 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
-    val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(256) }
+    // Unbounded: a backed-up send must never shed a move/button (a dropped button-up
+    // leaves the PC mouse pressed). The sender drains at link speed.
+    val commands = remember { kotlinx.coroutines.channels.Channel<() -> Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED) }
     LaunchedEffect(commands) {
         var failedInARow = 0
         for (command in commands) {
@@ -134,6 +136,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                     val accLock = Any()
                     var dragLatched = false
                     var sender: Job? = null
+                    var lpJob: Job? = null
                     fun startSender() {
                         if (sender?.isActive == true) return
                         sender = scope.launch {
@@ -170,6 +173,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                             }
                         }
                     }
+                    try {
                     awaitEachGesture {
                         val first = awaitFirstDown()
                         startSender()
@@ -184,7 +188,8 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                         var pendX = 0f; var pendY = 0f
 
                         // Long-press timer: 450ms stationary -> mouse button down (drag mode).
-                        val lpJob = scope.launch {
+                        lpJob?.cancel()
+                        lpJob = scope.launch {
                             delay(450)
                             if (!moved && !twoFinger && !dragLatched) {
                                 longPressFired = true
@@ -203,7 +208,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                 sawSecond = true
                                 if (!twoFinger) {
                                     twoFinger = true
-                                    lpJob.cancel()
+                                    lpJob?.cancel()
                                     val a = pressed[0].position; val b = pressed[1].position
                                     pinchDist = (a - b).getDistance()
                                     secondDownAt = System.currentTimeMillis()
@@ -246,8 +251,10 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                             }
                             if (pressed.isEmpty()) break
                         }
-                        lpJob.cancel()
+                        lpJob?.cancel()
+                        lpJob = null
                         sender?.cancel()
+                        sender = null
                         val lastX: Float; val lastY: Float; val lastSc: Float; val lastZm: Float
                         synchronized(accLock) { lastX = accX; lastY = accY; accX = 0f; accY = 0f; lastSc = accScroll; lastZm = accZoom; accScroll = 0f; accZoom = 0f }
                         // Lift flush: leftover scroll/zoom fractions still go out (slow scrolling loses no steps).
@@ -273,6 +280,12 @@ if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, last
                                 }
                             }
                         }
+                    }
+                    } finally {
+                        // A re-keyed block cancels mid-gesture: kill the old sender and
+                        // long-press timer so the new block starts its own.
+                        lpJob?.cancel(); lpJob = null
+                        sender?.cancel(); sender = null
                     }
                 },
         )
@@ -445,6 +458,7 @@ if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, last
             onClose = { keyboardOpen = false },
             onType = { text -> fire { HelperClient.typeText(host, port, token, text) } },
             onKey = { key -> fire { HelperClient.key(host, port, token, key) } },
+            hapticsOn = remote.store.haptics,
         )
     }
 }
@@ -512,7 +526,8 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.wai
 
 /** Type text and send named keys to the PC. */
 @Composable
-private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: (String) -> Unit) {
+private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: (String) -> Unit, hapticsOn: Boolean) {
+    val view = LocalView.current
     var text by remember { mutableStateOf("") }
     // Tapping anywhere outside dismisses, so there is no Done button.
     androidx.compose.ui.window.Dialog(
@@ -550,7 +565,12 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                     // instead of typing a line break.
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onKey("enter") }),
+                    keyboardActions = KeyboardActions(onSend = {
+                        onKey("enter")
+                        // The PC-side box just submitted: empty the field. Assigning the state
+                        // emits nothing - no pretend backspaces that would eat PC-side text.
+                        text = ""
+                    }),
                 )
                 Spacer(Modifier.height(10.dp))
                 // One row of four, Ezzy's approved render: plain clickable Boxes, so no
@@ -565,7 +585,7 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                             Modifier
                                 .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable(role = Role.Button) { onKey(k) }
+                                .clickable(role = Role.Button) { tapHaptic(view, hapticsOn); onKey(k) }
                                 // 2dp, not 4: the real 1.3x row measured wider than the spec font
                                 // said, and 4dp clipped the last key.
                                 .padding(horizontal = 2.dp),
@@ -582,17 +602,17 @@ private fun KeyboardSheet(onClose: () -> Unit, onType: (String) -> Unit, onKey: 
                 // Cross arrow cluster: chunky vector arrows (Ezzy's pick), same
                 // size and positions as before - only the artwork changed.
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("up") }) { ArrowIcon(ArrowDir.Up, Orange) }
+                    TextButton(onClick = { tapHaptic(view, hapticsOn); onKey("up") }) { ArrowIcon(ArrowDir.Up, Orange) }
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("left") }) { ArrowIcon(ArrowDir.Left, Orange) }
+                    TextButton(onClick = { tapHaptic(view, hapticsOn); onKey("left") }) { ArrowIcon(ArrowDir.Left, Orange) }
                     Spacer(Modifier.width(40.dp))
-                    TextButton(onClick = { onKey("right") }) { ArrowIcon(ArrowDir.Right, Orange) }
+                    TextButton(onClick = { tapHaptic(view, hapticsOn); onKey("right") }) { ArrowIcon(ArrowDir.Right, Orange) }
                 }
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { onKey("down") }) { ArrowIcon(ArrowDir.Down, Orange) }
+                    TextButton(onClick = { tapHaptic(view, hapticsOn); onKey("down") }) { ArrowIcon(ArrowDir.Down, Orange) }
                 }
             }
         }
