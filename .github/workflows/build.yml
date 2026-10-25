@@ -148,7 +148,7 @@ jobs:
         with:
           api-level: 34
           arch: x86_64
-          target: google_apis
+          target: google_apis_playstore
           profile: pixel_6
           disable-animations: true
           script: bash scripts/screenshots.sh
