@@ -140,12 +140,43 @@ object HelperClient {
         return out
     }
 
-    /** Ask the helper to start VLC with this file (folder-relative path). detail = error text when it fails. */
-    fun playMovie(host: String, port: Int, token: String, relPath: String, httpPort: Int, httpPassword: String, fullscreen: Boolean): String? = try {
-        post(host, port, "/movies/play", JSONObject()
-            .put("path", relPath).put("httpPort", httpPort).put("httpPassword", httpPassword).put("fullscreen", fullscreen), token)
-        null
-    } catch (e: Exception) { e.message ?: "The PC could not start the movie." }
+    /** Ask the helper to start VLC with this file (folder-relative path).
+     * [resume] null = ask if a saved place exists; true = resume; false = start over.
+     * Returns the raw response JSON; the caller checks "ask" (saved place found),
+     * "ok" (playing), or "detail" (error text). */
+    fun playMovie(host: String, port: Int, token: String, relPath: String, httpPort: Int, httpPassword: String, fullscreen: Boolean, resume: Boolean? = null): JSONObject {
+        val body = JSONObject()
+            .put("path", relPath).put("httpPort", httpPort).put("httpPassword", httpPassword).put("fullscreen", fullscreen)
+        if (resume != null) body.put("resume", resume)
+        return JSONObject(postForBody(host, port, "/movies/play", body, token))
+    }
+
+    /** post() that returns the response body (/movies/play answers carry the resume question). */
+    private fun postForBody(host: String, port: Int, path: String, body: JSONObject, token: String?, timeoutMs: Int = 5000): String {
+        val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            if (token != null) c.setRequestProperty("X-BingeMote-Token", token)
+            c.outputStream.use { os: OutputStream -> os.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val text = (if (c.responseCode in 200..299) c.inputStream else c.errorStream)
+                ?.use { s: InputStream -> s.readBytes().toString(Charsets.UTF_8) } ?: ""
+            when (c.responseCode) {
+                in 200..299 -> return text
+                else -> throw failure(c)
+            }
+        } catch (e: BadToken) { throw e }
+        catch (e: Unreachable) { throw e }
+        catch (e: ConnectTimeout) { throw e }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
+        catch (e: Exception) { throw Unreachable(NO_PC) }
+        finally { releaseQuietly(c) }
+    }
 
     /** Hand the VLC web-remote password to the PC so it can write vlcrc (needs VLC closed).
      * Fire-and-forget from the setup Finish step; the PC silently skips it while VLC runs. */
@@ -237,28 +268,34 @@ object HelperClient {
         return out.toList()
     }
 
-    fun move(host: String, port: Int, token: String, dx: Float, dy: Float) {
-        if (live?.send(JSONObject().put("cmd", "move").put("dx", dx.toDouble()).put("dy", dy.toDouble())) == true) return
-        post(host, port, "/mouse/move", JSONObject().put("dx", dx.toDouble()).put("dy", dy.toDouble()), token, 2500)
+    /** One ordered path: the live socket when it is open, plain HTTP when it is not -
+     * never a per-frame mix of the two (mixed frames are ordered only per channel, and
+     * interleaving them can reorder moves against clicks). A full socket queue drops the
+     * frame instead of reordering it; the next move delta supersedes it. */
+    private fun frame(host: String, port: Int, token: String, json: JSONObject, path: String, timeoutMs: Int = 5000) {
+        val l = live
+        if (l != null && l.open) {
+            if (l.send(json)) Diag.wsSends.incrementAndGet() else Diag.wsDrops.incrementAndGet()
+            return
+        }
+        Diag.httpFallbacks.incrementAndGet()
+        post(host, port, path, json, token, timeoutMs)
     }
+
+    fun move(host: String, port: Int, token: String, dx: Float, dy: Float) =
+        frame(host, port, token, JSONObject().put("cmd", "move").put("dx", dx.toDouble()).put("dy", dy.toDouble()), "/mouse/move", 2500)
 
     /** button: "left" or "right". down=true presses, down=false releases. Frames are
      * ordered, so a click sent after moves on the live connection lands after them. */
-    fun button(host: String, port: Int, token: String, button: String, down: Boolean) {
-        if (live?.send(JSONObject().put("cmd", "button").put("button", button).put("down", down)) == true) return
-        post(host, port, "/mouse/button", JSONObject().put("button", button).put("down", down), token)
-    }
+    fun button(host: String, port: Int, token: String, button: String, down: Boolean) =
+        frame(host, port, token, JSONObject().put("cmd", "button").put("button", button).put("down", down), "/mouse/button")
 
-    fun scroll(host: String, port: Int, token: String, dy: Float) {
-        if (live?.send(JSONObject().put("cmd", "scroll").put("dy", dy.toDouble())) == true) return
-        post(host, port, "/mouse/scroll", JSONObject().put("dy", dy.toDouble()), token, 2500)
-    }
+    fun scroll(host: String, port: Int, token: String, dy: Float) =
+        frame(host, port, token, JSONObject().put("cmd", "scroll").put("dy", dy.toDouble()), "/mouse/scroll", 2500)
 
     /** Pinch zoom, sent to the PC as Ctrl + mouse wheel. delta > 0 zooms in. */
-    fun zoom(host: String, port: Int, token: String, delta: Float) {
-        if (live?.send(JSONObject().put("cmd", "zoom").put("delta", delta.toDouble())) == true) return
-        post(host, port, "/mouse/zoom", JSONObject().put("delta", delta.toDouble()), token, 2500)
-    }
+    fun zoom(host: String, port: Int, token: String, delta: Float) =
+        frame(host, port, token, JSONObject().put("cmd", "zoom").put("delta", delta.toDouble()), "/mouse/zoom", 2500)
 
     /** Windows system volume, 0-100, and mute. Throws Unreachable when the helper does not answer. */
     fun volumeGet(host: String, port: Int, token: String): Pair<Int, Boolean> {
