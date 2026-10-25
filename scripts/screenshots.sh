@@ -273,7 +273,7 @@ done
 #    state (the proposed hero note line) - illustrative, not shipped UI.
 adb shell wm size 1080x2310
 adb shell wm density 480
-for case in cur-g prop-g cur-e prop-e prop-unpaired; do
+for case in cur-g prop-g cur-e prop-e prop-unpaired prod-e prod-unpaired; do
   adb shell am force-stop com.bingemote
   adb shell am start -n com.bingemote/.MainActivity --es screen main --es statuscase "$case" >/dev/null
   sleep 6
