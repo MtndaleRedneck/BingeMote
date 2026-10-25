@@ -234,6 +234,16 @@ object HelperClient {
         finally { releaseQuietly(c) }
     }
 
+    /** The PC's attestation for the automatic setup check: is the phone's VLC password
+     * the live one in vlcrc (configured), or is a write waiting for VLC to close (pending)?
+     * A green Done is grounded in this, never in a network error alone. */
+    data class VlcSetupStatus(val configured: Boolean, val pending: Boolean)
+
+    fun vlcSetupStatus(host: String, port: Int, token: String): VlcSetupStatus =
+        get(host, port, "/vlc/setup-status", token).let {
+            VlcSetupStatus(it.optBoolean("configured"), it.optBoolean("pending"))
+        }
+
     /** The one-shot adoption fetch (automatic-first setup): the PC's VLC password,
      *  served exactly once per paired phone. null = the grant is spent or the helper is
      *  too old to know the endpoint. Throws Unreachable when the PC cannot be reached. */

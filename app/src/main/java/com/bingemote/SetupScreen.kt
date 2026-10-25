@@ -62,12 +62,30 @@ fun SetupScreen(
     var autoState by remember { mutableStateOf(if (demoVlcPending && BuildConfig.DEBUG) "ok" else "checking") }
     // VLC is still running with its old settings: control starts when VLC reopens.
     var autoPending by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
+    // VLC is simply closed (the PC attests the settings are written): control starts when it opens.
+    var autoNotOpen by remember { mutableStateOf(false) }
+    // Bump to re-run the automatic check after the PC was unreachable.
+    var checkRun by remember { mutableStateOf(0) }
     // The manual password card stays as the backup, collapsed while the automatic path runs.
     var showManual by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 
     fun say(text: String, isError: Boolean) { message = text; messageIsError = isError }
+
+    // The real check, run once when step 3 opens after an automatic pair (and again per
+    // Try again). The PC attests what is configured; a network error never becomes a
+    // green Done on its own. The demo preview state starts at "ok" and skips this.
+    LaunchedEffect(step, autoSetup, checkRun) {
+        if (step != 3 || !autoSetup || autoState != "checking") return@LaunchedEffect
+        when (withContext(Dispatchers.IO) { AutoSetupCheck.run(store) }) {
+            AutoSetupCheck.Outcome.OK -> { autoPending = false; autoNotOpen = false; autoState = "ok" }
+            AutoSetupCheck.Outcome.OK_DEFERRED -> { autoPending = true; autoNotOpen = false; autoState = "ok" }
+            AutoSetupCheck.Outcome.OK_NOT_OPEN -> { autoPending = false; autoNotOpen = true; autoState = "ok" }
+            AutoSetupCheck.Outcome.REFUSED -> autoState = "refused"
+            AutoSetupCheck.Outcome.PC_UNREACHABLE -> autoState = "unreachable"
+        }
+    }
 
     // Back walks the steps, and on step 1 leaves setup entirely when there is a
     // pairing to fall back on (re-entry from Settings offers Cancel).
@@ -306,14 +324,26 @@ fun SetupScreen(
                                 Text("VLC remote control is set up", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(10.dp))
                                 Text(
-                                    if (autoPending)
-                                        "VLC on the PC is still running with its old settings - phone control starts when VLC reopens."
-                                    else
-                                        "Your PC picked the password and saved it - nothing to type into VLC.",
+                                    when {
+                                        autoPending ->
+                                            "VLC on the PC is still running with its old settings - phone control starts when VLC reopens."
+                                        autoNotOpen ->
+                                            "VLC isn't open on the PC right now - the password is saved, and phone control starts when you open it."
+                                        else ->
+                                            "Your PC picked the password and saved it - nothing to type into VLC."
+                                    },
                                     color = TextC, fontSize = 14.sp, lineHeight = 20.sp,
                                 )
                                 Spacer(Modifier.height(12.dp))
                                 OrangeButton("Done", onClick = { store.setupDone = true; onDone() })
+                                SetupMessage(message, messageIsError)
+                            }
+                            "unreachable" -> {
+                                Text("Couldn't check with your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(10.dp))
+                                Text("BingeMote on the PC didn't answer. Make sure it's running, then try again.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                                Spacer(Modifier.height(12.dp))
+                                OrangeButton("Try again", onClick = { autoState = "checking"; checkRun++ })
                                 SetupMessage(message, messageIsError)
                             }
                             else -> {
