@@ -102,9 +102,9 @@ class MainActivity : ComponentActivity() {
                         onSettings = { current.value = "settings" },
                         startSubtitlesOpen = true,
                     )
-                    "movies" -> MoviesScreen(remote, moviesListState, demoResumeAsk = intent.hasExtra("resumeask")) { current.value = "main" }
+                    "movies" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG && intent.hasExtra("resumeask"))
                     // CI screenshot state (debug builds only): the resume dialog over the list.
-                    "movies-resume" -> MoviesScreen(remote, moviesListState, demoResumeAsk = true) { current.value = "main" }
+                    "movies-resume" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG)
                     "settings" -> SettingsScreen(
                         remote,
                         settingsScroll,
