@@ -444,7 +444,13 @@ internal sealed class DiscoveryResponder : IDisposable
                 var reply = Encoding.UTF8.GetBytes(payload);
                 _udp.Send(reply, reply.Length, any);
             }
-            catch { if (!_running) break; }
+            catch
+            {
+                if (!_running) break;
+                // A repeating network error (adapter flapping) must not spin the core:
+                // wait a beat before listening again.
+                try { Thread.Sleep(200); } catch { }
+            }
         }
     }
 
