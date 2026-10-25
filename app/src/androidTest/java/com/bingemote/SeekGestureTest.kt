@@ -20,8 +20,8 @@ import kotlin.concurrent.thread
  * then-drag; this test asserts the live preview DURING a single hold-then-slide.
  *
  * am instrument force-stops the app, so the test relaunches it with the rig extras
- * itself (seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total, track x 33..1047,
- * center y ~751 at 1080x2310 @ 480dpi). The shell checks the BMSeek seekTo log after.
+ * itself (seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total, track x 33..1033,
+ * center y ~675 at 1080x2310 @ 480dpi (225dp). The shell checks the BMSeek seekTo log after.
  *
  * Evidence rule: every capture is taken BEFORE the assertion that depends on the
  * state it shows. Captures are shell screencaps to /sdcard: in-test UiAutomation
@@ -75,13 +75,13 @@ class SeekGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 300f, 751f)
+                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
                 while (SystemClock.uptimeMillis() - t0 < 1200) Thread.sleep(50)
                 for (i in 1..40) {
-                    inject(MotionEvent.ACTION_MOVE, 300f + i * 563f / 40, 751f - i * 123f / 40)
+                    inject(MotionEvent.ACTION_MOVE, 296f + i * 555f / 40, 675f - i * 111f / 40)
                     Thread.sleep(75)
                 }
-                inject(MotionEvent.ACTION_UP, 863f, 628f)
+                inject(MotionEvent.ACTION_UP, 851f, 564f)
             } catch (t: Throwable) {
                 gestureError = t
             }
