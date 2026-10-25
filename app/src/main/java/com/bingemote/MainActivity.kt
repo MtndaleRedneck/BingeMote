@@ -61,6 +61,14 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) intent.getStringExtra("cancelstyle")?.let { store.cancelStyle = it }
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
+        // Screenshot-rig only: render one status-notice review scenario per capture.
+        if (BuildConfig.DEBUG) when (intent.getStringExtra("statuscase")) {
+            "cur-g" -> remote.debugForceStatus(unreachable = true, helperDown = true)
+            "prop-g" -> remote.debugForceStatus(unreachable = true, helperDown = false)
+            "cur-e" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true) }
+            "prop-e" -> { remote.debugSeedStatus(); remote.mockHeroNote = "BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume." }
+            "prop-unpaired" -> { remote.debugSeedStatus(); remote.mockHeroNote = "This phone isn't paired with the PC anymore - pair again." }
+        }
         if (BuildConfig.DEBUG && intent.hasExtra("lockcontrols")) {
             store.lockScreenControls = true
             store.demoControls = true

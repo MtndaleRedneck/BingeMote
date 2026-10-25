@@ -201,6 +201,12 @@ private fun HomeContent(
                 },
                 color = Color(0xFF3D2A12), fontSize = 14.sp,
             )
+            // Screenshot-rig only: the proposed helper/unpaired note rendered inside the
+            // hero for the review captures. Never set outside the rig; release never shows it.
+            if (BuildConfig.DEBUG) remote.mockHeroNote?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = Color(0xFF3D2A12), fontSize = 13.sp)
+            }
         }
     }
 
