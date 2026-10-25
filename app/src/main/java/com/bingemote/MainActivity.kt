@@ -61,6 +61,11 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG) intent.getStringExtra("cancelstyle")?.let { store.cancelStyle = it }
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
+        if (BuildConfig.DEBUG && intent.hasExtra("lockcontrols")) {
+            store.lockScreenControls = true
+            store.demoControls = true
+            MediaControls.sync(this, store)
+        }
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
             ManualUpdate.offer = UpdateInfo(
