@@ -1,4 +1,5 @@
 using BingeMoteHelper;
+using Xunit;
 
 namespace BingeMoteHelper.Tests;
 
