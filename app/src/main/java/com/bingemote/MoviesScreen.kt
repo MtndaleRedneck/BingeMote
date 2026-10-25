@@ -305,6 +305,41 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         Spacer(Modifier.height(12.dp))
     }
 }
+    resumeAsk?.let { ask ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { resumeAsk = null },
+            title = { Text("Keep watching?", color = TextC, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "You're ${fmtClock(ask.positionSec)} in (of ${fmtClock(ask.lengthSec)}).",
+                    color = TextC,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    resumeAsk = null
+                    startPlay(ask.path, true)
+                }) { Text("Resume", color = Orange, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    resumeAsk = null
+                    startPlay(ask.path, false)
+                }) { Text("Start over", color = Muted) }
+            },
+            containerColor = Card,
+        )
+    }
+
+
+/** The saved place the PC reported for a movie. */
+private data class ResumeAsk(val path: String, val positionSec: Long, val lengthSec: Long)
+
+/** 34:12 or 1:50:24. */
+private fun fmtClock(sec: Long): String {
+    val h = sec / 3600; val m = (sec % 3600) / 60; val ss = sec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, ss) else "%d:%02d".format(m, ss)
+}
 
 /** "C:\Users\you\Desktop\Movies" -> "Desktop > Movies" for the path line. */
 fun prettyPath(path: String): String {
