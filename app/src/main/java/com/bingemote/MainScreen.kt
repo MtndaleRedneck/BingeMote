@@ -26,6 +26,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.positionChange
@@ -372,6 +375,10 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
             Modifier
                 .fillMaxWidth()
                 .height(28.dp)
+                .semantics {
+                    testTagsAsResourceId = true
+                    testTag = "seekbar"
+                }
                 .onGloballyPositioned { drag.barOrigin = it.localToWindow(Offset.Zero) }
                 .pointerInput(length) {
                     awaitEachGesture {

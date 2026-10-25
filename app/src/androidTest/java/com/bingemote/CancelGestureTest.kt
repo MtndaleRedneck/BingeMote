@@ -19,8 +19,8 @@ import kotlin.concurrent.thread
  * toggle, counters return to the polled time); an interrupted drag does nothing.
  *
  * Rig: demo seed 25:00 / -1:25:24 of 1:50:24 (length 6624s); the bar is always
- * on top since 1.9; track x 33..1033, center y ~675 at 1080x2310 @ 480dpi (225dp). The
- * circle's real bounds come from the "Pause" semantics node, not constants.
+ * on top since 1.9 and is located at runtime through its "seekbar" test tag,
+ * never guessed. The circle's real bounds come from the "Pause" semantics node.
  *
  * Hard-won rig rules (runs 39953888432, 39955727138, 39956293965, 39958872473):
  * the emulator's accessibility tree freezes under rapid counter churn and stays
@@ -36,7 +36,7 @@ class CancelGestureTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val device = UiDevice.getInstance(instrumentation)
 
-    private fun launch(style: String) {
+    private fun launch(style: String): android.graphics.Rect {
         device.executeShellCommand(
             "am start -n com.bingemote/.MainActivity --es screen main --es cancelstyle $style --ez demostatus true"
         )
@@ -51,6 +51,9 @@ class CancelGestureTest {
         assertNotNull("play/pause button not found after launch",
             device.wait(Until.findObject(By.desc("Pause")), 8000))
         Thread.sleep(1500)
+        val bar = device.wait(Until.findObject(By.res("seekbar")), 8000)
+        assertNotNull("seek bar not found by test tag", bar)
+        return bar.visibleBounds
     }
 
     /** Shell-side pixel evidence (the tree freezes; screencap never does). */
@@ -96,7 +99,9 @@ class CancelGestureTest {
 
     private fun releaseInsideCancels(style: String) {
         android.util.Log.i("BMSeek", "BEGIN releaseInside-$style")
-        launch(style)
+        val bar = launch(style)
+        val sx = bar.left + bar.width() * 0.263f
+        val sy = bar.centerY().toFloat()
         val pauseBtn = device.wait(Until.findObject(By.desc("Pause")), 8000)
         assertNotNull("play/pause button not found", pauseBtn)
         val b = pauseBtn.visibleBounds
@@ -105,7 +110,7 @@ class CancelGestureTest {
         // The counters must stay live at the absolute-x target even with the
         // finger inside the circle; the in-circle freeze variant was dropped
         // in review.
-        val expSec = ((cx - 33f) / 1000f * 6624f).toLong()
+        val expSec = ((cx - bar.left) / bar.width().toFloat() * 6624f).toLong()
         counterBaseline(style)
 
         var gestureError: Throwable? = null
@@ -118,10 +123,10 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
+                inject(MotionEvent.ACTION_DOWN, sx, sy)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50) // past the 500ms hold
                 for (i in 1..20) {
-                    inject(MotionEvent.ACTION_MOVE, 296f + (cx - 296f) * i / 20, 675f + (cy - 675f) * i / 20)
+                    inject(MotionEvent.ACTION_MOVE, sx + (cx - sx) * i / 20, sy + (cy - sy) * i / 20)
                     Thread.sleep(75)
                 }
                 Thread.sleep(2000) // held stationary inside the circle: the drag must survive
@@ -164,7 +169,9 @@ class CancelGestureTest {
     @Test
     fun interruptedDragDoesNothing() {
         android.util.Log.i("BMSeek", "BEGIN interrupted")
-        launch("ring")
+        val bar = launch("ring")
+        val sx = bar.left + bar.width() * 0.263f
+        val sy = bar.centerY().toFloat()
         counterBaseline("interrupted")
         var gestureError: Throwable? = null
         val gesture = thread {
@@ -176,10 +183,10 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
+                inject(MotionEvent.ACTION_DOWN, sx, sy)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..10) {
-                    inject(MotionEvent.ACTION_MOVE, 296f + i * 37f, 675f - i * 15f)
+                    inject(MotionEvent.ACTION_MOVE, sx + i * 37f, sy - i * 15f)
                     Thread.sleep(75)
                 }
                 Thread.sleep(5000) // finger held; the system takes over mid-drag
@@ -233,7 +240,9 @@ class CancelGestureTest {
     @Test
     fun releaseAtRectCornerSeeksNotCancels() {
         android.util.Log.i("BMSeek", "BEGIN cornerRelease")
-        launch("ring")
+        val bar = launch("ring")
+        val sx = bar.left + bar.width() * 0.263f
+        val sy = bar.centerY().toFloat()
         val pauseBtn = device.wait(Until.findObject(By.desc("Pause")), 8000)
         assertNotNull("play/pause button not found", pauseBtn)
         val b = pauseBtn.visibleBounds
@@ -242,7 +251,7 @@ class CancelGestureTest {
         // inscribed circle (corner distance is ~41% beyond the radius).
         val px = (b.left + 6).toFloat()
         val py = (b.top + 6).toFloat()
-        val expSec = ((px - 33f) / 1000f * 6624f).toLong()
+        val expSec = ((px - bar.left) / bar.width().toFloat() * 6624f).toLong()
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
@@ -253,14 +262,14 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
+                inject(MotionEvent.ACTION_DOWN, sx, sy)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..15) { // along the bar row to the corner's x
-                    inject(MotionEvent.ACTION_MOVE, 296f + (px - 296f) * i / 15, 675f)
+                    inject(MotionEvent.ACTION_MOVE, sx + (px - sx) * i / 15, sy)
                     Thread.sleep(75)
                 }
                 for (i in 1..10) { // straight down onto the corner
-                    inject(MotionEvent.ACTION_MOVE, px, 675f + (py - 675f) * i / 10)
+                    inject(MotionEvent.ACTION_MOVE, px, sy + (py - sy) * i / 10)
                     Thread.sleep(75)
                 }
                 Thread.sleep(1000)
@@ -302,7 +311,9 @@ class CancelGestureTest {
     @Test
     fun injectedCancelDoesNotSeek() {
         android.util.Log.i("BMSeek", "BEGIN injectedCancel")
-        launch("ring")
+        val bar = launch("ring")
+        val sx = bar.left + bar.width() * 0.263f
+        val sy = bar.centerY().toFloat()
         assertNotNull("play/pause button not found",
             device.wait(Until.findObject(By.desc("Pause")), 8000))
         var gestureError: Throwable? = null
@@ -315,14 +326,14 @@ class CancelGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
+                inject(MotionEvent.ACTION_DOWN, sx, sy)
                 while (SystemClock.uptimeMillis() - t0 < 800) Thread.sleep(50)
                 for (i in 1..10) {
-                    inject(MotionEvent.ACTION_MOVE, 296f + i * 37f, 675f - i * 15f)
+                    inject(MotionEvent.ACTION_MOVE, sx + i * 37f, sy - i * 15f)
                     Thread.sleep(75)
                 }
                 Thread.sleep(400)
-                inject(MotionEvent.ACTION_CANCEL, 666f, 527f)
+                inject(MotionEvent.ACTION_CANCEL, sx + 370f, sy - 148f)
             } catch (t: Throwable) { gestureError = t }
         }
         val t0 = SystemClock.uptimeMillis()

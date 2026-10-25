@@ -20,8 +20,9 @@ import kotlin.concurrent.thread
  * then-drag; this test asserts the live preview DURING a single hold-then-slide.
  *
  * am instrument force-stops the app, so the test relaunches it with the rig extras
- * itself (seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total, track x 33..1033,
- * center y ~675 at 1080x2310 @ 480dpi (225dp). The shell checks the BMSeek seekTo log after.
+ * itself (seed: 25:00 elapsed / -1:25:24 remaining / 1:50:24 total; the bar is
+ * located at runtime through its "seekbar" test tag, never guessed). The shell
+ * checks the BMSeek seekTo log after.
  *
  * Evidence rule: every capture is taken BEFORE the assertion that depends on the
  * state it shows. Captures are shell screencaps to /sdcard: in-test UiAutomation
@@ -44,6 +45,13 @@ class SeekGestureTest {
         assertNotNull("play/pause button not found after launch",
             device.wait(Until.findObject(By.desc("Pause")), 8000))
         Thread.sleep(1500)
+        val bar = device.wait(Until.findObject(By.res("seekbar")), 8000)
+        assertNotNull("seek bar not found by test tag", bar)
+        val bb = bar.visibleBounds
+        val sx = bb.left + bb.width() * 0.263f
+        val sy = bb.centerY().toFloat()
+        val ex = bb.left + bb.width() * 0.818f
+        val ey = sy - 111f
         // Isolation by marker, not logcat -c (see CancelGestureTest.bmSeekLog).
         android.util.Log.i("BMSeek", "BEGIN continuousHoldThenSlide")
         // Baseline for the shell-side seed-return pixel compare.
@@ -75,13 +83,13 @@ class SeekGestureTest {
                     ua.injectInputEvent(ev, true)
                     ev.recycle()
                 }
-                inject(MotionEvent.ACTION_DOWN, 296f, 675f)
+                inject(MotionEvent.ACTION_DOWN, sx, sy)
                 while (SystemClock.uptimeMillis() - t0 < 1200) Thread.sleep(50)
                 for (i in 1..40) {
-                    inject(MotionEvent.ACTION_MOVE, 296f + i * 555f / 40, 675f - i * 111f / 40)
+                    inject(MotionEvent.ACTION_MOVE, sx + (ex - sx) * i / 40, sy + (ey - sy) * i / 40)
                     Thread.sleep(75)
                 }
-                inject(MotionEvent.ACTION_UP, 851f, 564f)
+                inject(MotionEvent.ACTION_UP, ex, ey)
             } catch (t: Throwable) {
                 gestureError = t
             }
