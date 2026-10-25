@@ -75,20 +75,21 @@ adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true >/dev/null
 sleep 6
-adb shell cmd statusbar expand-settings
-sleep 3
-adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
-# Text evidence of the seeded session (the emulator SystemUI may not render a
-# media card): session state, actions (no SEEK_TO), metadata.
+# Session evidence first: is the seeded session active, with which actions.
 adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
-adb shell input keyevent 4
-sleep 1
-# Whatever state the shade left behind, end UNLOCKED: everything after this
-# block launches the app and must see it.
-adb shell input keyevent 26
-sleep 1
+# The keyguard itself: on API 34 the media controls sit under the clock / in the
+# keyguard notification list. Capture both surfaces.
 adb shell input keyevent 26
 sleep 2
+adb shell input keyevent 26
+sleep 3
+adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
+adb shell cmd statusbar expand-notifications
+sleep 3
+adb exec-out screencap -p > "screenshots/lockscreen-controls-shade.png"
+# End UNLOCKED: every phase after this launches the app and must see it.
+adb shell input keyevent 4
+sleep 1
 adb shell input swipe 540 1900 540 600 400
 sleep 2
 adb shell input keyevent 3
