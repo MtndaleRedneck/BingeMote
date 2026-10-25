@@ -62,6 +62,9 @@ class MainActivity : ComponentActivity() {
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
         // Screenshot-rig only: render one status-notice review scenario per capture.
+        // Polling is frozen (setupDone=false -> pollOnce no-ops) or leftover rig prefs
+        // would re-trip unreachable/helperDown over the forced states mid-capture.
+        if (BuildConfig.DEBUG && intent.hasExtra("statuscase")) store.setupDone = false
         if (BuildConfig.DEBUG) when (intent.getStringExtra("statuscase")) {
             "cur-g" -> remote.debugForceStatus(unreachable = true, helperDown = true)
             "prop-g" -> remote.debugForceStatus(unreachable = true, helperDown = false)

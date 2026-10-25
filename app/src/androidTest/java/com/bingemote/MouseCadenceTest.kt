@@ -71,7 +71,7 @@ class MouseCadenceTest {
         device.executeShellCommand("am start -n com.bingemote/.MainActivity --es screen mouse")
         assertNotNull(
             "mouse screen did not come up (Left click button missing)",
-            device.wait(Until.findObject(By.desc("Left click")), 10000)
+            device.wait(Until.findObject(By.text("Left click")), 10000)
         )
         Thread.sleep(1500)
 
