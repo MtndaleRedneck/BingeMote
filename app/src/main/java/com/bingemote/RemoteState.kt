@@ -83,6 +83,9 @@ class RemoteState(
     private var failures = 0
     private var helperFailures = 0
     private var rediscovering = false
+    private var closedPolls = 0
+    private var lastTitle: String? = null
+    private var lastLengthSec: Long = -1
 
     private companion object {
         /** Consecutive failed polls before the Disconnected card shows; one success clears it. */
@@ -118,31 +121,45 @@ class RemoteState(
         if (!store.isConfigured) return
         // Status and Windows volume in parallel: a blocked helper used to stall the whole
         // poll (time and seek bar only updated every ~11s when VLC answered but the helper didn't).
-        val vlcDeferred = scope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
+        // While VLC is closed, re-check it every 4th cycle instead of every cycle (fewer
+        // dead-end requests); the helper ping still runs every cycle either way.
+        val skipVlc = vlcClosed && (closedPolls++ % CmdPolicy.CLOSED_POLL_EVERY != 0)
+        val vlcDeferred = if (skipVlc) null
+            else scope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
         val volDeferred = if (store.helperToken.isNotBlank())
             scope.async { try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } } catch (e: Exception) { null } }
         else null
+        // The helper's answer counts even when VLC's does not: the volume reading used to
+        // be thrown away on the VLC-failure path, leaving the row stuck at its last value.
+        if (volDeferred != null) {
+            val vm = volDeferred.await()
+            if (vm != null) {
+                helperFailures = 0
+                muted = vm.second
+                helperDown = false
+                // Trust the phone's own taps briefly: the poll doesn't overwrite a volume
+                // change that is still landing (that overwrite made the number jump back).
+                if (System.currentTimeMillis() - localVolumeAt > 1500) winVolume = vm.first
+            } else {
+                // One blip keeps the last reading; two in a row means the helper is really gone.
+                helperFailures++
+                if (helperFailures >= 2) { helperDown = true; winVolume = null }
+            }
+        } else winVolume = null
+        if (skipVlc) return
         try {
-            val s = vlcDeferred.await()
+            val s = vlcDeferred!!.await()
             status = s
-            if (volDeferred != null) {
-                val vm = volDeferred.await()
-                if (vm != null) {
-                    helperFailures = 0
-                    muted = vm.second
-                    helperDown = false
-                    // Trust the phone's own taps briefly: the poll doesn't overwrite a volume
-                    // change that is still landing (that overwrite made the number jump back).
-                    if (System.currentTimeMillis() - localVolumeAt > 1500) winVolume = vm.first
-                } else {
-                    // One blip keeps the last reading; two in a row means the helper is really gone.
-                    helperFailures++
-                    if (helperFailures >= 2) { helperDown = true; winVolume = null }
-                }
-            } else winVolume = null
+            // A new video clears the remembered subtitle pick; the sheet then shows the
+            // file's own selected track instead of a checkmark from the previous video.
+            if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
+                lastTitle = s.title; lastLengthSec = s.lengthSec
+                pickedSubtitle = null
+            }
             failures = 0
             unreachable = false
             vlcClosed = false
+            closedPolls = 0
             connecting = false
             expectingVlc = false
         } catch (e: Vlc.BadAuth) {
@@ -202,14 +219,32 @@ class RemoteState(
 
     // One ordered queue for playback/volume commands: rapid volume taps and the phone's
     // volume keys land in tap order instead of racing each other in parallel coroutines.
-    private val cmds = Channel<() -> Unit>(Channel.UNLIMITED)
+    // Taps carry their time: a play/pause/skip/seek queued more than about 2 s (a dead
+    // PC, a stalled request) is a tap he no longer expects, so it is dropped - and a
+    // burst of volume steps folds into the newest one.
+    private class Cmd(val kind: String, val ts: Long, val block: () -> Unit)
+    private val cmds = Channel<Cmd>(Channel.UNLIMITED)
+    @Volatile private var pushback: Cmd? = null // one non-volume command held while volume folds
     init {
         scope.launch(Dispatchers.IO) {
-            for (c in cmds) try { c() } catch (_: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
+            while (isActive) {
+                var c = pushback?.also { pushback = null } ?: cmds.receive()
+                if (c.kind == "volume") {
+                    while (true) {
+                        val nxt = cmds.tryReceive().getOrNull() ?: break
+                        if (nxt.kind == "volume") { Diag.volumeCoalesced.incrementAndGet(); c = nxt }
+                        else { pushback = nxt; break }
+                    }
+                } else if (System.currentTimeMillis() - c.ts > CmdPolicy.EXPIRY_MS) {
+                    Diag.cmdsExpired.incrementAndGet()
+                    continue
+                }
+                try { c.block() } catch (_: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
+            }
         }
     }
 
-    private fun fire(block: () -> Unit) { cmds.trySend(block) }
+    private fun fire(kind: String, block: () -> Unit) { cmds.trySend(Cmd(kind, System.currentTimeMillis(), block)) }
 
     fun togglePause() {
         if (BuildConfig.DEBUG) Log.i("BMSeek", "togglePause")
@@ -222,13 +257,13 @@ class RemoteState(
                 else -> s
             }
         }
-        fire { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) }
+        fire("playpause") { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) }
     }
-    fun toggleFullscreen() = fire { Vlc.toggleFullscreen(store.host, store.vlcPort, store.vlcPassword) }
-    fun skip(seconds: Int) = fire { Vlc.skip(store.host, store.vlcPort, store.vlcPassword, seconds) }
+    fun toggleFullscreen() = fire("fullscreen") { Vlc.toggleFullscreen(store.host, store.vlcPort, store.vlcPassword) }
+    fun skip(seconds: Int) = fire("skip") { Vlc.skip(store.host, store.vlcPort, store.vlcPassword, seconds) }
     fun seekTo(seconds: Long) {
         if (BuildConfig.DEBUG) Log.i("BMSeek", "seekTo seconds=$seconds")
-        fire { Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword, seconds) }
+        fire("seek") { Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword, seconds) }
     }
 
     fun volumeStep(up: Boolean) {
@@ -241,7 +276,7 @@ class RemoteState(
             val next = (base + if (up) 5 else -5).coerceIn(0, 100)
             winVolume = next
             localVolumeAt = System.currentTimeMillis()
-            fire {
+            fire("volume") {
                 HelperClient.volumeSet(store.host, store.helperPort, store.helperToken, next)
                 // Unmute only when it WAS muted - a plain volume step must not touch the mute switch.
                 if (wasMuted) HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, false)
@@ -254,11 +289,15 @@ class RemoteState(
             val base = preMuteRaw
             muted = false
             val next = (base + if (up) Vlc.VOLUME_STEP else -Vlc.VOLUME_STEP).coerceIn(0, Vlc.VOLUME_100)
-            fire { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next) }
+            status?.let { status = it.copy(volumeRaw = next) }
+            fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next) }
         } else {
             val cur = s?.volumeRaw ?: return
             val next = (cur + if (up) Vlc.VOLUME_STEP else -Vlc.VOLUME_STEP).coerceIn(0, Vlc.VOLUME_100)
-            fire { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next) }
+            // Echo the tap on the row right away - with the PC unreachable the poll can't
+            // do it, and a tap that changes nothing feels dead. The next good poll overwrites.
+            status = s.copy(volumeRaw = next)
+            fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next) }
         }
     }
 
@@ -267,22 +306,22 @@ class RemoteState(
             val next = !muted
             muted = next
             localVolumeAt = System.currentTimeMillis()
-            fire { HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, next) }
+            fire("volume") { HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, next) }
             return
         }
         if (muted) {
             muted = false
             val back = preMuteRaw.coerceIn(1, Vlc.VOLUME_100)
-            fire { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, back) }
+            fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, back) }
         } else {
             preMuteRaw = (status?.volumeRaw ?: Vlc.VOLUME_100 / 2).coerceIn(1, Vlc.VOLUME_100 * 2)
             muted = true
-            fire { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, 0) }
+            fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, 0) }
         }
     }
 
     fun pickSubtitle(trackId: Int) {
         pickedSubtitle = trackId
-        fire { Vlc.setSubtitleTrack(store.host, store.vlcPort, store.vlcPassword, trackId) }
+        fire("sub") { Vlc.setSubtitleTrack(store.host, store.vlcPort, store.vlcPassword, trackId) }
     }
 }
