@@ -180,9 +180,12 @@ object HelperClient {
     }
 
     /** Hand the VLC web-remote password to the PC so it can write vlcrc (needs VLC closed).
-     * Fire-and-forget from the setup Finish step; the PC silently skips it while VLC runs. */
-    fun setupVlc(host: String, port: Int, token: String, password: String) =
-        post(host, port, "/vlc/setup", JSONObject().put("password", password), token)
+     * Returns the skip reason ("vlc running") when the PC deferred it; null when written.
+     * The PC retries the write by itself when VLC closes. */
+    fun setupVlc(host: String, port: Int, token: String, password: String): String? {
+        val resp = JSONObject(postForBody(host, port, "/vlc/setup", JSONObject().put("password", password), token))
+        return if (resp.optBoolean("ok")) null else resp.optString("reason").ifBlank { null }
+    }
 
     /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
     fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =

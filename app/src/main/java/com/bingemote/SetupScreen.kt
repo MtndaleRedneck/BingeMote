@@ -48,6 +48,8 @@ fun SetupScreen(
     var vlcPassword by remember { mutableStateOf("") }
     var moviesPath by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
+    // VLC was open when the PC tried to write vlcrc: the PC finishes it when VLC closes.
+    var vlcFinishPending by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 
@@ -134,9 +136,15 @@ fun SetupScreen(
             when {
                 vlcOk && helperOk -> {
                     // Hand the password to the PC: it writes vlcrc so a hand-opened VLC has
-                    // the web remote too (silently skipped while VLC is running).
-                    scope.launch(Dispatchers.IO) { try { HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) } catch (e: Exception) {} }
-                    store.setupDone = true; onDone()
+                    // the web remote too. VLC is open right now, so the PC defers the write
+                    // and does it when VLC closes - say so, then let him leave with Done.
+                    val deferred = withContext(Dispatchers.IO) {
+                        try {
+                            HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) == "vlc running"
+                        } catch (e: Exception) { false }
+                    }
+                    store.setupDone = true
+                    if (deferred) vlcFinishPending = true else onDone()
                 }
                 !vlcOk && helperOk -> {
                     // VLC may just be closed: the PC writes vlcrc so the next hand-open has the remote.
@@ -302,7 +310,16 @@ fun SetupScreen(
                         colors = fieldColors(),
                     )
                     Spacer(Modifier.height(12.dp))
-                    OrangeButton(if (testing) "Checking\u2026" else "Finish", enabled = !testing, onClick = { finish() })
+                    if (vlcFinishPending) {
+                        OrangeButton("Done", onClick = { onDone() })
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "VLC is open on the PC - BingeMote will finish setting it up when VLC closes.",
+                            color = Muted, fontSize = 13.sp,
+                        )
+                    } else {
+                        OrangeButton(if (testing) "Checking\u2026" else "Finish", enabled = !testing, onClick = { finish() })
+                    }
                     SetupMessage(message, messageIsError)
                 }
                 Spacer(Modifier.height(14.dp))
