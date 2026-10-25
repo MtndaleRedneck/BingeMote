@@ -99,6 +99,12 @@ class Store(context: Context) {
         get() = secrets.getString("vlcPassword", "") ?: ""
         set(v) = secrets.edit().putString("vlcPassword", v).apply()
 
+    /** The in-flight adoption request id, kept until the PC acks so a crash mid-fetch
+     *  replays the same id instead of burning the one-shot grant. */
+    var vlcAdoptRequestId: String?
+        get() = secrets.getString("vlcAdoptRequestId", null)
+        set(v) = secrets.edit().putString("vlcAdoptRequestId", v).apply()
+
     var helperToken: String
         get() = secrets.getString("helperToken", "") ?: ""
         set(v) = secrets.edit().putString("helperToken", v).apply()
