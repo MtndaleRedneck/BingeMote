@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
         // PC's left button so it doesn't stay held down while he's away.
         if (::remote.isInitialized && store.helperToken.isNotBlank()) {
             val s = store
-            Thread { try { HelperClient.button(s.host, s.helperPort, s.helperToken, "left", false) } catch (_: Exception) {} }.start()
+            HelperClient.io.execute { try { HelperClient.button(s.host, s.helperPort, s.helperToken, "left", false) } catch (_: Exception) {} }
         }
         super.onStop()
     }
