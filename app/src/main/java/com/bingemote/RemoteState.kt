@@ -60,6 +60,13 @@ class RemoteState(
 
     /** True when the helper is paired but not answering, so the volume row fell back to VLC volume. */
     var helperDown by mutableStateOf(false)
+    // The PC answered 401: this phone's pairing was removed. Definitive, not a blip.
+    var unpaired by mutableStateOf(false)
+    // The helper-down NOTICE waits ~5s of continuous failure; the VLC volume
+    // fallback (2 strikes) still kicks in immediately - a brief blip falls back
+    // quietly without nagging.
+    var helperNotice by mutableStateOf(false)
+    private var helperDownAt = 0L
         private set
     private var preMuteRaw = 0
 
@@ -140,23 +147,35 @@ class RemoteState(
         val vlcDeferred = if (skipVlc) null
             else scope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
         val volDeferred = if (store.helperToken.isNotBlank())
-            scope.async { try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } } catch (e: Exception) { null } }
+            scope.async {
+                try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } }
+                catch (e: HelperClient.BadToken) { throw e }
+                catch (e: Exception) { null }
+            }
         else null
         // The helper's answer counts even when VLC's does not: the volume reading used to
         // be thrown away on the VLC-failure path, leaving the row stuck at its last value.
         if (volDeferred != null) {
-            val vm = volDeferred.await()
+            val vm = try { volDeferred.await() } catch (e: HelperClient.BadToken) { unpaired = true; null }
             if (vm != null) {
                 helperFailures = 0
                 muted = vm.second
                 helperDown = false
+                helperDownAt = 0L
+                helperNotice = false
+                unpaired = false
                 // Trust the phone's own taps briefly: the poll doesn't overwrite a volume
                 // change that is still landing (that overwrite made the number jump back).
                 if (System.currentTimeMillis() - localVolumeAt > 1500) winVolume = vm.first
             } else {
                 // One blip keeps the last reading; two in a row means the helper is really gone.
                 helperFailures++
-                if (helperFailures >= 2) { helperDown = true; winVolume = null }
+                if (helperFailures >= 2) {
+                    if (!helperDown) helperDownAt = System.currentTimeMillis()
+                    helperDown = true; winVolume = null
+                }
+                helperNotice = helperDown && !unpaired &&
+                    System.currentTimeMillis() - helperDownAt >= 5000
             }
         } else winVolume = null
         if (skipVlc) return

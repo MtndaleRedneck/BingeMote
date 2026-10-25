@@ -364,12 +364,14 @@ object HelperClient {
             // Connect explicitly so a dead PC (connect timeout) is told apart from an error answer.
             try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
             c.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
+            if (c.responseCode == 401) throw BadToken("phone no longer paired")
             if (c.responseCode !in 200..299) throw Unreachable("volume get failed (${c.responseCode})")
             val text = c.inputStream.use { s: InputStream -> s.readBytes().toString(Charsets.UTF_8) }
             val o = JSONObject(text)
             return o.getInt("volume") to o.getBoolean("mute")
         } catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
+        catch (e: BadToken) { throw e }
         catch (e: Exception) { throw Unreachable(NO_PC) }
         finally { releaseQuietly(c) }
     }
