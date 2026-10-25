@@ -54,6 +54,19 @@ internal static class VlcSetup
         return doc.RootElement.GetProperty("ok").GetBoolean() == false;
     }
 
+    /// <summary>The live (uncommented) value of a vlcrc key, or null. Used for the
+    /// web-remote password the resume poller needs.</summary>
+    internal static string? ReadVlcrcValue(string key)
+    {
+        try
+        {
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "vlc", "vlcrc");
+            if (!File.Exists(path)) return null;
+            return FindValue(File.ReadAllLines(path).ToList(), key);
+        }
+        catch { return null; }
+    }
+
     private static string? FindValue(List<string> lines, string key)
     {
         var prefix = key + "=";

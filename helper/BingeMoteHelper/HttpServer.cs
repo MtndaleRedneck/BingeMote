@@ -114,7 +114,8 @@ internal sealed class HttpServer : IDisposable
                             rr.TryGetProperty("httpPort", out var hp) ? hp.GetInt32() : 8080,
                             rr.TryGetProperty("httpPassword", out var pw) ? pw.GetString() ?? "" : "",
                             rr.TryGetProperty("fullscreen", out var fs) && fs.GetBoolean(),
-                            req.LocalEndPoint.Address);
+                            req.LocalEndPoint.Address,
+                            rr.TryGetProperty("resume", out var rs) ? rs.GetBoolean() : (bool?)null);
                         Reply(res, answer.Contains("\"error\"") ? 400 : 200, answer);
                     }
                     return;

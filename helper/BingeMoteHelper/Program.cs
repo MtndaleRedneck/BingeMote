@@ -257,6 +257,9 @@ internal static class Program
             }
             // Surface the vlc.exe rule inventory the elevated step saved (report only).
             FirewallSetup.LogVlcRuleInventory();
+
+        // Resume places: load the saved ones and watch VLC while it runs.
+        ResumeTracker.Start();
         }
 
         // A live pairing code is a way in, so one exists only when this PC still needs
