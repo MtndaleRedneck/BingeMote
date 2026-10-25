@@ -94,8 +94,7 @@ internal static class Movies
         catch (Exception) { return Error(404, "not found", "That folder does not exist on the PC."); }
     }
 
-    /// <summary>Start VLC with the chosen file and the web interface the app expects.
-    /// The web interface binds to the address the phone just used, never to every network.</summary>
+    /// <summary>Start VLC with the chosen file and the web interface the app expects.</summary>
     public static string Play(string root, string rel, int httpPort, string httpPassword, bool fullscreen, IPAddress bindTo)
     {
         var file = Jail(root, rel);
@@ -126,21 +125,13 @@ internal static class Movies
         return JsonSerializer.Serialize(new { ok = true });
     }
 
-    /// <summary>The address VLC's web interface listens on: the one the phone reached us on.</summary>
-    private static string BindAddress(IPAddress addr)
-    {
-        if (addr.IsIPv4MappedToIPv6) return addr.MapToIPv4().ToString();
-        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !IPAddress.IsLoopback(addr))
-        {
-            // VLC's --http-host wants brackets for IPv6; rather than risk a malformed bind, listen on all.
-            Program.Log("Phone reached us over IPv6 - VLC's web interface will listen on all addresses.");
-            return "0.0.0.0";
-        }
-        return addr.ToString();
-    }
+    /// <summary>VLC's web interface listens on every address, so a phone that reaches the PC
+    /// over a different address (VPN off/on, IPv6, a second adapter) still finds it. Guarded by
+    /// the interface password and the Private-networks-only firewall rule for vlc.exe.</summary>
+    private static string BindAddress(IPAddress addr) => "0.0.0.0";
 
     /// <summary>Where is vlc.exe: Windows App Paths first, then the two usual install folders.</summary>
-    private static string? FindVlc()
+    internal static string? FindVlc()
     {
         try
         {

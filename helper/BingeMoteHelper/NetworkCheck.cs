@@ -34,8 +34,14 @@ internal static class NetworkCheck
                 CreateNoWindow = true,
             };
             using var p = Process.Start(psi)!;
+            // Wait first, read after: reading before the timeout would hang forever on a
+            // stuck PowerShell (the read blocks, the timeout never gets to run).
+            if (!p.WaitForExit(15000))
+            {
+                try { p.Kill(); } catch { }
+                return null;
+            }
             var output = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit(15000);
             var parts = output.Split('|');
             if (parts.Length != 3 || !int.TryParse(parts[2], out var idx)) return null;
             return new NetProfile { Name = parts[0], Category = parts[1], InterfaceIndex = idx };

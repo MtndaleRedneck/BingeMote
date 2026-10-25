@@ -15,7 +15,8 @@ internal static class VlcSetup
             return JsonSerializer.Serialize(new { ok = false, reason = "bad password" });
         if (Process.GetProcessesByName("vlc").Length > 0)
         {
-            Program.Log("vlcrc write skipped - VLC is running (it rewrites vlcrc on exit).");
+            lock (Gate) _pendingPassword = password;
+            Program.Log("vlcrc write skipped - VLC is running (it rewrites vlcrc on exit). Will retry when VLC closes.");
             return JsonSerializer.Serialize(new { ok = false, reason = "vlc running" });
         }
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "vlc");
@@ -25,9 +26,32 @@ internal static class VlcSetup
         // Merge, don't overwrite: another interface may already sit in extraintf.
         Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
         Upsert(lines, "http-password", password);
+        // Listen on every address (not just localhost) so a hand-opened VLC takes the phone
+        // too; the password and the Private-only firewall rule guard it.
+        Upsert(lines, "http-host", "0.0.0.0");
         File.WriteAllLines(path, lines);
+        lock (Gate) _pendingPassword = null;
         Program.Log("VLC web remote written into vlcrc from the phone's Finish step.");
         return JsonSerializer.Serialize(new { ok = true });
+    }
+
+    private static readonly object Gate = new();
+    private static string? _pendingPassword;
+
+    /// <summary>VLC was open, so the write was skipped; retry when VLC closes.</summary>
+    public static bool Pending => _pendingPassword != null;
+
+    /// <summary>Called on a timer: if an earlier write lost to a running VLC and VLC has
+    /// since closed, write now. True while a write is still waiting.</summary>
+    public static bool RetryPending()
+    {
+        string? pw;
+        lock (Gate) pw = _pendingPassword;
+        if (pw == null) return false;
+        if (Process.GetProcessesByName("vlc").Length > 0) return true;
+        Program.Log("VLC closed - writing the skipped vlcrc web-remote setup now.");
+        using var doc = JsonDocument.Parse(WriteVlcrc(pw));
+        return doc.RootElement.GetProperty("ok").GetBoolean() == false;
     }
 
     private static string? FindValue(List<string> lines, string key)
