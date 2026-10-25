@@ -265,6 +265,21 @@ internal sealed class HttpServer : IDisposable
     private static async Task HandleWs(HttpListenerContext ctx)
     {
         WebSocket? ws = null;
+        // This connection's pressed mouse buttons: whatever it still holds when it ends
+        // gets released, so a phone that dies mid-drag can't leave the PC's mouse down.
+        var pressed = new HashSet<string>();
+        // Any frame counts as life (the phone sends a heartbeat every 2 s while open).
+        // ~8 s of silence means the phone is gone without a close frame: let go.
+        var lastFrameAt = DateTime.UtcNow;
+        var lastSeq = -1L;
+        using var watchdog = new System.Threading.Timer(_ =>
+        {
+            if (DateTime.UtcNow - lastFrameAt > TimeSpan.FromSeconds(8))
+            {
+                Program.Log("Live mouse connection silent for 8s - releasing buttons and closing.");
+                try { ws?.Abort(); } catch { }
+            }
+        }, null, 4000, 4000);
         var token = ctx.Request.Headers["X-BingeMote-Token"] ?? "";
         try
         {
@@ -284,6 +299,7 @@ internal sealed class HttpServer : IDisposable
                 if (r.MessageType != WebSocketMessageType.Text) continue;
                 text.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
                 if (!r.EndOfMessage) continue;
+                lastFrameAt = DateTime.UtcNow;
                 // Removing a phone must stop its input right away, not when it happens to
                 // disconnect: the token check only ran at the handshake.
                 if (!StillPaired(token))
@@ -291,13 +307,18 @@ internal sealed class HttpServer : IDisposable
                     Program.Log("Live mouse connection closed - the phone was removed.");
                     break;
                 }
-                DispatchWs(text.ToString());
+                DispatchWs(text.ToString(), pressed, ref lastSeq);
                 text.Clear();
             }
         }
         catch { /* a dropped connection is normal - Wi-Fi blips, the phone sleeps */ }
         finally
         {
+            foreach (var b in pressed)
+            {
+                try { InputSender.Button(b, false); } catch { }
+                Program.Log("Released a held " + b + " mouse button from the dropped live connection.");
+            }
             try { ws?.Dispose(); } catch { }
             Program.Log("Live mouse connection closed.");
         }
@@ -308,17 +329,32 @@ internal sealed class HttpServer : IDisposable
         lock (Program.PhonesLock) { return Program.Phones.Any(p => ConstantTimeEq(token, p.Token)); }
     }
 
-    /// <summary>Apply one frame from the live connection. Anything malformed costs nothing.</summary>
-    private static void DispatchWs(string text)
+    /// <summary>Apply one frame from the live connection. Anything malformed costs nothing.
+    /// Frame numbers are counted: a gap means a frame went missing between phone and PC.</summary>
+    private static void DispatchWs(string text, HashSet<string> pressed, ref long lastSeq)
     {
         try
         {
             using var doc = JsonDocument.Parse(text);
             var r = doc.RootElement;
-            switch (r.GetProperty("cmd").GetString())
+            var cmd = r.GetProperty("cmd").GetString();
+            if (cmd == "heartbeat") return; // liveness only, applied above
+            if (r.TryGetProperty("seq", out var sq))
+            {
+                var n = sq.GetInt64();
+                if (lastSeq >= 0 && n != lastSeq + 1)
+                    Program.Log($"Live connection frame gap: expected {lastSeq + 1}, got {n} ({n - lastSeq - 1} lost).");
+                lastSeq = n;
+            }
+            switch (cmd)
             {
                 case "move": InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;
-                case "button": InputSender.Button(r.GetProperty("button").GetString() ?? "left", r.GetProperty("down").GetBoolean()); break;
+                case "button":
+                    var b = r.GetProperty("button").GetString() ?? "left";
+                    var down = r.GetProperty("down").GetBoolean();
+                    if (down) pressed.Add(b); else pressed.Remove(b);
+                    InputSender.Button(b, down);
+                    break;
                 case "scroll": InputSender.Scroll((float)r.GetProperty("dy").GetDouble()); break;
                 case "zoom": InputSender.Zoom((float)r.GetProperty("delta").GetDouble()); break;
             }

@@ -19,6 +19,9 @@ internal static class Program
     internal const string DiscoverMagic = "BINGEMOTE_DISCOVER_V1";
     internal const string ReplyMagic = "BINGEMOTE_HERE_V1";
     internal const string FirewallRule = "BingeMote";
+
+    /// <summary>Private-networks-only inbound rule for vlc.exe (the web remote the app sets up).</summary>
+    internal const string VlcFirewallRule = "BingeMote VLC";
     /// <summary>The 1.x rule name, removed by the firewall setup so upgrades do not leave it behind.</summary>
     internal const string LegacyFirewallRule = "BingeMote Helper";
 
@@ -252,6 +255,8 @@ internal static class Program
                 if (ensureRunning) { Log("Watchdog start skipped: firewall setup not done yet."); return 0; }
                 FirewallSetup.ExplainAndRelaunch();
             }
+            // Surface the vlc.exe rule inventory the elevated step saved (report only).
+            FirewallSetup.LogVlcRuleInventory();
         }
 
         // A live pairing code is a way in, so one exists only when this PC still needs
@@ -875,7 +880,12 @@ internal sealed class HelperWindow : Form
         if (!windowShot)
         {
             _wifiTimer = new System.Windows.Forms.Timer { Interval = 30000 };
-            _wifiTimer.Tick += (_, _) => ProbeWifi();
+            _wifiTimer.Tick += (_, _) =>
+            {
+                // The 30s re-check exists for the strip/dialog; no PowerShell while nothing
+                // Wi-Fi-related is on screen. Network changes raise their own event.
+                if (Visible || _wifiProfile != null || _wifiDialogOpen) ProbeWifi();
+            };
             _wifiTimer.Start();
         }
 
@@ -887,6 +897,11 @@ internal sealed class HelperWindow : Form
         ApplyTheme();
         RefreshPhones();
         TickStatus(); // sync the code block (hidden until there is a code)
+
+        // A vlcrc write that lost to a running VLC retries once VLC closes.
+        var vlcrcRetry = new System.Windows.Forms.Timer { Interval = 15000 };
+        vlcrcRetry.Tick += (_, _) => { try { VlcSetup.RetryPending(); } catch { } };
+        vlcrcRetry.Start();
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
