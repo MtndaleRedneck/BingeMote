@@ -63,7 +63,8 @@ object HelperClient {
 
     /** True when the helper answers and accepts the token. */
     fun ping(host: String, port: Int, token: String): Boolean = try {
-        post(host, port, "/ping", JSONObject(), token); true
+        // 1.5 s: a liveness probe must answer fast or be counted dead.
+        post(host, port, "/ping", JSONObject(), token, 1500); true
     } catch (e: Exception) { false }
 
     private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 5000): JSONObject {
