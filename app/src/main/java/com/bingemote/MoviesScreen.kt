@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
  * "Up one folder" walks back out but never above the assigned folder.
  */
 @Composable
-fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Unit) {
+fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Unit, demoResumeAsk: Boolean = false) {
     val scope = rememberCoroutineScope()
     val root = remote.store.moviesPath.trim()
     var path by remember { mutableStateOf(root) }
@@ -44,7 +44,12 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
     var starting by remember { mutableStateOf(false) }
     // The PC found a saved place in this movie: offer Resume / Start over (Preview 1).
-    var resumeAsk by remember { mutableStateOf<ResumeAsk?>(null) }
+    var resumeAsk by remember {
+        mutableStateOf(
+            // CI screenshot state (debug builds only): the dialog as he'd see it.
+            if (demoResumeAsk && BuildConfig.DEBUG) ResumeAsk("demo.mkv", 34 * 60 + 12, 110 * 60 + 24) else null,
+        )
+    }
 
     /** Ask the PC to play a movies-folder file. resume: null = ask if a saved place
      * exists; true = resume; false = start over. */

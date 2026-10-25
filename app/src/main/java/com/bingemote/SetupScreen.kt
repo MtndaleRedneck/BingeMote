@@ -33,6 +33,7 @@ fun SetupScreen(
     scrollState: androidx.compose.foundation.ScrollState,
     onDone: () -> Unit,
     onCancel: (() -> Unit)? = null,
+    demoVlcPending: Boolean = false,
 ) {
     val store = remote.store
     val scope = rememberCoroutineScope()
@@ -49,7 +50,7 @@ fun SetupScreen(
     var moviesPath by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
     // VLC was open when the PC tried to write vlcrc: the PC finishes it when VLC closes.
-    var vlcFinishPending by remember { mutableStateOf(false) }
+    var vlcFinishPending by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 

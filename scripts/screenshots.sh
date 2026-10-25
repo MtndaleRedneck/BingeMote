@@ -54,6 +54,17 @@ dismiss_anr
 adb shell input swipe 720 2100 720 700 400
 sleep 2
 adb exec-out screencap -p > "screenshots/settings-feel.png"
+# One more screenful down: the new Lock screen section below Feel.
+adb shell input swipe 720 2100 720 700 400
+sleep 2
+adb exec-out screencap -p > "screenshots/settings-lockscreen.png"
+# Resume/Start-over dialog (PC7) and the deferred-VLC-setup line (PC5).
+shoot "movies-resume" ""
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen setup --es vlcpending true >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1440x2807 emulator screenshot
 # (seek track x=44..1396, center y=913). Evidence first, assertions last: every
