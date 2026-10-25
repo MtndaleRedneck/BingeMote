@@ -95,13 +95,21 @@ internal static class Movies
     }
 
     /// <summary>Start VLC with the chosen file and the web interface the app expects.</summary>
-    public static string Play(string root, string rel, int httpPort, string httpPassword, bool fullscreen, IPAddress bindTo)
+    public static string Play(string root, string rel, int httpPort, string httpPassword, bool fullscreen, IPAddress bindTo, bool? resume)
     {
         var file = Jail(root, rel);
         if (file == null || !File.Exists(file)) return Error(404, "not found", "That file does not exist on the PC.");
         if (!VideoExt.Contains(Path.GetExtension(file))) return Error(400, "not a video", "That file is not a video.");
         var vlc = FindVlc();
         if (vlc == null) return Error(404, "vlc not found", "VLC does not seem to be installed on this PC (looked in the usual places).");
+        // A saved place from last time: ask first (the phone shows Resume / Start over).
+        if (resume == null)
+        {
+            var ask = ResumeTracker.Ask(file);
+            if (ask != null)
+                return JsonSerializer.Serialize(new { ask = new { position = ask.Value.position, length = ask.Value.length } });
+        }
+        if (resume == false) ResumeTracker.Clear(file);
         // ArgumentList, never string concatenation: a quote in the VLC password must not
         // become extra VLC options.
         var psi = new ProcessStartInfo { FileName = vlc, UseShellExecute = false };
@@ -113,6 +121,14 @@ internal static class Movies
         // A second tap hands the file to the running VLC instead of opening another one.
         psi.ArgumentList.Add("--one-instance");
         if (fullscreen) psi.ArgumentList.Add("--fullscreen");
+        // Phone-launched plays never get VLC's own "continue from last time?" prompt;
+        // the phone's Resume / Start over dialog is the one place that is decided.
+        psi.ArgumentList.Add("--qt-continue=0");
+        if (resume == true)
+        {
+            var ask = ResumeTracker.Ask(file);
+            if (ask != null) psi.ArgumentList.Add("--start-time=" + (int)ask.Value.position);
+        }
         try
         {
             Process.Start(psi);
@@ -121,6 +137,7 @@ internal static class Movies
         {
             return Error(500, "launch failed", ex.Message);
         }
+        ResumeTracker.NoteLaunch(httpPort, httpPassword);
         Program.Log("Started VLC with: " + file);
         return JsonSerializer.Serialize(new { ok = true });
     }

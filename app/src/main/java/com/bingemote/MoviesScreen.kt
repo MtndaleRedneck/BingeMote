@@ -43,6 +43,35 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     var viaHelper by remember { mutableStateOf(false) }
     // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
     var starting by remember { mutableStateOf(false) }
+    // The PC found a saved place in this movie: offer Resume / Start over (Preview 1).
+    var resumeAsk by remember { mutableStateOf<ResumeAsk?>(null) }
+
+    /** Ask the PC to play a movies-folder file. resume: null = ask if a saved place
+     * exists; true = resume; false = start over. */
+    fun startPlay(relPath: String, resume: Boolean?) {
+        if (starting) return
+        starting = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val resp = HelperClient.playMovie(
+                    remote.store.host, remote.store.helperPort, remote.store.helperToken, relPath,
+                    remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true, resume = resume,
+                )
+                val ask = resp.optJSONObject("ask")
+                if (ask != null) {
+                    withContext(Dispatchers.Main) {
+                        resumeAsk = ResumeAsk(relPath, ask.optLong("position", 0), ask.optLong("length", 0))
+                    }
+                } else {
+                    remote.expectVlcStarting()
+                    remote.retry()
+                    withContext(Dispatchers.Main) { onBack() }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = e.message ?: "The PC could not start the movie." }
+            } finally { starting = false }
+        }
+    }
 
     fun atRoot(p: String) =
         if (viaHelper) p.isEmpty()
@@ -190,25 +219,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     if (viaHelper) loadHelper(item.path) else load(item.path)
                 }
             }
-            viaHelper -> {
-                if (starting) return
-                starting = true
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        val failed = HelperClient.playMovie(
-                            remote.store.host, remote.store.helperPort, remote.store.helperToken, item.path,
-                            remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true,
-                        )
-                        if (failed == null) {
-                            remote.expectVlcStarting()
-                            remote.retry()
-                            withContext(Dispatchers.Main) { onBack() }
-                        } else {
-                            withContext(Dispatchers.Main) { error = failed }
-                        }
-                    } finally { starting = false }
-                }
-            }
+            viaHelper -> startPlay(item.path, null)
             else -> {
                 if (starting) return
                 starting = true
