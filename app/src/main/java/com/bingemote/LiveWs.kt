@@ -29,6 +29,25 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     @Volatile private var closedByUs = false
     @Volatile private var paused = false
     private var pendingReconnect: java.util.concurrent.ScheduledFuture<*>? = null
+    private var heartbeat: java.util.concurrent.ScheduledFuture<*>? = null
+    // Per-connection frame numbers: the helper logs a gap when one goes missing.
+    private val seq = java.util.concurrent.atomic.AtomicLong(0)
+
+    private fun startHeartbeat() {
+        stopHeartbeat()
+        // The helper releases held mouse buttons and closes the socket after ~8 s of
+        // silence, so a quietly-dead app can't leave the PC's mouse pressed.
+        heartbeat = try {
+            scheduler.scheduleWithFixedDelay({
+                try { ws?.send("{"cmd":"heartbeat"}") } catch (_: Exception) {}
+            }, 2, 2, TimeUnit.SECONDS)
+        } catch (_: Exception) { null }
+    }
+
+    private fun stopHeartbeat() {
+        try { heartbeat?.cancel(false) } catch (_: Exception) {}
+        heartbeat = null
+    }
 
     @Synchronized
     fun connect() {
@@ -42,8 +61,16 @@ class LiveWs(private val host: String, private val port: Int, private val token:
         } catch (e: Exception) { return } // a malformed saved host must never crash the screen
         ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // A late onOpen from a replaced socket must not mark the new one open
+                // (drop() already checks this; onOpen did not).
+                val ours = synchronized(this) { ws === webSocket }
+                if (!ours) {
+                    try { webSocket.close(1000, null) } catch (_: Exception) {}
+                    return
+                }
                 open = true
                 attempts = 0
+                startHeartbeat()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 drop(webSocket)
@@ -57,7 +84,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     private fun drop(webSocket: WebSocket) {
         // A late callback from an old socket must not mark a newer healthy one closed.
         val ours = synchronized(this) { if (ws === webSocket) { ws = null; true } else false }
-        if (ours) open = false
+        if (ours) { open = false; stopHeartbeat() }
         if (closedByUs || paused || scheduler.isShutdown) return
         val delay = (500L shl attempts.coerceAtMost(4)).coerceAtMost(5000L) // 0.5, 1, 2, 4, 5... s
         attempts++
@@ -69,6 +96,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     @Synchronized
     fun pause() {
         paused = true
+        stopHeartbeat()
         try { pendingReconnect?.cancel(false) } catch (_: Exception) {}
         pendingReconnect = null
         open = false
@@ -85,13 +113,14 @@ class LiveWs(private val host: String, private val port: Int, private val token:
         connect()
     }
 
-    /** True when the frame went out on the live connection; false means the caller uses HTTP. */
+    /** True when the frame was queued on the live connection. False when the socket is
+     * not open (caller may use HTTP) or the queue is full (caller drops; mixing channels
+     * mid-stream reordered frames, which is the jerky-mouse suspect). */
     fun send(json: JSONObject): Boolean {
         val w = ws
         if (!open || w == null) return false
-        // Frames piling up in OkHttp/TCP (half-dead link, not yet detected) fall back to
-        // HTTP instead of vanishing into the queue.
         if (w.queueSize() > 2048) return false
+        json.put("seq", seq.incrementAndGet())
         return try { w.send(json.toString()) } catch (e: Exception) { false }
     }
 
@@ -99,6 +128,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     fun close() {
         closedByUs = true
         open = false
+        stopHeartbeat()
         try { ws?.close(1000, null) } catch (_: Exception) {}
         ws = null
         scheduler.shutdownNow()
