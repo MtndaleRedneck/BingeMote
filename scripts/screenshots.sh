@@ -64,6 +64,9 @@ adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen setup --es vlcpending true >/dev/null
 sleep 8
 dismiss_anr
+# The deferred-VLC-setup line sits below the Done button: scroll it into view.
+adb shell input swipe 540 1900 540 700 400
+sleep 2
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 
 # Lock-screen media controls (Phone 8): seeded session, screen off/on, capture the
