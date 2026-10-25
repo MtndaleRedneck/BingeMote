@@ -267,6 +267,27 @@ for tag in ring fills interrupted; do
     echo "PULL DIAG: missing pixel-compare inputs for $tag"; SEEK_FAIL=1
   fi
 done
+# 6) Status-notice proposal renders (notification-simplification design review):
+#    current vs proposed captures at Ezzy's exact phone profile (1080x2310 @ 480).
+#    "cur-*" states are forced through the REAL UI; "prop-*" use DEBUG-only mock
+#    state (the proposed hero note line) - illustrative, not shipped UI.
+adb shell wm size 1080x2310
+adb shell wm density 480
+for case in cur-g prop-g cur-e prop-e prop-unpaired; do
+  adb shell am force-stop com.bingemote
+  adb shell am start -n com.bingemote/.MainActivity --es screen main --es statuscase "$case" >/dev/null
+  sleep 6
+  dismiss_anr
+  adb exec-out screencap -p > "screenshots/status-$case.png" 2>/dev/null || echo "PULL DIAG: status-$case"
+  sz=$(stat -c%s "screenshots/status-$case.png" 2>/dev/null || echo 0)
+  if [ "$sz" -gt 20 ] && file -b "screenshots/status-$case.png" | grep -q 'PNG image'; then
+    echo "PULLED: status-$case.png ($sz bytes)"
+  else
+    echo "PULL DIAG: failed/invalid: status-$case.png ($sz bytes)"
+  fi
+done
+adb shell wm size reset
+adb shell wm density reset
 [ "$SEEK_FAIL" -eq 0 ] || exit 1
 # Small phone, same aspect ratio as the reference (~2.14): everything should
 # shrink to one uniform scale (296/360 ~ 0.82), gaps included.

@@ -82,6 +82,16 @@ class RemoteState(
         if (BuildConfig.DEBUG) status = VlcStatus("playing", "Demo", 1500, 6624, 128, false, emptyList())
     }
 
+    /** Screenshot-rig only: mock hero note line for the status-notice proposal
+     * renders (the proposed E/unpaired subtitle). Never set outside the rig. */
+    var mockHeroNote by mutableStateOf<String?>(null)
+
+    /** Screenshot-rig only: force the connection surfaces so captures show the real
+     * status UI in each review scenario. */
+    fun debugForceStatus(unreachable: Boolean, helperDown: Boolean) {
+        if (BuildConfig.DEBUG) { this.unreachable = unreachable; this.helperDown = helperDown }
+    }
+
     private var pollJob: Job? = null
     private var failures = 0
     private var helperFailures = 0
