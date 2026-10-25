@@ -7,7 +7,7 @@
 - Movies resume even from a VLC you opened by hand: BingeMote on the PC remembers each movie's place
 - Mouse: one ordered line to the PC, so a swipe after a Wi-Fi hiccup lands whole; a stuck pointer after the app was away is gone; keyboard keys vibrate with your Feel setting; Send clears the box cleanly
 - Volume answers right away, even while the PC is reconnecting
-- Setup tells you when the PC will finish VLC's setup the next time VLC closes
+- If VLC is open during setup, phone control starts when VLC reopens - setup says so
 
 ## v1.9.0
 
