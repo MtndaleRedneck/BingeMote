@@ -22,8 +22,9 @@ class NoticeTokenResetTest {
     @Test
     fun tokenChangeClearsNoticeState() = runBlocking {
         val (store, remote) = freshRemote()
+        remote.pollOnce() // settles the notice tracker onto the current token
         remote.debugForceStatus(unreachable = false, helperDown = true, helperNotice = true, unpaired = true)
-        remote.pollOnce() // settles the notice state onto the old (empty) token
+        assertTrue(remote.unpaired)
         store.helperToken = "repaired-token" // re-pairing saves a new token
         remote.pollOnce()
         assertFalse("pair-again notice survived re-pairing", remote.unpaired)
@@ -47,6 +48,7 @@ class NoticeTokenResetTest {
     @Test
     fun unchangedTokenKeepsNoticeState() = runBlocking {
         val (store, remote) = freshRemote()
+        remote.pollOnce() // settles the notice tracker onto the current token
         remote.debugForceStatus(unreachable = false, helperDown = true, helperNotice = true, unpaired = true)
         remote.pollOnce() // same token: no reset (the unconfigured early-return leaves the state alone)
         assertTrue(remote.unpaired)
