@@ -48,10 +48,26 @@ internal static class VlcSetup
     /// Null when nothing waits.</summary>
     public static string? PendingValue { get { lock (Gate) return _pendingPassword; } }
 
-    /// <summary>The PC's attestation for the phone's setup check: the phone's password is
-    /// the live one in vlcrc right now (no write waiting). A running VLC that has not
-    /// reloaded yet reports Pending instead.</summary>
-    public static bool Configured => !Pending && !string.IsNullOrEmpty(ReadVlcrcValue("http-password"));
+    /// <summary>The PC's attestation for the phone's setup check: vlcrc right now carries
+    /// everything phone control needs - the web interface enabled (extraintf=http), a bind
+    /// the phone can reach (http-host set and not loopback-only), and a live password - and
+    /// no write is still waiting. A running VLC that has not reloaded yet reports Pending
+    /// instead. Password equality alone is never enough.</summary>
+    public static bool Configured
+    {
+        get
+        {
+            if (Pending) return false;
+            if (string.IsNullOrEmpty(ReadVlcrcValue("http-password"))) return false;
+            var extraintf = ReadVlcrcValue("extraintf") ?? "";
+            var parts = extraintf.Split(new[] { ',', ':', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).ToList();
+            if (!parts.Contains("http") && !parts.Contains("luahttp")) return false; // interface off
+            var host = ReadVlcrcValue("http-host");
+            if (string.IsNullOrEmpty(host)) return false; // VLC's default binds localhost only
+            if (host is "127.0.0.1" or "localhost" or "::1") return false; // the phone could never reach it
+            return true;
+        }
+    }
 
     /// <summary>Re-arm a deferred write after a helper restart: VLC still running keeps it
     /// waiting for the retry timer; VLC already closed completes it immediately.</summary>

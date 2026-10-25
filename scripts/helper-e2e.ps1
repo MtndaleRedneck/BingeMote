@@ -289,6 +289,9 @@ try {
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $up) { throw "helper did not restart for the pending-write test" }
+        $r = Invoke-HelperGet '/vlc/setup-status' $token
+        $ss = $r.body | ConvertFrom-Json
+        Assert ($ss.configured -eq $false -and $ss.pending -eq $false) "with vlcrc deleted, setup-status attests neither configured nor pending"
         $r = Invoke-Helper '/pair' '{"code":"555555"}' $null
         Assert ($r.code -eq 200) "third phone pairs while VLC is running"
         $paired3 = $r.body | ConvertFrom-Json
