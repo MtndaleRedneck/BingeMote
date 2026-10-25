@@ -88,14 +88,15 @@ class MouseCadenceTest {
 
         // Baseline passes (shipped loop). Requested cadences land ~17 ms slower
         // than asked - the measured histograms are the truth, not the labels.
-        pass(instrumentation, "base-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180, deltaWait = false)
-        pass(instrumentation, "base-16rev", startX = 900f, stepPx = -4f, intervalMs = 16L, moves = 150, deltaWait = false)
-        pass(instrumentation, "base-8", startX = 240f, stepPx = 2f, intervalMs = 8L, moves = 360, deltaWait = false)
-        pass(instrumentation, "base-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90, deltaWait = false)
-        // Fix-validation passes: same input against the delta-driven empty-window
-        // wait (androidTest-only variant, dead in release).
-        pass(instrumentation, "dwait-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180, deltaWait = true)
-        pass(instrumentation, "dwait-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90, deltaWait = true)
+        pass(instrumentation, "base-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180)
+        pass(instrumentation, "base-16rev", startX = 900f, stepPx = -4f, intervalMs = 16L, moves = 150)
+        pass(instrumentation, "base-8", startX = 240f, stepPx = 2f, intervalMs = 8L, moves = 360)
+        pass(instrumentation, "base-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90)
+        // The delta-driven wait is now the shipped loop: these passes re-measure it.
+        // Prediction from the variant validation: even output following input ~1:1
+        // at every cadence - no 16/36 nap quantization anywhere.
+        pass(instrumentation, "dwait-16fwd", startX = 240f, stepPx = 4f, intervalMs = 16L, moves = 180)
+        pass(instrumentation, "dwait-33", startX = 240f, stepPx = 4f, intervalMs = 33L, moves = 90)
 
         serverRunning = false
         try { server.close() } catch (_: Exception) {}
