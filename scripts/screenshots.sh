@@ -69,24 +69,30 @@ adb shell input swipe 540 1900 540 700 400
 sleep 2
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 
-# Lock-screen media controls (Phone 8): seeded session, then the system media
-# surface itself (quick settings media card = the same controls the lock screen
-# hosts; this emulator has no keyguard to capture). Collapse after.
+# Lock-screen media controls (Phone 8): seeded session + media notification,
+# then the system media surface itself: the quick-settings media card (the same
+# controls the lock screen hosts; this emulator has no keyguard to capture).
 adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true >/dev/null
-sleep 6
-# Session evidence first: is the seeded session active, with which actions.
-adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
-# The keyguard itself: on API 34 the media controls sit under the clock / in the
-# keyguard notification list. Capture both surfaces.
+sleep 8
+# Quick settings first: the media card sits at the top of this surface.
+adb shell cmd statusbar expand-settings
+sleep 3
+adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
+adb shell cmd statusbar collapse
+sleep 2
+# The keyguard attempt + the shade: media controls render on both on a locked
+# device; on this emulator the screen simply returns to the app.
 adb shell input keyevent 26
 sleep 2
 adb shell input keyevent 26
 sleep 3
-adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
+adb exec-out screencap -p > "screenshots/lockscreen-keyguard.png"
 adb shell cmd statusbar expand-notifications
 sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls-shade.png"
+# Session evidence after the toggles: still active, with which actions.
+adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
 # End UNLOCKED: every phase after this launches the app and must see it.
 adb shell input keyevent 4
 sleep 1
