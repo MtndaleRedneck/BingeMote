@@ -32,7 +32,7 @@ adb shell wm size 1080x2310
 adb shell wm density 480
 # Cold start after a density/font change can capture a black frame: warm up first,
 # and retry any capture that comes back near-black.
-black() { [ "$(stat -c%s "$1")" -lt 80000 ]; }
+black() { [ "$(stat -c%s "$1")" -lt 30000 ]; }
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.bingemote/.MainActivity --es screen main >/dev/null
 sleep 6
@@ -51,11 +51,11 @@ adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen settings >/dev/null
 sleep 8
 dismiss_anr
-adb shell input swipe 540 1728 540 576 400
+adb shell input swipe 540 1553 540 518 400
 sleep 2
 adb exec-out screencap -p > "screenshots/settings-feel.png"
 # One more screenful down: the new Lock screen section below Feel.
-adb shell input swipe 540 1728 540 576 400
+adb shell input swipe 540 1553 540 518 400
 sleep 2
 adb exec-out screencap -p > "screenshots/settings-lockscreen.png"
 # Resume/Start-over dialog (PC7) and the deferred-VLC-setup line (PC5).
@@ -67,7 +67,7 @@ dismiss_anr
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 # Seek drag reproduction. Demo status seeds 25:00 elapsed / -1:25:24 remaining
 # (length 1:50:24). Raw pixels from the 1080x2310 emulator screenshot
-# (seek track x=33..1047, center y=751). Evidence first, assertions last: every
+# (seek track x=33..1033, center y=675). Evidence first, assertions last: every
 # dump's text fields and the BMSeek log are echoed to the CI log and uploaded
 # even when a check fails, so a failure stays diagnosable.
 adb shell am force-stop com.bingemote
@@ -82,7 +82,7 @@ dump_texts() { # $1 basename: save the UI dump and echo its text fields to the C
 }
 SEEK_FAIL=0
 # 1) Stationary hold past the 500ms unlock timer (a same-point swipe is a long press).
-adb shell input swipe 300 751 300 751 1100
+adb shell input swipe 300 675 300 675 1100
 sleep 0.3
 dump_texts seek-unlocked
 grep -q 'Unlocked' screenshots/seek-unlocked.xml || { echo 'ASSERT FAIL: hold did not unlock the seek bar'; SEEK_FAIL=1; }
@@ -90,7 +90,7 @@ grep -q 'Unlocked' screenshots/seek-unlocked.xml || { echo 'ASSERT FAIL: hold di
 #    Two input commands cannot be one continuous hold-then-drag, so this verifies
 #    retained unlock + absolute-x tracking, not the literal single-gesture path.
 #    Mid captures land ~2s in, safely before release: preview counters must be live.
-adb shell input swipe 300 751 863 626 8000 &
+adb shell input swipe 300 675 851 562 8000 &
 SWIPE_PID=$!
 sleep 2
 adb exec-out screencap -p > screenshots/main-seekdrag.png
