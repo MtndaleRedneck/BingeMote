@@ -25,6 +25,20 @@ internal static class VlcSetup
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "vlcrc");
         var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : new List<string>();
+        // Unchanged settings need no write - and no deferral: a running VLC read exactly
+        // this vlcrc at startup, so control already works now. Saying "pending" here would
+        // falsely tell the owner a reopen is required. Any older pending value is stale:
+        // the newest request is already on disk.
+        if (FindValue(lines, "http-password") == password
+            && (FindValue(lines, "extraintf") ?? "") == MergeValue(FindValue(lines, "extraintf"), "http")
+            && FindValue(lines, "http-host") == "0.0.0.0")
+        {
+            bool hadPending;
+            lock (Gate) { hadPending = _pendingPassword != null; _pendingPassword = null; }
+            if (hadPending) Program.SaveConfig();
+            Program.Log("vlcrc already has the web remote set up - nothing to write.");
+            return JsonSerializer.Serialize(new { ok = true });
+        }
         // Merge, don't overwrite: another interface may already sit in extraintf.
         Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
         Upsert(lines, "http-password", password);
