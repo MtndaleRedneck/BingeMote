@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
                         setupScroll,
                         onDone = { remote.start(); current.value = "main" },
                         onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
+                        demoVlcPending = BuildConfig.DEBUG && intent.hasExtra("vlcpending"),
                     )
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
                     // CI screenshot states (debug builds only): open with the sheet forced open.
@@ -101,7 +102,9 @@ class MainActivity : ComponentActivity() {
                         onSettings = { current.value = "settings" },
                         startSubtitlesOpen = true,
                     )
-                    "movies" -> MoviesScreen(remote, moviesListState) { current.value = "main" }
+                    "movies" -> MoviesScreen(remote, moviesListState, demoResumeAsk = intent.hasExtra("resumeask")) { current.value = "main" }
+                    // CI screenshot state (debug builds only): the resume dialog over the list.
+                    "movies-resume" -> MoviesScreen(remote, moviesListState, demoResumeAsk = true) { current.value = "main" }
                     "settings" -> SettingsScreen(
                         remote,
                         settingsScroll,
