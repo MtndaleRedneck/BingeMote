@@ -3,6 +3,7 @@
 // by hand has the remote too. Written only while VLC is closed - a running VLC rewrites
 // vlcrc on exit and would lose the change.
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace BingeMoteHelper;
@@ -52,6 +53,28 @@ internal static class VlcSetup
         Program.Log("VLC closed - writing the skipped vlcrc web-remote setup now.");
         using var doc = JsonDocument.Parse(WriteVlcrc(pw));
         return doc.RootElement.GetProperty("ok").GetBoolean() == false;
+    }
+
+    /// <summary>The password the phone must use right now: a deferred write wins over
+    /// vlcrc (it becomes vlcrc the moment VLC closes), and vlcrc is re-read every call so
+    /// a hand edit on the PC is picked up. null when nothing is configured yet.</summary>
+    public static string? EffectivePassword()
+    {
+        lock (Gate) { if (_pendingPassword != null) return _pendingPassword; }
+        return ReadVlcrcValue("http-password");
+    }
+
+    /// <summary>The automatic-first setup: the PC picks the password. Reuses the one
+    /// already configured (including a write still waiting for VLC to close); generates a
+    /// fresh one only when nothing exists. The value is never logged.</summary>
+    public static string ReadOrCreatePassword()
+    {
+        var existing = EffectivePassword();
+        if (!string.IsNullOrEmpty(existing)) return existing;
+        var pw = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
+        WriteVlcrc(pw); // defers to the pending write when VLC is running; EffectivePassword still serves it
+        Program.Log("VLC web-remote password generated for the phone (value never logged).");
+        return pw;
     }
 
     /// <summary>The live (uncommented) value of a vlcrc key, or null. Used for the

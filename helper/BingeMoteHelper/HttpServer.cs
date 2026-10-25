@@ -86,6 +86,16 @@ internal sealed class HttpServer : IDisposable
                     }
                     return;
 
+                // The one-shot adoption fetch: a paired phone that lost its copy of the VLC
+                // password (or never finished setup) may fetch it exactly once, by request ID.
+                case "/vlc/adopt":
+                    {
+                        var phone = FindPhone(req);
+                        if (phone == null) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                        HandleAdopt(req, res, phone);
+                    }
+                    return;
+
                 case "/movies/list":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {
@@ -112,7 +122,8 @@ internal sealed class HttpServer : IDisposable
                             Program.MoviesFolder ?? "",
                             rr.GetProperty("path").GetString() ?? "",
                             rr.TryGetProperty("httpPort", out var hp) ? hp.GetInt32() : 8080,
-                            rr.TryGetProperty("httpPassword", out var pw) ? pw.GetString() ?? "" : "",
+                            VlcSetup.EffectivePassword()
+                                ?? (rr.TryGetProperty("httpPassword", out var pw) ? pw.GetString() ?? "" : ""),
                             rr.TryGetProperty("fullscreen", out var fs) && fs.GetBoolean(),
                             req.LocalEndPoint.Address,
                             rr.TryGetProperty("resume", out var rs) ? rs.GetBoolean() : (bool?)null);
@@ -137,6 +148,47 @@ internal sealed class HttpServer : IDisposable
         var token = req.Headers["X-BingeMote-Token"];
         if (token == null) return false;
         lock (Program.PhonesLock) { return Program.Phones.Any(p => ConstantTimeEq(token, p.Token)); }
+    }
+
+    private static Program.PairedPhone? FindPhone(HttpListenerRequest req)
+    {
+        var token = req.Headers["X-BingeMote-Token"];
+        if (token == null) return null;
+        lock (Program.PhonesLock) { return Program.Phones.FirstOrDefault(p => ConstantTimeEq(token, p.Token)); }
+    }
+
+    /// <summary>POST /vlc/adopt: {requestId} fetches the PC's VLC password once per paired
+    /// phone; {requestId, ack:true} confirms the phone stored it and spends the grant.</summary>
+    private static void HandleAdopt(HttpListenerRequest req, HttpListenerResponse res, Program.PairedPhone phone)
+    {
+        using var doc = JsonDocument.Parse(ReadBody(req));
+        var r = doc.RootElement;
+        var requestId = r.TryGetProperty("requestId", out var ri) ? ri.GetString() ?? "" : "";
+        var ack = r.TryGetProperty("ack", out var ak) && ak.GetBoolean();
+        if (ack)
+        {
+            var a = AdoptGrant.Ack(phone, requestId, Program.SaveConfig);
+            if (a.Acked)
+            {
+                Program.Log("Phone \"" + phone.Name + "\" stored the VLC password; its one-time fetch is spent.");
+                Reply(res, 200, "{\"ok\":true}");
+            }
+            else Reply(res, 409, "{\"error\":\"nothing to ack\"}");
+            return;
+        }
+        var result = AdoptGrant.Serve(phone, VlcSetup.ReadOrCreatePassword, requestId, DateTime.UtcNow, Program.SaveConfig);
+        if (result.Served)
+        {
+            if (!result.Replayed)
+                Program.Log("Phone \"" + phone.Name + "\" fetched the VLC password (one-time; value never logged).");
+            Reply(res, 200, JsonSerializer.Serialize(new { password = result.Password }));
+        }
+        else if (result.Conflict)
+            Reply(res, 409, "{\"error\":\"adopt in flight\",\"detail\":\"A fetch is already underway. Retry with the same request id.\"}");
+        else if (result.AlreadySpent)
+            Reply(res, 410, "{\"error\":\"adopt spent\",\"detail\":\"This phone already fetched its VLC password. Re-pair or set the password by hand.\"}");
+        else
+            Reply(res, 400, "{\"error\":\"bad request\"}");
     }
 
     private static readonly object PairLock = new();
@@ -190,7 +242,16 @@ internal sealed class HttpServer : IDisposable
         Program.PairFailures = 0;
         Program.SaveConfig();
         Program.Log("Phone paired as \"" + phoneName + "\" (" + Program.PhonesCount + " total).");
-        Reply(res, 200, JsonSerializer.Serialize(new { token = token, name = Program.MachineLabel() }));
+        // Automatic-first VLC setup: the freshly paired phone gets the PC's password in the
+        // code-gated pair response, so nobody types anything into VLC's settings.
+        var vlcPassword = VlcSetup.ReadOrCreatePassword();
+        Reply(res, 200, JsonSerializer.Serialize(new
+        {
+            token = token,
+            name = Program.MachineLabel(),
+            vlcPassword = vlcPassword,
+            vlcPending = VlcSetup.Pending,
+        }));
         Program.PhonesChanged?.Invoke();
     }
 

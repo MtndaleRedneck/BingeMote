@@ -91,6 +91,28 @@ try {
     $paired = $r.body | ConvertFrom-Json
     $token = $paired.token
     Assert ($token.Length -eq 64) "token is 64 hex chars"
+
+    # Automatic-first VLC setup: the code-gated pair response hands over the PC's
+    # generated VLC password, and the one-shot adopt fetch behaves exactly once.
+    Assert ($paired.vlcPassword.Length -ge 16) "pair response carries the generated VLC password"
+    Assert ($paired.vlcPassword -notmatch '\s') "generated password is a clean token"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-1"}' $token
+    Assert ($r.code -eq 200) "adopt serves the password once"
+    $adopted = ($r.body | ConvertFrom-Json).password
+    Assert ($adopted -eq $paired.vlcPassword) "adopted password matches the pair password"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-1"}' $token
+    Assert ($r.code -eq 200) "adopt replays for the same request id (lost response)"
+    Assert ((($r.body | ConvertFrom-Json).password) -eq $adopted) "replay returns the same password"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-2"}' $token
+    Assert ($r.code -eq 409) "a different request id in the retry window conflicts"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-1","ack":true}' $token
+    Assert ($r.code -eq 200) "the consumed-ack spends the grant"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-3"}' $token
+    Assert ($r.code -eq 410) "after the ack the grant is spent (410)"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-1","ack":true}' $token
+    Assert ($r.code -eq 200) "a retried ack is an idempotent no-op"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":""}' $token
+    Assert ($r.code -eq 400) "an empty request id is rejected"
     Write-Host "paired with machine: $($paired.name)"
     # Paired phones get stored with a name; a code made outside the window pairs as "Phone N".
     $cfg = Join-Path $env:LOCALAPPDATA 'BingeMote/config.json'
@@ -165,6 +187,8 @@ try {
     Assert ($r.code -eq 403) "no live pair code after pairing (got $($r.code))"
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "saved token still works after restart"
+    $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-restart"}' $token
+    Assert ($r.code -eq 410) "the spent adopt grant stays spent across a helper restart"
 
     # A second phone pairs with a fresh code and both phones stay connected.
     Write-Host "== multi-phone pairing =="

@@ -4,6 +4,9 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("BingeMoteHelper.Tests")]
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -75,6 +78,9 @@ internal static class Program
     {
         public string Token { get; set; } = "";
         public string Name { get; set; } = "";
+        /// <summary>The one-shot VLC-password fetch was consumed (adopt flow). Persisted,
+        /// so a helper restart never re-arms it.</summary>
+        public bool AdoptSpent { get; set; }
     }
 
     /// <summary>One entry per paired phone. Pairing adds one; Remove takes one out.</summary>
@@ -383,7 +389,8 @@ internal static class Program
                     var t = p.TryGetProperty("token", out var pt) ? pt.GetString() : null;
                     if (t == null) continue;
                     var n = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
-                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n });
+                    var spent = p.TryGetProperty("adoptSpent", out var asp) && asp.GetBoolean();
+                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n, AdoptSpent = spent });
                 }
             // 1.2 stored bare tokens without names; those phones show as "Phone 1" etc.
             if (Phones.Count == 0 && doc.RootElement.TryGetProperty("tokens", out var ts))
@@ -421,7 +428,7 @@ internal static class Program
     {
         var json = JsonSerializer.Serialize(new
         {
-            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name }).ToArray(),
+            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent }).ToArray(),
             moviesFolder = MoviesFolder,
             declinedNetworks = DeclinedNetworks.ToArray(),
             homeNetworks = HomeNetworks.ToArray(),

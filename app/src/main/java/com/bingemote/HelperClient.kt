@@ -201,7 +201,18 @@ object HelperClient {
      * Trade a one-time 6-digit code (shown on the PC) for the long-lived pairing token.
      * Returns the token and the PC's name.
      */
-    fun pair(host: String, port: Int, code: String): Pair<String, String> {
+    /** What a successful pairing returns. vlcPassword/vlcPending exist on helper 1.7+:
+     *  the PC generates the VLC password and hands it over with the pair. An old helper
+     *  leaves them null/false and the phone falls back to the manual password card. */
+    data class PairResult(val token: String, val name: String, val vlcPassword: String?, val vlcPending: Boolean)
+
+    internal fun parsePairJson(text: String): PairResult {
+        val o = JSONObject(text)
+        val pw = o.optString("vlcPassword", "").ifBlank { null }
+        return PairResult(o.getString("token"), o.optString("name", "PC"), pw, o.optBoolean("vlcPending", false))
+    }
+
+    fun pair(host: String, port: Int, code: String): PairResult {
         val c = URL("http://$host:$port/pair").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 4000; c.readTimeout = 4000
@@ -212,10 +223,7 @@ object HelperClient {
                 s.readBytes().toString(Charsets.UTF_8)
             } ?: ""
             when (c.responseCode) {
-                200 -> {
-                    val o = JSONObject(text)
-                    return o.getString("token") to o.optString("name", "PC")
-                }
+                200 -> return parsePairJson(text)
                 401, 403 -> throw BadPairCode("Wrong code. Check the code on the PC and try again.")
                 429 -> throw BadPairCode("Too many tries. Restart BingeMote PC on the computer to pair again.")
                 else -> throw Unreachable("Pairing failed (error ${c.responseCode}).")
@@ -223,6 +231,34 @@ object HelperClient {
         } catch (e: BadPairCode) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: Exception) { throw Unreachable(NO_PC) }
+        finally { releaseQuietly(c) }
+    }
+
+    /** The one-shot adoption fetch (automatic-first setup): the PC's VLC password,
+     *  served exactly once per paired phone. null = the grant is spent or the helper is
+     *  too old to know the endpoint. Throws Unreachable when the PC cannot be reached. */
+    fun adoptVlcPassword(host: String, port: Int, token: String, requestId: String): String? {
+        val o = postJson("http://$host:$port/vlc/adopt", token, JSONObject().put("requestId", requestId)) ?: return null
+        return o.optString("password", "").ifBlank { null }
+    }
+
+    /** Confirm the password is stored: spends the one-shot grant for good. */
+    fun ackVlcAdoption(host: String, port: Int, token: String, requestId: String): Boolean =
+        postJson("http://$host:$port/vlc/adopt", token, JSONObject().put("requestId", requestId).put("ack", true)) != null
+
+    /** POST a JSON body with the pairing token; null on any refusal (401/404/409/410) or error. */
+    private fun postJson(url: String, token: String, body: JSONObject): JSONObject? {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 4000; c.readTimeout = 4000
+            c.requestMethod = "POST"; c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("X-BingeMote-Token", token)
+            c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            if (c.responseCode !in 200..299) return null
+            val text = c.inputStream.use { s: InputStream -> s.readBytes().toString(Charsets.UTF_8) }
+            return JSONObject(text)
+        } catch (e: Exception) { return null }
         finally { releaseQuietly(c) }
     }
 

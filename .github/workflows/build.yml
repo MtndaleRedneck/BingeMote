@@ -64,6 +64,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Helper unit tests
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
+
       - name: Publish helper exe
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out

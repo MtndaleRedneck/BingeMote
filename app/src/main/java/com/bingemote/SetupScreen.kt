@@ -55,7 +55,15 @@ fun SetupScreen(
     var moviesPath by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
     // VLC was open when the PC tried to write vlcrc: the PC finishes it when VLC closes.
-    var vlcFinishPending by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
+    var vlcFinishPending by remember { mutableStateOf(false) }
+    // Automatic-first VLC setup (helper 1.7+): the PC picked the password at pairing time.
+    // "checking" while the phone verifies it, then "ok" or "refused".
+    var autoSetup by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
+    var autoState by remember { mutableStateOf(if (demoVlcPending && BuildConfig.DEBUG) "ok" else "checking") }
+    // VLC is still running with its old settings: control starts when VLC reopens.
+    var autoPending by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
+    // The manual password card stays as the backup, collapsed while the automatic path runs.
+    var showManual by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 
@@ -92,12 +100,20 @@ fun SetupScreen(
         say("", false)
         scope.launch {
             try {
-                val (token, name) = withContext(Dispatchers.IO) { HelperClient.pair(target.host, target.port, code) }
+                val paired = withContext(Dispatchers.IO) { HelperClient.pair(target.host, target.port, code) }
                 store.host = target.host
                 store.helperPort = target.port
-                store.helperToken = token
-                store.pcName = name.ifBlank { target.name }
-                remote.publishAddress(target.host, target.port, token)
+                store.helperToken = paired.token
+                store.pcName = paired.name.ifBlank { target.name }
+                remote.publishAddress(target.host, target.port, paired.token)
+                // Automatic-first: the PC generated the VLC password and handed it over with
+                // the pair. An old helper says nothing and step 3 stays the manual card.
+                if (paired.vlcPassword != null) {
+                    store.vlcPassword = paired.vlcPassword
+                    autoSetup = true
+                    autoState = "checking"
+                    autoPending = paired.vlcPending
+                }
                 pairing = false
                 say("", false)
                 step = 3
@@ -278,6 +294,47 @@ fun SetupScreen(
             }
 
             else -> Column {
+                if (autoSetup) {
+                    SetupCard {
+                        when (autoState) {
+                            "checking" -> {
+                                Text("Setting up VLC remote control\u2026", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(10.dp))
+                                Text("Your PC picked the password. Checking it once\u2026", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                            }
+                            "ok" -> {
+                                Text("VLC remote control is set up", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    if (autoPending)
+                                        "VLC on the PC is still running with its old settings - phone control starts when VLC reopens."
+                                    else
+                                        "Your PC picked the password and saved it - nothing to type into VLC.",
+                                    color = TextC, fontSize = 14.sp, lineHeight = 20.sp,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                OrangeButton("Done", onClick = { store.setupDone = true; onDone() })
+                                SetupMessage(message, messageIsError)
+                            }
+                            else -> {
+                                Text("VLC refused the password", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(10.dp))
+                                Text("If you changed it on the PC, re-pair or set it by hand.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                                Spacer(Modifier.height(12.dp))
+                                OrangeButton("Pair again", onClick = { startOver(); step = 2 })
+                                SetupMessage(message, messageIsError)
+                            }
+                        }
+                    }
+                    if (autoState != "refused") {
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { showManual = !showManual }) {
+                            Text(if (showManual) "Hide the manual setup" else "Set the password by hand instead", color = Muted)
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+                if (!autoSetup || showManual || autoState == "refused") {
                 SetupCard {
                     Text("Turn on VLC's web remote", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -327,6 +384,7 @@ fun SetupScreen(
                         OrangeButton(if (testing) "Checking\u2026" else "Finish", enabled = !testing, onClick = { finish() })
                     }
                     SetupMessage(message, messageIsError)
+                }
                 }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = { say("", false); step = 2 }) { Text("Back", color = Muted) }

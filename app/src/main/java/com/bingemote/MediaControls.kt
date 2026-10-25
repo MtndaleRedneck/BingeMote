@@ -52,6 +52,7 @@ private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var session: MediaSession? = null
+    private var callback: MediaSession.Callback? = null
     private var pollJob: Job? = null
     private var failures = 0
 
@@ -61,13 +62,15 @@ class MediaControlsService : Service() {
         super.onCreate()
         val store = Store(this)
         val s = MediaSession(this, "BingeMote")
-        s.setCallback(object : MediaSession.Callback() {
+        val cb = object : MediaSession.Callback() {
             override fun onPlay() { run { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) } }
             override fun onPause() { run { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) } }
             override fun onRewind() { jump(store, -store.skipSecondarySec) }
             override fun onFastForward() { jump(store, store.skipMainSec) }
             // No onSeekTo and no ACTION_SEEK_TO: the bar shows the place but can't be dragged.
-        })
+        }
+        callback = cb
+        s.setCallback(cb)
         s.setFlags(MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
         // The system media surface opens the app from this (docs: must launch an activity).
         s.setSessionActivity(
@@ -128,6 +131,12 @@ class MediaControlsService : Service() {
         if (refreshRequested) { refreshRequested = false } /* poll right away anyway */
         val st = try {
             Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+        } catch (e: Vlc.BadAuth) {
+            // The one automatic heal: adopt the PC's current password once; never push ours.
+            if (VlcAuthRepair.tryHealOnce(store)) return // the next poll uses it
+            failures++
+            if (failures >= 5) session?.isActive = false
+            return
         } catch (e: Exception) {
             failures++
             // VLC gone for good: drop the controls rather than pose over a dead player.

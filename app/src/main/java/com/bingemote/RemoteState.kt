@@ -32,6 +32,9 @@ class RemoteState(
 
     /** VLC didn't answer but the helper did: the PC is fine, VLC just isn't open. */
     var vlcClosed by mutableStateOf(false)
+    /** VLC refused the password and the one automatic heal (the adoption fetch) is spent:
+     *  the card says so and points at re-pair or the PC-side setting. */
+    var vlcRefused by mutableStateOf(false)
     /** The helper just started VLC: hide the error card while it comes up. */
     var expectingVlc by mutableStateOf(false)
         private set
@@ -158,11 +161,17 @@ class RemoteState(
             }
             failures = 0
             unreachable = false
+            vlcRefused = false
             vlcClosed = false
             closedPolls = 0
             connecting = false
             expectingVlc = false
         } catch (e: Vlc.BadAuth) {
+            // The one automatic heal: adopt the PC's current password once. The phone never
+            // pushes its stored copy at the PC - a refusal can be an intentional PC change.
+            val healed = withContext(Dispatchers.IO) { VlcAuthRepair.tryHealOnce(store) }
+            if (healed) { vlcRefused = false; return } // the next poll uses the fresh password
+            vlcRefused = true
             failures = UNREACHABLE_AFTER
             unreachable = true
         } catch (e: Exception) {

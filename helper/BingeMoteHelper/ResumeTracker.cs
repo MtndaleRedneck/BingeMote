@@ -69,7 +69,7 @@ internal static class ResumeTracker
             }
         }
         catch { }
-        var pw = VlcSetup.ReadVlcrcValue("http-password");
+        var pw = VlcSetup.EffectivePassword();
         if (pw != null && pw.Length > 0)
         {
             lock (Gate) _password ??= pw;
