@@ -18,7 +18,9 @@ import kotlinx.coroutines.launch
 object MediaControls {
     fun sync(context: Context, store: Store) {
         val i = Intent(context, MediaControlsService::class.java)
-        if (store.lockScreenControls && store.isConfigured) context.startService(i)
+        // The CI screenshot state seeds a demo session with no PC paired.
+        val demo = BuildConfig.DEBUG && store.demoControls
+        if (store.lockScreenControls && (store.isConfigured || demo)) context.startService(i)
         else context.stopService(i)
     }
 }
