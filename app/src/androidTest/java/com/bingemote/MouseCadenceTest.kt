@@ -75,44 +75,60 @@ class MouseCadenceTest {
         )
         Thread.sleep(1500)
 
-        // Pass 1: ~60 Hz steady drag, +4 px every 16 ms.
-        runDrag(instrumentation, startX = 240f, y = 1000f, stepPx = 4f, intervalMs = 16L, moves = 180)
+        // Pass 1a/1b: ~60 Hz steady drag, +4 px every 16 ms, twice for rhythm stability.
+        runDrag(instrumentation, "60Hz-a", startX = 240f, y = 1000f, stepPx = 4f, intervalMs = 16L, moves = 180)
         Thread.sleep(800)
-        val pass1 = snapshotAndReset()
-        report("60Hz", pass1)
+        report("60Hz-a", snapshotAndReset())
+        runDrag(instrumentation, "60Hz-b", startX = 960f, y = 1000f, stepPx = -4f, intervalMs = 16L, moves = 180)
+        Thread.sleep(800)
+        report("60Hz-b", snapshotAndReset())
 
         // Pass 2: ~120 Hz input, +2 px every 8 ms (60 Hz display: measures how the
         // pipeline reshapes faster input, not a true 120 Hz panel).
-        runDrag(instrumentation, startX = 240f, y = 1000f, stepPx = 2f, intervalMs = 8L, moves = 360)
+        runDrag(instrumentation, "120Hz-input", startX = 240f, y = 1000f, stepPx = 2f, intervalMs = 8L, moves = 360)
         Thread.sleep(800)
-        val pass2 = snapshotAndReset()
-        report("120Hz-input", pass2)
+        report("120Hz-input", snapshotAndReset())
+
+        // Control: ~30 Hz input (33 ms), +4 px. Slower than the 16 ms pace + 20 ms nap,
+        // so every flush window carries delta: the mechanism predicts an EVEN ~36 ms
+        // cadence at the same ~28/sec rate - isolating unevenness from rate.
+        runDrag(instrumentation, "control-33ms", startX = 240f, y = 1000f, stepPx = 4f, intervalMs = 33L, moves = 90)
+        Thread.sleep(800)
+        report("control-33ms", snapshotAndReset())
 
         serverRunning = false
         try { server.close() } catch (_: Exception) {}
         serverThread.join(2000)
-        assertTrue("no move frames captured at the fake helper", pass1.size + pass2.size > 50)
+        assertTrue("no move frames captured at the fake helper", frames.isEmpty())
     }
 
     private fun runDrag(
         instrumentation: android.app.Instrumentation,
-        startX: Float, y: Float, stepPx: Float, intervalMs: Long, moves: Int
+        label: String, startX: Float, y: Float, stepPx: Float, intervalMs: Long, moves: Int
     ) {
         val downTime = SystemClock.uptimeMillis()
         var x = startX
+        var lastInject = 0L
+        val injected = mutableListOf<Long>()
         val down = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, x, y, 0)
         instrumentation.sendPointerSync(down)
         down.recycle()
         repeat(moves) {
             SystemClock.sleep(intervalMs)
             x += stepPx
-            val mv = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x, y, 0)
+            val now = SystemClock.uptimeMillis()
+            if (lastInject != 0L) injected.add(now - lastInject)
+            lastInject = now
+            val mv = MotionEvent.obtain(downTime, now, MotionEvent.ACTION_MOVE, x, y, 0)
             instrumentation.sendPointerSync(mv)
             mv.recycle()
         }
         val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
         instrumentation.sendPointerSync(up)
         up.recycle()
+        // The injected cadence is measured, not assumed: sleep() overshoots.
+        val hist = injected.groupingBy { it }.eachCount().toSortedMap()
+        Log.i("BMMouse", "$label: injectedIntervals(ms->count)=$hist")
     }
 
     private fun snapshotAndReset(): List<Frame> {
@@ -124,7 +140,7 @@ class MouseCadenceTest {
     private fun report(label: String, frames: List<Frame>) {
         if (frames.isEmpty()) { Log.i("BMMouse", "$label: NO FRAMES CAPTURED"); return }
         val gaps = frames.zipWithNext { a, b -> (b.atNanos - a.atNanos) / 1_000_000.0 }
-        val steps = frames.map { it.dx }
+        val steps = frames.map { kotlin.math.abs(it.dx) }
         val sortedSteps = steps.sorted()
         val medianStep = sortedSteps[sortedSteps.size / 2]
         val sortedGaps = gaps.sorted()
@@ -141,7 +157,7 @@ class MouseCadenceTest {
         val hist = steps.groupingBy { kotlin.math.round(it * 2) / 2 }.eachCount().toSortedMap()
         Log.i("BMMouse", "$label: stepHistogram=$hist")
         val timeline = frames.zipWithNext { a, b ->
-            "${((b.atNanos - a.atNanos) / 1_000_000)}ms/${b.dx}"
+            "${((b.atNanos - a.atNanos) / 1_000_000)}ms/${kotlin.math.abs(b.dx)}"
         }.take(40).joinToString(" ")
         Log.i("BMMouse", "$label: firstFrames $timeline")
     }
