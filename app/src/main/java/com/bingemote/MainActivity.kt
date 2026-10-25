@@ -71,6 +71,10 @@ class MainActivity : ComponentActivity() {
             "cur-e" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true) }
             "prop-e" -> { remote.debugSeedStatus(); remote.mockHeroNote = "BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume." }
             "prop-unpaired" -> { remote.debugSeedStatus(); remote.mockHeroNote = "This phone isn't paired with the PC anymore - pair again." }
+            // Post-1.11.0 production states: the REAL shipped notice branches
+            // (post-debounce helper notice / 401 pair-again), no mock slot.
+            "prod-e" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true, helperNotice = true) }
+            "prod-unpaired" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true, unpaired = true) }
         }
         if (BuildConfig.DEBUG && intent.hasExtra("lockcontrols")) {
             store.lockScreenControls = true

@@ -95,8 +95,11 @@ class RemoteState(
 
     /** Screenshot-rig only: force the connection surfaces so captures show the real
      * status UI in each review scenario. */
-    fun debugForceStatus(unreachable: Boolean, helperDown: Boolean) {
-        if (BuildConfig.DEBUG) { this.unreachable = unreachable; this.helperDown = helperDown }
+    fun debugForceStatus(unreachable: Boolean, helperDown: Boolean, helperNotice: Boolean = false, unpaired: Boolean = false) {
+        if (BuildConfig.DEBUG) {
+            this.unreachable = unreachable; this.helperDown = helperDown
+            this.helperNotice = helperNotice; this.unpaired = unpaired
+        }
     }
 
     private var pollJob: Job? = null
