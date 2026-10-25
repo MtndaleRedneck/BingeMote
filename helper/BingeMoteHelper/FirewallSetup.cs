@@ -99,7 +99,9 @@ internal static class FirewallSetup
     private static string InventoryVlcRules()
     {
         var psi = new ProcessStartInfo("powershell",
-            "-NoProfile -NonInteractive -Command "Get-NetFirewallRule -ErrorAction SilentlyContinue | ForEach-Object { $af = $_ | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue; if ($af -and $af.Program -like '*vlc.exe') { \"$($_.DisplayName)|$($_.Profile)|$($_.Action)|$($_.Enabled)|$($af.Program)\" } }"")
+            """
+            -NoProfile -NonInteractive -Command "Get-NetFirewallRule -ErrorAction SilentlyContinue | ForEach-Object { $af = $_ | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue; if ($af -and $af.Program -like '*vlc.exe') { $_.DisplayName+'|'+$_.Profile+'|'+$_.Action+'|'+$_.Enabled+'|'+$af.Program } }"
+            """)
         {
             RedirectStandardOutput = true,
             UseShellExecute = false,
