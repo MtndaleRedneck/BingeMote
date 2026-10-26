@@ -7,13 +7,14 @@ plugins {
 android {
     namespace = "com.bingemote"
     compileSdk = 35
+    testBuildType = "release"
 
     defaultConfig {
         applicationId = "com.bingemote"
         minSdk = 31
         targetSdk = 34
-        versionCode = 20
-        versionName = "1.11.1"
+        versionCode = 22
+        versionName = "1.12.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -60,6 +61,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("junit:junit:4.13.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     // Screenshot-rig only: drives the continuous hold-then-slide seek gesture as one touch.
