@@ -16,6 +16,16 @@ class RecoveryContinuityTest {
             s.skipMainSec = 10; s.skipSecondarySec = 60; s.haptics = false
             s.helperToken = "continuity-helper-fixture"
             s.vlcPassword = "continuity-vlc-fixture"
+            // Instrumentation may terminate immediately after this method. Force both
+            // apply queues to disk before the OS replaces the target APK/process.
+            assertTrue(ctx.getSharedPreferences("settings", 0).edit().putBoolean("seedCommitted", true).commit())
+            val secrets = androidx.security.crypto.EncryptedSharedPreferences.create(
+                ctx, "secrets", androidx.security.crypto.MasterKey.Builder(ctx)
+                    .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+            assertTrue(secrets.edit().putString("helperToken", "continuity-helper-fixture")
+                .putString("vlcPassword", "continuity-vlc-fixture").commit())
         }
         assertEquals("DESKTOP-TEST", s.pcName)
         assertEquals("192.0.2.27", s.host)
