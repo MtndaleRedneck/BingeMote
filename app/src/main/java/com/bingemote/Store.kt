@@ -54,7 +54,7 @@ class Store(context: Context) {
 
     var skipMainSec: Int
         // A stored value that is no longer offered falls back to the default.
-        get() = prefs.getInt("skipMainSec", 5).takeIf { it in MAIN_SKIP_OPTIONS } ?: 5
+        get() = prefs.getInt("skipMainSec", 10).takeIf { it in MAIN_SKIP_OPTIONS } ?: 10
         set(v) = prefs.edit().putInt("skipMainSec", v).apply()
 
     var skipSecondarySec: Int

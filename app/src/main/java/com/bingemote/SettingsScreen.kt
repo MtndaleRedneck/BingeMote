@@ -110,11 +110,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Skip buttons") {
+            Text("Primary skip buttons", color = TextC, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s"),
                 selected = mainSkip,
             ) { mainSkip = it; store.skipMainSec = it }
             Spacer(Modifier.height(14.dp))
+            Text("Secondary skip buttons", color = TextC, fontSize = 14.sp)
+            Spacer(Modifier.height(8.dp))
             ChoiceRow(
                 options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m"),
                 selected = secondarySkip,
