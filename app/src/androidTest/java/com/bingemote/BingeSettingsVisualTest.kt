@@ -17,5 +17,7 @@ class BingeSettingsVisualTest {
   assertTrue(d.wait(Until.hasObject(By.text("Primary skip buttons")),10000))
   if(!d.hasObject(By.text("Secondary skip buttons"))) {d.swipe(d.displayWidth/2,d.displayHeight*3/4,d.displayWidth/2,d.displayHeight/3,35)}
   assertTrue(d.wait(Until.hasObject(By.text("Secondary skip buttons")),5000))
+  Thread.sleep(1000)
+  assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"binge-settings-labels.png")))
  }
 }
