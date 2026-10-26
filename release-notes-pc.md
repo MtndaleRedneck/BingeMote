@@ -1,7 +1,3 @@
-## v1.7.1
-
-- Writes a one-line mouse timing summary to the local helper log while the mouse is used, to help diagnose cursor smoothness (stays on your PC; nothing is uploaded)
-
 ## v1.7.0
 
 - Sets up VLC's web remote by itself: the PC picks the password, writes VLC's settings (or finishes the moment VLC closes), and shares it with the phone at pairing
