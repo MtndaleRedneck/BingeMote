@@ -7,7 +7,7 @@ plugins {
 android {
     namespace = "com.bingemote"
     compileSdk = 35
-    testBuildType = "release"
+    testBuildType = if (providers.gradleProperty("recoveryReleaseTest").isPresent) "release" else "debug"
 
     defaultConfig {
         applicationId = "com.bingemote"

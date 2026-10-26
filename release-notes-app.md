@@ -1,3 +1,10 @@
+## v1.12.0
+
+- Restores BingeMote's name and teal couch icon after the mistaken Zephyr update, keeping existing settings and pairing data. No uninstall is needed.
+- Settings now labels Primary skip buttons and Secondary skip buttons. Each set uses the same interval forward and back.
+- New or unset skip choices default to 10 seconds primary and 30 seconds secondary. Valid saved choices stay unchanged.
+- Zephyr is a separate app and can be installed beside BingeMote.
+
 ## v1.11.1
 
 - Mouse movement updates no longer get held and delivered in bunches on Wi-Fi - the cursor follows your finger more evenly

@@ -51,6 +51,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
         with:
           name: BingeMote-Android-apk
           path: BingeMote-Android-*.apk
