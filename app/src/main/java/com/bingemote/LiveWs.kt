@@ -20,7 +20,11 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     // Server pings keep a half-dead Wi-Fi socket from sitting open undetected.
     // 3 s: a half-dead socket (PC slept, Wi-Fi dropped without a FIN) is noticed within a
     // few seconds, not 30 - until then send() would report success into the void.
-    private val client = OkHttpClient.Builder().pingInterval(3, TimeUnit.SECONDS).build()
+    private val client = OkHttpClient.Builder()
+        .pingInterval(3, TimeUnit.SECONDS)
+        // Mouse frames are tiny and timing-sensitive: no Nagle hold-back (see NoDelaySocketFactory).
+        .socketFactory(NoDelaySocketFactory())
+        .build()
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var ws: WebSocket? = null
     private var attempts = 0

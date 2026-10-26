@@ -148,7 +148,8 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                                 val sendStarted = System.currentTimeMillis()
                                 landed?.await()
                                 val stalledMs = if (landed != null) System.currentTimeMillis() - sendStarted else 0L
-                                val pace = lastSentAt + 16 - System.currentTimeMillis()
+                                // 8 ms floor: ~120 batches/sec, trackpad-like update rate.
+                                val pace = lastSentAt + 8 - System.currentTimeMillis()
                                 if (pace > 0) delay(pace)
                                 // Moves ride the same channel as buttons and scrolls, so a
                                 // drag can never start before its button-down reaches the PC.

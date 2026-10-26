@@ -1,3 +1,8 @@
+## v1.11.1
+
+- Mouse movement updates no longer get held and delivered in bunches on Wi-Fi - the cursor follows your finger more evenly
+- The mouse sends updates up to twice as often, closer to a real trackpad
+
 ## v1.11.0
 
 - Warnings about the PC now sit inside the orange banner - the second card that pushed the controls around is gone
