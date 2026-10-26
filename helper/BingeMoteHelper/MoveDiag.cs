@@ -10,7 +10,10 @@ namespace BingeMoteHelper;
 /// </summary>
 internal static class MoveDiag
 {
-    private const bool Enabled = true;
+    // DEBUG-only per the agreed scope: the RELEASE helper carries no active timing
+    // logging. Flip to true only in a diagnostic build; the compiler removes the
+    // call-site bodies when false.
+    private const bool Enabled = false;
 
     private static readonly object Gate = new();
     private static long _ws, _http;
