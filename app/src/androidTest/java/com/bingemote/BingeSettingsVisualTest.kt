@@ -13,7 +13,7 @@ class BingeSettingsVisualTest {
   assertEquals("1.12.1",ctx.packageManager.getPackageInfo(ctx.packageName,0).versionName)
   val d=UiDevice.getInstance(i)
   d.pressHome()
-  ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+  ctx.startActivity(Intent(ctx,MainActivity::class.java).putExtra("screen","main").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
   d.waitForIdle()
   val settings=d.wait(Until.findObject(By.desc("Settings")),20000);assertNotNull("Main-screen Settings button missing",settings);settings.click()
   d.waitForIdle()
