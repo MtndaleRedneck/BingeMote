@@ -1,0 +1,49 @@
+name: Verify signed APK (test only, never publishes)
+on:
+  push:
+    branches: ['verify/**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Build signed release APK (key stays in CI)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          [ -n "$KEYSTORE_B64" ] || { echo "No signing secrets"; exit 1; }
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          ./gradlew --no-daemon assembleRelease
+          rm -f "$RUNNER_TEMP/release.keystore"
+          mkdir -p verify
+          cp app/build/outputs/apk/release/app-release.apk verify/new.apk
+      - name: Get the published 1.12.0 APK
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release download android-v1.12.0 -p '*.apk' -O verify/old.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/verify-apk.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BingeMote-verify
+          path: verify/*
+          retention-days: 7
