@@ -10,7 +10,7 @@ class BingeSettingsVisualTest {
  @Test fun restoredReleaseShowsBothSkipLabels() {
   val i=InstrumentationRegistry.getInstrumentation();val ctx=i.targetContext
   assertEquals("com.bingemote",ctx.packageName)
-  assertEquals("1.12.0",ctx.packageManager.getPackageInfo(ctx.packageName,0).versionName)
+  assertEquals("1.12.1",ctx.packageManager.getPackageInfo(ctx.packageName,0).versionName)
   val d=UiDevice.getInstance(i)
   d.pressHome()
   ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
