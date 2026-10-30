@@ -1,3 +1,7 @@
+## v1.12.1
+
+- Updated app icon: the remote now sits on the couch.
+
 ## v1.12.0
 
 - Restores BingeMote's name and teal couch icon after the mistaken Zephyr update, keeping existing settings and pairing data. No uninstall is needed.
