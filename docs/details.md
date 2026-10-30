@@ -77,3 +77,23 @@ Android and PC release separately: `android-vX.Y.Z` (latest) ships
 `BingeMote-Android-X.Y.Z.apk`, `pc-vX.Y.Z` (never latest) ships the
 `BingeMote-PC-X.Y.Z.exe` installer. Publishing is a manual workflow dispatch with
 `publish=true` and a target, after review signs off on the exact commit.
+
+## Controls
+
+- Play/pause, fullscreen, subtitles, volume and adjustable skip buttons.
+- Hold the seek bar to unlock seeking. Tap the volume percentage to mute.
+- Movies: arrows select, OK opens; phone volume keys move the highlight.
+- Mouse: touchpad, click buttons, scroll strip, pinch zoom and keyboard.
+- The app offers updates when it opens. Android confirms each installation.
+
+## Network security
+
+BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
+
+Uninstalling BingeMote removes the program, its start-with-Windows entry, the firewall rule and the listen permission. If you ran the plain exe instead of the installer, remove the last two by hand as administrator: `netsh advfirewall firewall delete rule name="BingeMote"` (on PCs that had 1.x, also `name="BingeMote Helper"`) and `netsh http delete urlacl url=http://+:8488/`.
+
+## Network security
+
+BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
+
+Uninstalling BingeMote removes the program, its start-with-Windows entry, the firewall rule and the listen permission. If you ran the plain exe instead of the installer, remove the last two by hand as administrator: `netsh advfirewall firewall delete rule name="BingeMote"` (on PCs that had 1.x, also `name="BingeMote Helper"`) and `netsh http delete urlacl url=http://+:8488/`.
