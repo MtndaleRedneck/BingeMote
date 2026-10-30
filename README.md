@@ -1,6 +1,6 @@
-# BingeMote
+<p align="center"><img src="docs/logo.png" alt="BingeMote icon" width="96"></p>
 
-<img src="docs/logo.png" width="128" alt="BingeMote icon">
+# BingeMote
 
 A full-featured remote for VLC on your PC. Allows full control of starting and controlling VLC remotely, such as while sitting on the couch. Includes full mouse and keyboard support.
 
