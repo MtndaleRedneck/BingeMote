@@ -13,3 +13,5 @@ A full-featured remote for VLC on your PC. Allows full control of starting and c
 Keep both devices on the same trusted home network; traffic is not encrypted, so never forward its ports to the internet.
 
 Controls, security, uninstall, and build details are in [docs/details.md](docs/details.md).
+
+Not affiliated with VideoLAN. VLC is a trademark of VideoLAN.
