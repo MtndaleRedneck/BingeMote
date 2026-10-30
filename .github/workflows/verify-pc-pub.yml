@@ -8,6 +8,7 @@ jobs:
   verify:
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Download public installers
         shell: pwsh
         env: { GH_TOKEN: '${{ github.token }}' }
@@ -37,13 +38,6 @@ jobs:
           Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
           Copy-Item "$dir\BingeMote.exe" verify/installed-1.7.1.exe
           Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Filter *BingeMote* | Select Name | Out-String | Tee-Object -Append verify/report.txt
-      - name: Icon frames of installed exes vs approved ICO
-        shell: pwsh
-        run: |
-          pip install pefile | Out-Null
-          Copy-Item (git show HEAD:helper/Assets/bingemote.ico) $null -ErrorAction SilentlyContinue
-        continue-on-error: true
-      - uses: actions/checkout@v4
       - name: Compare frames
         shell: pwsh
         run: |
