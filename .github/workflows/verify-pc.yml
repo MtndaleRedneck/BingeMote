@@ -1,0 +1,70 @@
+name: Verify PC installer and installed exe icon (test only, never publishes)
+on:
+  push:
+    branches: ['verify/pc-**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: 8.0.x }
+      - name: Publish helper exe
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - name: Build installer
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=1.7.1" helper/installer.iss
+          New-Item -ItemType Directory -Force verify | Out-Null
+          Copy-Item helper/Output/BingeMote-PC-1.7.1.exe verify/
+      - name: Install silently (not launched) and extract icons
+        shell: pwsh
+        run: |
+          $inst = (Resolve-Path verify/BingeMote-PC-1.7.1.exe).Path
+          $p = Start-Process $inst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/LOG=verify\install.log' -Wait -PassThru
+          "installer exit code: $($p.ExitCode)" | Tee-Object verify/report.txt
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
+          Get-ChildItem $dir | Select Name,Length | Out-String | Tee-Object -Append verify/report.txt
+          $exe = Join-Path $dir 'BingeMote.exe'
+          (Get-Item $exe).VersionInfo | Select FileVersion,ProductVersion | Out-String | Tee-Object -Append verify/report.txt
+          Add-Type -AssemblyName System.Drawing
+          $ic = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+          $big = New-Object System.Drawing.Icon($ic,256,256)
+          $bmp = $big.ToBitmap(); $bmp.Save((Resolve-Path verify).Path + '\installed-exe-icon.png')
+          $ic.ToBitmap().Save((Resolve-Path verify).Path + '\installed-exe-icon-assoc.png')
+          $isz = [System.Drawing.Icon]::ExtractAssociatedIcon($inst)
+          $isz.ToBitmap().Save((Resolve-Path verify).Path + '\installer-icon-assoc.png')
+          Copy-Item $exe verify/installed-BingeMote.exe
+          Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter *.lnk | Select FullName | Out-String | Tee-Object -Append verify/report.txt
+      - name: Compare icon resources with approved ICO
+        shell: pwsh
+        run: |
+          pip install pefile pillow | Out-Null
+          @'
+          import pefile,struct,hashlib,sys
+          def frames(path):
+              pe=pefile.PE(path); out=[]
+              for r in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+                  if r.id==3:
+                      for e in r.directory.entries:
+                          d=e.directory.entries[0]; out.append(pe.get_data(d.data.struct.OffsetToData,d.data.struct.Size))
+              return out
+          b=open('helper/Assets/bingemote.ico','rb').read()
+          n=struct.unpack('<H',b[4:6])[0]; src=[]
+          for i in range(n):
+              w,h,_,_,_,_,sz,off=struct.unpack('<BBBBHHII',b[6+16*i:22+16*i]); src.append(b[off:off+sz])
+          sh=lambda x:hashlib.sha256(x).hexdigest()
+          S={sh(x) for x in src}
+          for name in ['verify/installed-BingeMote.exe','verify/BingeMote-PC-1.7.1.exe']:
+              R={sh(x) for x in frames(name)}
+              print(name,'frames',len(R),'identical to approved ICO frames:',R==S)
+          '@ | Set-Content verify/cmp.py
+          python verify/cmp.py | Tee-Object -Append verify/report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BingeMote-pc-verify
+          path: verify/*
+          retention-days: 7
