@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.png" alt="BingeMote icon" width="96"></p>
+<p align="center"><img src="docs/readme-icon.png" alt="BingeMote icon" width="96"></p>
 
 # BingeMote
 
