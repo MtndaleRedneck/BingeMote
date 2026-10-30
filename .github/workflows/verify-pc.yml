@@ -23,7 +23,10 @@ jobs:
         shell: pwsh
         run: |
           $inst = (Resolve-Path verify/BingeMote-PC-1.7.1.exe).Path
-          $p = Start-Process $inst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/LOG=verify\install.log' -Wait -PassThru
+          $p = Start-Process $inst -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/LOG=verify\install.log' -PassThru
+          if (-not $p.WaitForExit(180000)) { 'installer did not exit in 180s' | Tee-Object verify/report.txt; $p.Kill() }
+          Start-Sleep 5
+          Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
           "installer exit code: $($p.ExitCode)" | Tee-Object verify/report.txt
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
           Get-ChildItem $dir | Select Name,Length | Out-String | Tee-Object -Append verify/report.txt
