@@ -284,7 +284,6 @@ internal sealed class HttpServer : IDisposable
         switch (path)
         {
             case "/mouse/move":
-                MoveDiag.RecordMove(viaLiveSocket: false);
                 InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble());
                 break;
             case "/mouse/button":
@@ -390,7 +389,6 @@ internal sealed class HttpServer : IDisposable
                 Program.Log("Released a held " + b + " mouse button from the dropped live connection.");
             }
             try { ws?.Dispose(); } catch { }
-            MoveDiag.FlushIfIdle();
             Program.Log("Live mouse connection closed.");
         }
     }
@@ -419,7 +417,7 @@ internal sealed class HttpServer : IDisposable
             }
             switch (cmd)
             {
-                case "move": MoveDiag.RecordMove(viaLiveSocket: true); InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;
+                case "move": InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;
                 case "button":
                     var b = r.GetProperty("button").GetString() ?? "left";
                     var down = r.GetProperty("down").GetBoolean();

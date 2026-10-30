@@ -1,3 +1,7 @@
+## v1.7.1
+
+- Updated app icon: the remote now sits on the couch.
+
 ## v1.7.0
 
 - Sets up VLC's web remote by itself: the PC picks the password, writes VLC's settings (or finishes the moment VLC closes), and shares it with the phone at pairing
