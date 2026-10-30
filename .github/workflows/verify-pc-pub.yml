@@ -1,0 +1,76 @@
+name: Verify PUBLIC PC installers install-over (test only, never publishes)
+on:
+  push:
+    branches: ['verify/pc-pub-**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Download public installers
+        shell: pwsh
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          New-Item -ItemType Directory -Force verify | Out-Null
+          gh release download pc-v1.7.0 -R ${{ github.repository }} -p '*.exe' -D verify
+          gh release download pc-v1.7.1 -R ${{ github.repository }} -p '*.exe' -D verify
+          Get-FileHash verify/*.exe | Select Hash,@{n='File';e={Split-Path $_.Path -Leaf}} | Out-String | Tee-Object verify/report.txt
+      - name: Install 1.7.0 then 1.7.1 over it
+        shell: pwsh
+        run: |
+          function Inst($f) {
+            $p = Start-Process (Resolve-Path $f).Path -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL' -PassThru
+            if (-not $p.WaitForExit(180000)) { "installer timeout $f" | Tee-Object -Append verify/report.txt; $p.Kill() }
+            Start-Sleep 6
+            Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+            "installer $f exit code: $($p.ExitCode)" | Tee-Object -Append verify/report.txt
+          }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
+          Inst 'verify/BingeMote-PC-1.7.0.exe'
+          "after 1.7.0: " + (Get-Item "$dir\BingeMote.exe").VersionInfo.FileVersion | Tee-Object -Append verify/report.txt
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
+          Copy-Item "$dir\BingeMote.exe" verify/installed-1.7.0.exe
+          Inst 'verify/BingeMote-PC-1.7.1.exe'
+          "after 1.7.1: " + (Get-Item "$dir\BingeMote.exe").VersionInfo.FileVersion | Tee-Object -Append verify/report.txt
+          Get-ChildItem $dir | Select Name,Length | Out-String | Tee-Object -Append verify/report.txt
+          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
+          Copy-Item "$dir\BingeMote.exe" verify/installed-1.7.1.exe
+          Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Filter *BingeMote* | Select Name | Out-String | Tee-Object -Append verify/report.txt
+      - name: Icon frames of installed exes vs approved ICO
+        shell: pwsh
+        run: |
+          pip install pefile | Out-Null
+          Copy-Item (git show HEAD:helper/Assets/bingemote.ico) $null -ErrorAction SilentlyContinue
+        continue-on-error: true
+      - uses: actions/checkout@v4
+      - name: Compare frames
+        shell: pwsh
+        run: |
+          pip install pefile | Out-Null
+          @'
+          import pefile,struct,hashlib
+          def frames(path):
+              pe=pefile.PE(path); out=[]
+              for r in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+                  if r.id==3:
+                      for e in r.directory.entries:
+                          d=e.directory.entries[0]; out.append(pe.get_data(d.data.struct.OffsetToData,d.data.struct.Size))
+              return out
+          b=open('helper/Assets/bingemote.ico','rb').read()
+          n=struct.unpack('<H',b[4:6])[0]; src=[]
+          for i in range(n):
+              w,h,_,_,_,_,sz,off=struct.unpack('<BBBBHHII',b[6+16*i:22+16*i]); src.append(b[off:off+sz])
+          sh=lambda x:hashlib.sha256(x).hexdigest()
+          S={sh(x) for x in src}
+          for name in ['verify/installed-1.7.0.exe','verify/installed-1.7.1.exe','verify/BingeMote-PC-1.7.1.exe']:
+              R={sh(x) for x in frames(name)}
+              print(name,'frames',len(R),'identical to approved ICO frames:',R==S)
+          '@ | Set-Content cmp.py
+          python cmp.py | Tee-Object -Append verify/report.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BingeMote-pc-pub-verify
+          path: verify/*
+          retention-days: 7
