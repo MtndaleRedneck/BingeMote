@@ -29,12 +29,12 @@ jobs:
           $dir = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
           Inst 'verify/BingeMote-PC-1.7.0.exe'
           "after 1.7.0: " + (Get-Item "$dir\BingeMote.exe").VersionInfo.FileVersion | Tee-Object -Append verify/report.txt
-          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
+          Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
           Copy-Item "$dir\BingeMote.exe" verify/installed-1.7.0.exe
           Inst 'verify/BingeMote-PC-1.7.1.exe'
           "after 1.7.1: " + (Get-Item "$dir\BingeMote.exe").VersionInfo.FileVersion | Tee-Object -Append verify/report.txt
           Get-ChildItem $dir | Select Name,Length | Out-String | Tee-Object -Append verify/report.txt
-          Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
+          Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | ? { $_.DisplayName -like '*BingeMote*' } | Select DisplayName,DisplayVersion,InstallLocation | Out-String | Tee-Object -Append verify/report.txt
           Copy-Item "$dir\BingeMote.exe" verify/installed-1.7.1.exe
           Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Filter *BingeMote* | Select Name | Out-String | Tee-Object -Append verify/report.txt
       - name: Icon frames of installed exes vs approved ICO
