@@ -2,7 +2,7 @@
 
 <img src="docs/logo.png" width="128" alt="BingeMote icon">
 
-A full-featured remote for VLC on your PC.
+A full-featured remote for VLC on your PC. Allows full control of starting and controlling VLC remotely, such as while sitting on the couch. Includes full mouse and keyboard support.
 
 ## Install
 
