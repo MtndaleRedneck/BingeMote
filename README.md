@@ -2,7 +2,7 @@
 
 <img src="docs/logo.png" width="128" alt="BingeMote icon">
 
-A couch remote for VLC on your Windows PC.
+A full-featured remote for VLC on your PC.
 
 ## Install
 
