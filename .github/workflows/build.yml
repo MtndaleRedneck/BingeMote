@@ -78,6 +78,14 @@ jobs:
           $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
 
+      # The raw shipped single-file exe, for the binary-level CI-hook absence proof:
+      # the installer compresses its payload, so only the raw exe can be string-scanned.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-PC-raw
+          path: helper/out/BingeMote.exe
+          if-no-files-found: error
+
       - name: Build the installer (Inno Setup)
         run: |
           choco install innosetup --no-progress -y
