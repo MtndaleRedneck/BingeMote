@@ -8,6 +8,11 @@ name: Encrypted candidate APK (1.7.2)
 # (non-secret metadata) used for custody and decrypt verification.
 on:
   workflow_dispatch:
+  # GitHub only lets a never-run, non-default-branch workflow be dispatched after it
+  # exists on the default branch; the push trigger scoped to THIS dedicated branch is
+  # the one controlled run. No other branch can fire it.
+  push:
+    branches: [verify/encrypted-apk-1.7.2]
 
 permissions:
   contents: read
