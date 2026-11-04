@@ -267,13 +267,23 @@ internal sealed class HttpServer : IDisposable
     {
         if (req.HttpMethod == "GET")
         {
-            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "" }));
+            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "", keepAwake = Program.KeepAwakeEnabled }));
             return;
         }
-        var folder = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("moviesFolder").GetString() ?? "";
-        Program.MoviesFolder = folder.Trim();
+        var root = JsonDocument.Parse(ReadBody(req)).RootElement;
+        if (root.TryGetProperty("moviesFolder", out var mf))
+        {
+            Program.MoviesFolder = (mf.GetString() ?? "").Trim();
+            Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
+        }
+        // His keep-awake switch: off means the laptop follows its normal sleep rules again.
+        if (root.TryGetProperty("keepAwake", out var ka) && (ka.ValueKind == JsonValueKind.True || ka.ValueKind == JsonValueKind.False))
+        {
+            Program.KeepAwakeEnabled = ka.GetBoolean();
+            if (!Program.KeepAwakeEnabled) PowerWake.SyncToVlc(false);
+            Program.Log("Keep-awake while a video is loaded in VLC: " + (Program.KeepAwakeEnabled ? "on" : "off") + ".");
+        }
         Program.SaveConfig();
-        Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
         Reply(res, 200, "{\"ok\":true}");
     }
 
