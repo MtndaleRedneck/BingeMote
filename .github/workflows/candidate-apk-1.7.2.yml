@@ -1,0 +1,64 @@
+name: Encrypted candidate APK (1.7.2)
+
+# Private candidate delivery for owner hardware testing. The release-signed APK is
+# encrypted with age to a recipient whose PRIVATE KEY EXISTS ONLY IN THE BUILDER'S
+# LOCAL PROTECTED FILE - never in this repo, CI secrets, logs, or artifacts. Only
+# ciphertext is uploaded, with 1-day retention. Ciphertext without the key is not a
+# usable candidate APK; the only plaintext-derived output is the SHA-256 digest
+# (non-secret metadata) used for custody and decrypt verification.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Exact candidate product, pinned: compose-1.7.2 @ c577fc9.
+          ref: c577fc90db8ec94cfb45c49588ee635ffc4ea02b
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+
+      - name: Build the release-signed APK (exact candidate commit asserted)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          set -e
+          test "$(git rev-parse HEAD)" = "c577fc90db8ec94cfb45c49588ee635ffc4ea02b"
+          if [ -z "$KEYSTORE_B64" ]; then echo "No signing secrets set"; exit 1; fi
+          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          ./gradlew --no-daemon assembleRelease
+          rm -f "$RUNNER_TEMP/release.keystore"
+          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "VERSION=$V" >> $GITHUB_ENV
+
+      - name: Encrypt BEFORE any upload (age v1.3.2, pinned URL + hash-verified tarball)
+        run: |
+          set -e
+          curl -sSfL -o /tmp/age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/age.tar.gz" | sha256sum -c -
+          tar xzf /tmp/age.tar.gz -C /tmp
+          APK="app/build/outputs/apk/release/app-release.apk"
+          sha256sum "$APK" | tee plaintext.sha256.txt
+          /tmp/age/age -r age1xye28wtx3gmv8y3f2wlv09ha93vaa3n8sa8uej9zxvlfxwpk2qtqwakrk7 -o "BingeMote-Android-$VERSION.apk.age" "$APK"
+          sha256sum "BingeMote-Android-$VERSION.apk.age" | tee ciphertext.sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-Android-candidate-age
+          path: |
+            BingeMote-Android-*.apk.age
+            *.sha256.txt
+          retention-days: 1
+          if-no-files-found: error
