@@ -138,6 +138,10 @@ internal sealed class HttpServer : IDisposable
                 case "/movies/play":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {
+                        // Tapping a movie is a button press: dark screen means this tap only
+                        // wakes, the movie does not launch blind. woke:true tells the phone
+                        // the tap was consumed (no resume question, no navigation).
+                        if (PowerWake.ShouldSwallowDiscrete()) { Reply(res, 200, "{\"ok\":true,\"woke\":true}"); return; }
                         using var doc = JsonDocument.Parse(ReadBody(req));
                         var rr = doc.RootElement;
                         var answer = Movies.Play(
