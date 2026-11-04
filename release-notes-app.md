@@ -1,3 +1,8 @@
+## v1.12.2
+
+- When the PC's screen is off, the first press of any button only brings the screen back - the press itself does nothing. The next press works as usual
+- New setting: keep the PC awake while a video is loaded in VLC (on by default)
+
 ## v1.12.1
 
 - Updated app icon: the remote now sits on the couch.
