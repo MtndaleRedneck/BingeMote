@@ -73,17 +73,23 @@ internal static class PowerWake
 
     private static void ApplyHoldCore()
     {
-        lock (Gate)
+        bool want;
+        lock (Gate) want = _desired;
+        // _applied is the last state the API CONFIRMED, never an assumption: on a failed
+        // call it stays put, so the next 10s sync tick retries (acquire AND release) -
+        // a failed release must not pretend the hold is gone while Windows still holds it.
+        if (want == _applied) return;
+        uint prev;
+        // SYSTEM only, never DISPLAY: the screen may turn off, the PC may not sleep.
+        try { prev = SetThreadExecutionState(want ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS); }
+        catch { prev = 0; }
+        if (prev == 0)
         {
-            if (_desired == _applied) return;
-            // SYSTEM only, never DISPLAY: the screen may turn off, the PC may not sleep.
-            try
-            {
-                var prev = SetThreadExecutionState(_desired ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS);
-                if (prev == 0) Program.Log("SetThreadExecutionState FAILED - the keep-awake hold is not in effect.");
-            }
-            catch { }
-            _applied = _desired;
+            Program.Log("Keep-awake hold " + (want ? "acquire" : "release") +
+                " FAILED (SetThreadExecutionState returned 0); confirmed state stays " +
+                (_applied ? "HELD" : "NOT HELD") + " and the next sync retries.");
+            return;
         }
+        lock (Gate) _applied = want;
     }
 }
