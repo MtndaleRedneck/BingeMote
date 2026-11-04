@@ -21,6 +21,9 @@ internal static class ResumeTracker
     private static string? _password;
     private static int _port = 8080;
     private static bool _pollerStarted;
+    /// <summary>Latest VLC status: a video loaded, playing or paused (the keep-awake
+    /// condition). False whenever VLC is closed, stopped, or its status can't be read.</summary>
+    internal static bool MediaActive { get; private set; }
     private static DateTime _lastSave = DateTime.MinValue;
     private static string? _currentFile;
 
@@ -77,6 +80,15 @@ internal static class ResumeTracker
         }
     }
 
+    /// <summary>If the VLC password became known after startup (paired later), start polling now.</summary>
+    public static void EnsurePollingWithCurrentPassword()
+    {
+        var pw = VlcSetup.EffectivePassword();
+        if (string.IsNullOrEmpty(pw)) return;
+        lock (Gate) _password ??= pw;
+        EnsurePoller();
+    }
+
     private static void EnsurePoller()
     {
         lock (Gate)
@@ -103,15 +115,17 @@ internal static class ResumeTracker
         {
             // VLC closed: forget the "current" file (its last place is already saved).
             lock (Gate) { _currentFile = null; SaveLocked(); }
+            MediaActive = false;
             return;
         }
         var status = await Get(port, pw, "status.json");
-        if (status == null) return;
+        if (status == null) { MediaActive = false; return; }
         using var doc = JsonDocument.Parse(status);
         var root = doc.RootElement;
         if (!root.TryGetProperty("time", out var t) || !root.TryGetProperty("length", out var l)) return;
         var state = root.TryGetProperty("state", out var st) ? st.GetString() ?? "" : "";
-        if (state != "playing" && state != "paused") return;
+        MediaActive = state == "playing" || state == "paused";
+        if (!MediaActive) return;
         var file = await CurrentFile(port, pw);
         if (file == null) return;
         lock (Gate)

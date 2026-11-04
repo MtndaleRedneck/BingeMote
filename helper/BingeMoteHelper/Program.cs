@@ -108,6 +108,10 @@ internal static class Program
     internal static bool Paired => PhonesCount > 0;
     /// <summary>The folder the phone's Movies tab opens; set from this window or from the phone.</summary>
     internal static string? MoviesFolder;
+
+    /// <summary>Keep the PC awake while a video is loaded in VLC and VLC is not minimized
+    /// (screen may still turn off). Default ON (his pick, Nov 3); his disable setting flips it.</summary>
+    internal static bool KeepAwakeEnabled = true;
     internal static string? PairCode;
     /// <summary>The version that last ran; a change means an upgrade just landed.</summary>
     internal static string? LastRunVersion;
@@ -428,6 +432,7 @@ internal static class Program
                     if (!string.IsNullOrWhiteSpace(v)) HomeNetworks.Add(v);
                 }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
+            KeepAwakeEnabled = !doc.RootElement.TryGetProperty("keepAwake", out var ka) || ka.ValueKind != JsonValueKind.False;
             LastRunVersion = doc.RootElement.TryGetProperty("lastRunVersion", out var lv) ? lv.GetString() : null;
             _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
             }
@@ -450,6 +455,7 @@ internal static class Program
             phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),
             pendingVlcPassword = VlcSetup.PendingValue,
             moviesFolder = MoviesFolder,
+            keepAwake = KeepAwakeEnabled,
             declinedNetworks = DeclinedNetworks.ToArray(),
             homeNetworks = HomeNetworks.ToArray(),
             lastRunVersion = LastRunVersion,
@@ -932,6 +938,17 @@ internal sealed class HelperWindow : Form
         var vlcrcRetry = new System.Windows.Forms.Timer { Interval = 15000 };
         vlcrcRetry.Tick += (_, _) => { try { VlcSetup.RetryPending(); } catch { } };
         vlcrcRetry.Start();
+
+        // Every ES_CONTINUOUS hold/release must run on this thread (execution state is
+        // per-thread); PowerWake marshals calls from the listener's pool threads here.
+        PowerWake.BindUi(SynchronizationContext.Current ?? new SynchronizationContext());
+
+        // The movie-session keep-awake: hold the PC (not the display) while a video is
+        // loaded in VLC and VLC is not minimized; drop it the moment that stops being true.
+        var keepAwake = new System.Windows.Forms.Timer { Interval = 10000 };
+        keepAwake.Tick += (_, _) => { try { SyncKeepAwake(); } catch { } };
+        keepAwake.Start();
+        SyncKeepAwake();
 
         // Daily re-check for updates while running.
         var daily = new System.Windows.Forms.Timer { Interval = 24 * 60 * 60 * 1000 };
@@ -1780,6 +1797,34 @@ internal sealed class HelperWindow : Form
         base.SetVisibleCore(value);
     }
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    /// <summary>VLC counts as "open" (his word) while some VLC main window exists and is
+    /// not minimized. A window hidden to the tray has no MainWindowHandle and reads as
+    /// closed - the safe direction, the hold just releases.</summary>
+    private static bool VlcWindowOpen()
+    {
+        foreach (var p in Process.GetProcessesByName("vlc"))
+        {
+            try
+            {
+                var h = p.MainWindowHandle;
+                if (h != IntPtr.Zero && !IsIconic(h)) return true;
+            }
+            catch { }
+        }
+        return false;
+    }
+
+    private void SyncKeepAwake()
+    {
+        if (Program.KeepAwakeEnabled) ResumeTracker.EnsurePollingWithCurrentPassword();
+        var hold = Program.KeepAwakeEnabled && ResumeTracker.MediaActive && VlcWindowOpen();
+        PowerWake.SyncToVlc(hold);
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (e.CloseReason == CloseReason.UserClosing)
@@ -1788,8 +1833,49 @@ internal sealed class HelperWindow : Form
             Hide();
             return;
         }
+        PowerWake.Release();
         _tray.Visible = false;
         base.OnFormClosing(e);
+    }
+
+    // Display on/off/dimmed arrives here; feeds the first-tap-only-wakes rule.
+    private static readonly Guid ConsoleDisplayStateGuid = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
+    private IntPtr _powerNotify;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, ref Guid PowerSettingGuid, uint Flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterPowerSettingNotification(IntPtr Handle);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        var g = ConsoleDisplayStateGuid;
+        _powerNotify = RegisterPowerSettingNotification(Handle, ref g, 0); // DEVICE_NOTIFY_WINDOW_HANDLE
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (_powerNotify != IntPtr.Zero) { UnregisterPowerSettingNotification(_powerNotify); _powerNotify = IntPtr.Zero; }
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_POWERBROADCAST = 0x0218;
+        const int PBT_POWERSETTINGCHANGE = 0x8013;
+        if (m.Msg == WM_POWERBROADCAST && m.WParam.ToInt32() == PBT_POWERSETTINGCHANGE)
+        {
+            // POWERBROADCAST_SETTING: Guid (16 bytes) + DWORD DataLength + data
+            var g = (Guid)Marshal.PtrToStructure(m.LParam, typeof(Guid))!;
+            if (g == ConsoleDisplayStateGuid)
+            {
+                var state = (uint)Marshal.ReadInt32(m.LParam, 20);
+                PowerWake.NoteMonitorState(state);
+            }
+        }
+        base.WndProc(ref m);
     }
 }
 

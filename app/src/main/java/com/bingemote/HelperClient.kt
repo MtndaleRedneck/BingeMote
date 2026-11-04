@@ -382,6 +382,23 @@ object HelperClient {
     fun volumeMute(host: String, port: Int, token: String, mute: Boolean) =
         post(host, port, "/volume/mute", JSONObject().put("mute", mute), token)
 
+    /** True when the PC's screen is dark - or when we can't find out (fail-safe: the tap
+     * becomes wake-only rather than firing blind). False when unpaired, so setup flows
+     * and VLC-direct use without a helper are never gated. */
+    fun screenIsDark(host: String, port: Int, token: String): Boolean {
+        if (token.isBlank()) return false
+        return try {
+            get(host, port, "/screen-state", token, 1500).optBoolean("dark", true)
+        } catch (e: Exception) { true }
+    }
+
+    /** Ask the PC to bring its screen back (its idle timer shut it off). Fire-and-forget;
+     * failure means nothing - the laptop may simply be off. */
+    fun wakeDisplay(host: String, port: Int, token: String) {
+        if (token.isBlank()) return
+        try { post(host, port, "/wake-display", JSONObject(), token, 1500) } catch (_: Exception) {}
+    }
+
     /** A named key: "enter", "backspace", "escape", "space", "tab", "up", "down", "left", "right". */
     fun key(host: String, port: Int, token: String, key: String) =
         post(host, port, "/key", JSONObject().put("key", key), token)

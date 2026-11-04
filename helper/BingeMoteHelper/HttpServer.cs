@@ -71,6 +71,21 @@ internal sealed class HttpServer : IDisposable
                     await HandleWs(ctx);
                     return;
 
+                // Any button on the phone: bring the screen back if its idle timer shut it
+                // off. The playback buttons talk straight to VLC, so the phone pings this.
+                case "/wake-display":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    PowerWake.WakeDisplay();
+                    Reply(res, 200, "{\"ok\":true}");
+                    return;
+
+                // The phone's gate for VLC-direct buttons: dark (or not yet known) means
+                // the first tap only wakes - it must not send the tap's real command.
+                case "/screen-state":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    Reply(res, 200, "{\"dark\":" + (PowerWake.DisplayDarkOrUnknown ? "true" : "false") + "}");
+                    return;
+
                 case "/config":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     HandleConfig(req, res);
@@ -267,18 +282,42 @@ internal sealed class HttpServer : IDisposable
     {
         if (req.HttpMethod == "GET")
         {
-            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "" }));
+            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "", keepAwake = Program.KeepAwakeEnabled }));
             return;
         }
-        var folder = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("moviesFolder").GetString() ?? "";
-        Program.MoviesFolder = folder.Trim();
+        var root = JsonDocument.Parse(ReadBody(req)).RootElement;
+        if (root.TryGetProperty("moviesFolder", out var mf))
+        {
+            Program.MoviesFolder = (mf.GetString() ?? "").Trim();
+            Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
+        }
+        // His keep-awake switch: off means the laptop follows its normal sleep rules again.
+        if (root.TryGetProperty("keepAwake", out var ka) && (ka.ValueKind == JsonValueKind.True || ka.ValueKind == JsonValueKind.False))
+        {
+            Program.KeepAwakeEnabled = ka.GetBoolean();
+            if (!Program.KeepAwakeEnabled) PowerWake.SyncToVlc(false);
+            Program.Log("Keep-awake while a video is loaded in VLC: " + (Program.KeepAwakeEnabled ? "on" : "off") + ".");
+        }
         Program.SaveConfig();
-        Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
         Reply(res, 200, "{\"ok\":true}");
     }
 
     private static void RouteCommand(string path, string body, HttpListenerResponse res)
     {
+        // First press while the screen is dark only wakes it - the tap's action is
+        // swallowed whole, never half-applied. Continuous touchpad/scroll input is
+        // swallowed to the end of the gesture. Reads (volume/get) carry no action and pass.
+        var swallowed = path switch
+        {
+            "/volume/get" => false,
+            "/mouse/move" or "/mouse/scroll" or "/mouse/zoom" => PowerWake.ShouldSwallowContinuous(),
+            _ => PowerWake.ShouldSwallowDiscrete(),
+        };
+        if (swallowed)
+        {
+            Reply(res, 200, "{\"ok\":true,\"woke\":true}");
+            return;
+        }
         using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
         var r = doc.RootElement;
         switch (path)
@@ -417,6 +456,9 @@ internal sealed class HttpServer : IDisposable
                     Program.Log($"Live connection frame gap: expected {lastSeq + 1}, got {n} ({n - lastSeq - 1} lost).");
                 lastSeq = n;
             }
+            // First touch while the screen is dark only wakes it: the frame is consumed
+            // whole (no half-gestures, no leaked clicks) and nothing is injected.
+            if (cmd == "button" ? PowerWake.ShouldSwallowDiscrete() : PowerWake.ShouldSwallowContinuous()) return;
             switch (cmd)
             {
                 case "move": MoveDiag.RecordMove(viaLiveSocket: true); InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;

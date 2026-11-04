@@ -301,7 +301,20 @@ class RemoteState(
         }
     }
 
-    private fun fire(kind: String, block: () -> Unit) { cmds.trySend(Cmd(kind, System.currentTimeMillis(), block)) }
+    private fun fire(kind: String, block: () -> Unit) {
+        // First press while the PC's screen is dark only wakes it - the tap itself does
+        // nothing (his rule, Nov 3). VLC-direct commands are gated here; helper-routed
+        // ones are also swallowed PC-side, so one tap never half-lands. When the screen
+        // state can't be learned, the tap is wake-only too (fail-safe, settled with Tab).
+        val gated: () -> Unit = {
+            if (HelperClient.screenIsDark(store.host, store.helperPort, store.helperToken)) {
+                HelperClient.wakeDisplay(store.host, store.helperPort, store.helperToken)
+            } else {
+                block()
+            }
+        }
+        cmds.trySend(Cmd(kind, System.currentTimeMillis(), gated))
+    }
 
     fun togglePause() {
         if (BuildConfig.DEBUG) Log.i("BMSeek", "togglePause")

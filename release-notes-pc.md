@@ -1,3 +1,13 @@
+## v1.7.2
+
+- While a video is loaded in VLC and VLC isn't minimized, the laptop stays awake - a paused movie no longer lets it fall asleep and lock. The screen can still turn off on its own, and closing the lid, the power button or Start > Sleep still sleeps it
+- When the screen is off, the first press of any button on the phone only brings the screen back - the press itself does nothing, so nothing fires blind. The next press works as usual
+- The keep-awake part can be turned off from the phone
+
+## v1.7.1
+
+- Updated app icon: the remote now sits on the couch.
+
 ## v1.7.0
 
 - Sets up VLC's web remote by itself: the PC picks the password, writes VLC's settings (or finishes the moment VLC closes), and shares it with the phone at pairing
