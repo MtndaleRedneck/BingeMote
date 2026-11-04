@@ -125,6 +125,7 @@ jobs:
           $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
           & helper/shot/BingeMote.exe --window-shot
           $env:BINGEMOTE_OSD_SHOT = "$PWD\helper\osd.png"
+          $env:BINGEMOTE_OSD_SHOT_MUTED = "$PWD\helper\osd-muted.png"
           & helper/shot/BingeMote.exe --osd-shot
 
       - name: Upload the window shot
@@ -136,6 +137,7 @@ jobs:
             helper/window-screen.png
             helper/window-diag.txt
             helper/osd.png
+            helper/osd-muted.png
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
