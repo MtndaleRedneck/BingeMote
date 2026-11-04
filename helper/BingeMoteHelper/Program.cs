@@ -1415,12 +1415,6 @@ internal sealed class HelperWindow : Form
         try { DwmSetWindowAttribute(Handle, 20, ref dark, 4); } catch { /* older Windows */ }
     }
 
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        ApplyTitleBarTheme();
-    }
-
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
@@ -1851,6 +1845,7 @@ internal sealed class HelperWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        ApplyTitleBarTheme();
         var g = ConsoleDisplayStateGuid;
         _powerNotify = RegisterPowerSettingNotification(Handle, ref g, 0); // DEVICE_NOTIFY_WINDOW_HANDLE
     }
