@@ -1,0 +1,50 @@
+name: Distributed-installer payload proof (1.7.2 validation, scratch)
+
+# Proves the DISTRIBUTED installer from run 41793580535 delivers exactly the raw exe
+# that passed the 18-marker absence scan: install it silently on the runner, hash the
+# installed bytes, compare to the raw artifact AND to the expected scanned digest
+# (self-closing: installed == raw == intended source), then scan the installed bytes
+# directly. innoextract cannot read Inno 6.7.1 (caps at 6.3.3), so install IS the
+# extraction. Validation-only; no product change.
+on:
+  push:
+    branches: [verify/installer-scan-1.7.2]
+
+permissions:
+  contents: read
+  actions: read # download this repo's existing artifacts
+
+jobs:
+  installer-payload:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the distributed installer + raw exe from run 41793580535
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 41793580535 --repo MtndaleRedneck/BingeMote -n BingeMote-PC -n BingeMote-PC-raw
+      - name: Install the distributed installer silently (admin runner; app does not auto-launch)
+        run: |
+          & ".\BingeMote-PC\BingeMote-PC-1.7.2.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          if ($LASTEXITCODE -ne 0) { throw "silent install failed: $LASTEXITCODE" }
+      - name: Byte-compare installed vs raw vs expected scanned digest + direct marker scan
+        run: |
+          $expected = '53123250a4671c2236a2596383baf25dd16704ec39803f7de40f7e93c5ab9572'
+          $installed = "$env:LOCALAPPDATA\Programs\BingeMote\BingeMote.exe"
+          if (-not (Test-Path $installed)) { throw "installed exe missing at $installed" }
+          $h1 = (Get-FileHash $installed -Algorithm SHA256).Hash.ToLower()
+          $h2 = (Get-FileHash ".\BingeMote-PC-raw\BingeMote.exe" -Algorithm SHA256).Hash.ToLower()
+          "installed sha256: $h1"
+          "raw sha256:      $h2"
+          "expected:        $expected"
+          if ($h2 -ne $expected) { throw "raw artifact is NOT the intended scanned exe" }
+          if ($h1 -ne $h2) { throw "DISTRIBUTED INSTALLER PAYLOAD != scanned raw exe" }
+          "PAYLOAD MATCH: installed == raw == intended scanned source"
+          python scripts/scan-shipping-markers.py $installed
+          if ($LASTEXITCODE -ne 0) { throw "marker scan failed on installed bytes" }
+      - name: Uninstall (leave the runner clean)
+        if: always()
+        run: |
+          $u = "$env:LOCALAPPDATA\Programs\BingeMote\unins000.exe"
+          if (Test-Path $u) { & $u /VERYSILENT /SUPPRESSMSGBOXES /NORESTART }
