@@ -149,12 +149,14 @@ internal static class Program
             return 0;
         }
 
-        // CI-only: render the volume pop-up (SPEC's 60% example) to a PNG and exit.
+        // CI-only: render the volume pop-up (SPEC's 60% example, normal + muted) and exit.
         if (args.Contains("--osd-shot"))
         {
             var osdPath = Environment.GetEnvironmentVariable("BINGEMOTE_OSD_SHOT")
                 ?? Path.Combine(DataDir, "osd.png");
-            VolumeOsd.CaptureShot(osdPath, 60);
+            var osdMutedPath = Environment.GetEnvironmentVariable("BINGEMOTE_OSD_SHOT_MUTED")
+                ?? Path.Combine(DataDir, "osd-muted.png");
+            VolumeOsd.CaptureShot(osdPath, osdMutedPath, 60);
             return 0;
         }
 #endif

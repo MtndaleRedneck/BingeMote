@@ -375,13 +375,22 @@ internal sealed class HttpServer : IDisposable
             case "/volume/set":
             {
                 var vol = Math.Clamp(r.GetProperty("volume").GetInt32(), 0, 100);
-                try { VolumeControl.Set(vol); }
+                try
+                {
+                    VolumeControl.Set(vol);
+                    var (v, m) = VolumeControl.Get();
+                    VolumeOsd.Show(v, m);
+                }
                 catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
-                VolumeOsd.Show(vol);
                 break;
             }
             case "/volume/mute":
-                try { VolumeControl.SetMute(r.GetProperty("mute").GetBoolean()); }
+                try
+                {
+                    VolumeControl.SetMute(r.GetProperty("mute").GetBoolean());
+                    var (v, m) = VolumeControl.Get();
+                    VolumeOsd.Show(v, m);
+                }
                 catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
                 break;
             case "/key":
