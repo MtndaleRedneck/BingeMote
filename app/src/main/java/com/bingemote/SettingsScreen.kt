@@ -105,7 +105,7 @@ fun SettingsScreen(
                     try { HelperClient.setKeepAwake(host, port, token, it) } catch (_: Exception) { }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
             Text("Screen can still turn off. Minimized VLC sleeps normally.", color = Muted, fontSize = 11.3.sp)
         }
         Spacer(Modifier.height(14.dp))
@@ -357,7 +357,7 @@ fun SettingToggle(checked: Boolean) {
     }
 }
 
-/** Zephyr's Connected Sources row, ported: the orange pill (112x48, 14dp corner, same
+/** Zephyr's Connected Sources row, ported: the orange pill (128x55, 15dp corner, same
  * gradient/text as Zephyr's VLC PC pill) is the tappable entry point; the value sits
  * right-aligned next to it. */
 @Composable
@@ -366,11 +366,11 @@ fun SourceRow(label: String, value: String, hapticsOn: Boolean, onLabelClick: ()
         PressTile(
             onTap = onLabelClick,
             background = PillGradient,
-            modifier = Modifier.width(112.dp).height((143f / 3f).dp),
-            corner = (40f / 3f).dp,
+            modifier = Modifier.width(128.dp).height(55.dp),
+            corner = 15.dp,
             hapticsOn = hapticsOn,
         ) {
-            Text(label, color = OnOrange, fontSize = 14.3.sp, fontWeight = FontWeight.SemiBold)
+            Text(label, color = OnOrange, fontSize = 16.4.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.width(12.dp))
         Text(

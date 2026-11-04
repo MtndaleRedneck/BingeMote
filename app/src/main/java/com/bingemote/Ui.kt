@@ -171,6 +171,8 @@ fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean? = null, startPad: 
     val view = LocalView.current
     val haptics = hapticsOn ?: Store(LocalContext.current).haptics
     // Sinks on press like every other button (the settings gear read as inert without it).
+    // Tab: the dark tile must stay visible while held, so only the icon dims (~15%
+    // toward the tile); the tile itself keeps its released color and just scales.
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val sink by animateFloatAsState(if (isPressed) 0.94f else 1f, tween(if (isPressed) 90 else 120), label = "sink")
@@ -189,8 +191,7 @@ fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean? = null, startPad: 
             },
         contentAlignment = Alignment.Center,
     ) {
-        content()
-        if (dim > 0f) Box(Modifier.matchParentSize().graphicsLayer { alpha = dim }.background(Color.Black))
+        Box(Modifier.graphicsLayer { alpha = 1f - dim }, content = content)
     }
 }
 
