@@ -74,7 +74,7 @@ fun PressTile(
     // when the screen recomposes (status polls, volume changes).
     val tap by rememberUpdatedState(onTap)
     val repeat by rememberUpdatedState(onHoldRepeat)
-    val buzz by rememberUpdatedState(hapticsOn ?: SettingsStore(LocalContext.current).haptics)
+    val buzz by rememberUpdatedState(hapticsOn ?: Store(LocalContext.current).haptics)
 
     Box(
         modifier
@@ -169,7 +169,7 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
 @Composable
 fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean? = null, startPad: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
-    val haptics = hapticsOn ?: SettingsStore(LocalContext.current).haptics
+    val haptics = hapticsOn ?: Store(LocalContext.current).haptics
     // Sinks on press like every other button (the settings gear read as inert without it).
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
