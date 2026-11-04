@@ -1,0 +1,38 @@
+name: OSD desktop e2e (1.7.2 validation, scratch)
+
+# Validation-only workflow on its own scratch branch - never a shipping artifact.
+on:
+  push:
+    branches: [verify/osd-desktop-1.7.2]
+
+permissions:
+  contents: read
+
+jobs:
+  osd-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: "Helper unit tests (guard: product unchanged)"
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
+      - name: Install VLC and ffmpeg
+        run: choco install vlc ffmpeg --no-progress -y
+      - name: Run OSD desktop e2e (real compositing + click-through + audio inventory)
+        run: pwsh scripts/osd-desktop-e2e.ps1
+      - name: Shipping-exe hook absence scan (extended marker list)
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out-shipping
+          python scripts/scan-shipping-markers.py helper/out-shipping/BingeMote.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osd-desktop-proof
+          path: |
+            osd-live.png
+            osd-live-muted.png
+            osd-probe.log
+            audio-inventory.txt
+          if-no-files-found: warn

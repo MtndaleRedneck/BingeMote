@@ -159,6 +159,16 @@ internal static class Program
             VolumeOsd.CaptureShot(osdPath, osdMutedPath, 60);
             return 0;
         }
+
+        // CI-only: show the real volume pop-up on the desktop for a few seconds so an
+        // outer screenshot proves real compositing over fullscreen apps and a probe can
+        // prove click-through, then exit. Seconds default 12; muted when the env says 1.
+        if (args.Contains("--osd-show"))
+        {
+            var showSeconds = int.TryParse(Environment.GetEnvironmentVariable("BINGEMOTE_OSD_SHOW_SECONDS"), out var ss) ? ss : 12;
+            var showMuted = Environment.GetEnvironmentVariable("BINGEMOTE_OSD_SHOW_MUTED") == "1";
+            return VolumeOsd.ShowForCapture(60, showMuted, showSeconds);
+        }
 #endif
 
         // The watchdog relaunches us with --ensure-running every few minutes: stay silent when

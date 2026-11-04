@@ -68,6 +68,28 @@ internal static class VolumeOsd
         OsdWindow.RenderPng(path, percent, muted: false);
         OsdWindow.RenderPng(mutedPath, percent, muted: true);
     }
+
+    /// <summary>CI-only (never in shipped builds): show the REAL pop-up window on the
+    /// desktop for a while, so an outer screenshot can prove actual desktop compositing
+    /// (over fullscreen VLC) and a probe window can prove click-through - the bitmap
+    /// proofs alone show neither. Re-asserts the value faster than the 1.5s auto-hide
+    /// so it never fades, and pumps messages itself (no message loop needed from the
+    /// caller). Returns when the time is up.</summary>
+    public static int ShowForCapture(int percent, bool muted, int seconds)
+    {
+        ApplicationConfiguration.Initialize();
+        using var w = new OsdWindow();
+        w.ShowValue(Math.Clamp(percent, 0, 100), muted);
+        var until = Environment.TickCount64 + Math.Max(1, seconds) * 1000L;
+        while (Environment.TickCount64 < until)
+        {
+            Application.DoEvents();
+            Thread.Sleep(500); // well under the 1.5s hide timer
+            w.ShowValue(Math.Clamp(percent, 0, 100), muted);
+        }
+        w.HideImmediately();
+        return 0;
+    }
 #endif
 
     private sealed class OsdWindow : Form
