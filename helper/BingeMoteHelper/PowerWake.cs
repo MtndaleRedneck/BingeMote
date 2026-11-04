@@ -129,11 +129,23 @@ internal static class PowerWake
         ApplyHold();
     }
 
+    private static bool _noUiLogged;
+
     private static void ApplyHold()
     {
         SynchronizationContext? ui;
         lock (Gate) ui = _ui;
-        if (ui != null && SynchronizationContext.Current != ui)
+        if (ui == null)
+        {
+            // No owning thread: the hold never engages (fail-safe). Applying here would
+            // set per-thread state on a pool thread that can never release it reliably.
+            lock (Gate)
+            {
+                if (!_noUiLogged) { _noUiLogged = true; Program.Log("Keep-awake hold disabled: no UI thread bound."); }
+            }
+            return;
+        }
+        if (SynchronizationContext.Current != ui)
         {
             ui.Post(_ => ApplyHoldCore(), null);
             return;
@@ -143,12 +155,23 @@ internal static class PowerWake
 
     private static void ApplyHoldCore()
     {
-        lock (Gate)
+        bool want;
+        lock (Gate) want = _desired;
+        // _applied is the last state the API CONFIRMED, never an assumption: on a failed
+        // call it stays put, so the next 10s sync tick retries (acquire AND release) -
+        // a failed release must not pretend the hold is gone while Windows still holds it.
+        if (want == _applied) return;
+        uint prev;
+        // SYSTEM only, never DISPLAY: the screen may turn off, the PC may not sleep.
+        try { prev = SetThreadExecutionState(want ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS); }
+        catch { prev = 0; }
+        if (prev == 0)
         {
-            if (_desired == _applied) return;
-            // SYSTEM only, never DISPLAY: the screen may turn off, the PC may not sleep.
-            try { SetThreadExecutionState(_desired ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS); } catch { }
-            _applied = _desired;
+            Program.Log("Keep-awake hold " + (want ? "acquire" : "release") +
+                " FAILED (SetThreadExecutionState returned 0); confirmed state stays " +
+                (_applied ? "HELD" : "NOT HELD") + " and the next sync retries.");
+            return;
         }
+        lock (Gate) _applied = want;
     }
 }

@@ -110,7 +110,8 @@ internal static class Program
     internal static string? MoviesFolder;
 
     /// <summary>Keep the PC awake while a video is loaded in VLC and VLC is not minimized
-    /// (screen may still turn off). Default ON (his pick, Nov 3); his disable setting flips it.</summary>
+    /// (screen may still turn off). He asked for the behavior plus a setting to disable it
+    /// (Nov 3); the ON default is the delegated design choice. A saved choice is kept.</summary>
     internal static bool KeepAwakeEnabled = true;
     internal static string? PairCode;
     /// <summary>The version that last ran; a change means an upgrade just landed.</summary>
@@ -941,7 +942,11 @@ internal sealed class HelperWindow : Form
 
         // Every ES_CONTINUOUS hold/release must run on this thread (execution state is
         // per-thread); PowerWake marshals calls from the listener's pool threads here.
-        PowerWake.BindUi(SynchronizationContext.Current ?? new SynchronizationContext());
+        // No context means the hold stays disabled - a plain SynchronizationContext would
+        // post to pool threads and the per-thread hold could latch.
+        var uiSync = SynchronizationContext.Current;
+        if (uiSync != null) PowerWake.BindUi(uiSync);
+        else Program.Log("No UI synchronization context at startup: the keep-awake hold is disabled (fail-safe).");
 
         // The movie-session keep-awake: hold the PC (not the display) while a video is
         // loaded in VLC and VLC is not minimized; drop it the moment that stops being true.
@@ -1800,22 +1805,32 @@ internal sealed class HelperWindow : Form
     /// closed - the safe direction, the hold just releases.</summary>
     private static bool VlcWindowOpen()
     {
-        foreach (var p in Process.GetProcessesByName("vlc"))
+        var procs = Process.GetProcessesByName("vlc");
+        try
         {
-            try
-            {
-                var h = p.MainWindowHandle;
-                if (h != IntPtr.Zero && !IsIconic(h)) return true;
-            }
-            catch { }
+            // Zero: VLC is closed. More than one: which instance holds the polled media
+            // is unproven - release (safe direction) rather than hold on a guess.
+            if (procs.Length != 1) return false;
+            var h = procs[0].MainWindowHandle;
+            return h != IntPtr.Zero && !IsIconic(h);
         }
-        return false;
+        catch { return false; }
+        finally { foreach (var p in procs) p.Dispose(); }
     }
+
+    private bool _lastKeepAwakeHold;
 
     private void SyncKeepAwake()
     {
         if (Program.KeepAwakeEnabled) ResumeTracker.EnsurePollingWithCurrentPassword();
         var hold = Program.KeepAwakeEnabled && ResumeTracker.MediaActive && VlcWindowOpen();
+        if (hold != _lastKeepAwakeHold)
+        {
+            // The laptop validation reads these lines: when the hold is on, the PC must
+            // not sleep; when it drops, the normal sleep timer applies.
+            Program.Log("Keep-awake hold " + (hold ? "ON (video loaded in VLC, window visible)" : "OFF (back to normal sleep rules)") + ".");
+            _lastKeepAwakeHold = hold;
+        }
         PowerWake.SyncToVlc(hold);
     }
 
