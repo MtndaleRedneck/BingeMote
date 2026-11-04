@@ -403,6 +403,28 @@ try {
     $r = Invoke-Helper '/config' '{"volumeOsd":true}' $token
     $r = Invoke-HelperGet '/config' $token
     Assert (($r.body | ConvertFrom-Json).volumeOsd -eq $true) "config reflects the volume pop-up setting back on"
+
+    # Keep-awake key + the first-press gate endpoints (1.7.2): GET /config must carry
+    # keepAwake for the settings read-back; the phone's gate reads /screen-state and
+    # calls /wake-display; both endpoints must refuse a bad token.
+    Assert (($r.body | ConvertFrom-Json).PSObject.Properties.Name -contains 'keepAwake') "config carries the keep-awake key"
+    $r = Invoke-Helper '/config' '{"keepAwake":false}' $token
+    Assert ($r.code -eq 200) "keep-awake setting written from the phone"
+    $r = Invoke-HelperGet '/config' $token
+    Assert (($r.body | ConvertFrom-Json).keepAwake -eq $false) "config reflects keep-awake off"
+    $r = Invoke-Helper '/config' '{"keepAwake":true}' $token
+    $r = Invoke-HelperGet '/config' $token
+    Assert (($r.body | ConvertFrom-Json).keepAwake -eq $true) "config reflects keep-awake back on"
+    $r = Invoke-HelperGet '/screen-state' $token
+    Assert ($r.code -eq 200) "screen-state answers"
+    $dark = ($r.body | ConvertFrom-Json).dark
+    Assert (($dark -eq $true) -or ($dark -eq $false)) "screen-state reports a boolean dark"
+    $r = Invoke-HelperGet '/screen-state' 'deadbeef'
+    Assert ($r.code -eq 401) "screen-state refuses a bad token"
+    $r = Invoke-Helper '/wake-display' '{}' $token
+    Assert ($r.code -eq 200) "wake-display answers"
+    $r = Invoke-Helper '/wake-display' '{}' 'deadbeef'
+    Assert ($r.code -eq 401) "wake-display refuses a bad token"
     $r = Invoke-HelperGet '/movies/list?path=' $token
     Assert ($r.code -eq 200) "list the movies folder root"
     $list = $r.body | ConvertFrom-Json

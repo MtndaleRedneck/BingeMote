@@ -1,0 +1,65 @@
+name: Validate 1.7.2
+
+# Test-only validation of the composed 1.7.2 candidate (compose-1.7.2 @ c577fc9).
+# Runs on pushes to THIS scratch branch only; never publishes; changes no product code.
+on:
+  push:
+    branches: [verify/validation-1.7.2]
+
+permissions:
+  contents: read
+
+jobs:
+  android-wake-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+      - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/validate-1.7.2.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-android
+          path: validation/*
+          if-no-files-found: error
+
+  helper-keepawake-osd:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Helper unit tests (incl. OSD window style proof)
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
+      - name: Publish helper exe (CI-only pairing/keep-awake hooks)
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK" -o helper/out
+      - name: Install VLC
+        run: choco install vlc --no-progress -y
+      - name: Build the installer (the e2e starts with install/uninstall)
+        run: |
+          choco install innosetup --no-progress -y
+          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: Helper runtime e2e (pairing, endpoints, config keys, wake/screen-state)
+        run: pwsh -File scripts/helper-e2e.ps1
+      - name: Keep-awake with real VLC (playing/paused/minimized/restored/stopped)
+        run: pwsh -File scripts/keepawake-e2e.ps1
