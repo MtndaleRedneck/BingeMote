@@ -392,6 +392,17 @@ try {
     $folderJson = '{"moviesFolder":"' + ($movies -replace '\\','/') + '"}'
     $r = Invoke-Helper '/config' $folderJson $token
     Assert ($r.code -eq 200) "movies folder set from the phone"
+
+    # Volume pop-up setting: reported by GET, written by POST, defaults on.
+    $r = Invoke-HelperGet '/config' $token
+    Assert (($r.body | ConvertFrom-Json).volumeOsd -eq $true) "config reports the volume pop-up setting (default on)"
+    $r = Invoke-Helper '/config' '{"volumeOsd":false}' $token
+    Assert ($r.code -eq 200) "volume pop-up setting written from the phone"
+    $r = Invoke-HelperGet '/config' $token
+    Assert (($r.body | ConvertFrom-Json).volumeOsd -eq $false) "config reflects the volume pop-up setting off"
+    $r = Invoke-Helper '/config' '{"volumeOsd":true}' $token
+    $r = Invoke-HelperGet '/config' $token
+    Assert (($r.body | ConvertFrom-Json).volumeOsd -eq $true) "config reflects the volume pop-up setting back on"
     $r = Invoke-HelperGet '/movies/list?path=' $token
     Assert ($r.code -eq 200) "list the movies folder root"
     $list = $r.body | ConvertFrom-Json

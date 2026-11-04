@@ -295,12 +295,12 @@ internal sealed class HttpServer : IDisposable
         Program.PhonesChanged?.Invoke();
     }
 
-    /// <summary>GET returns the shared settings; POST writes them. Only the movies folder so far.</summary>
+    /// <summary>GET returns the shared settings; POST writes them: movies folder, keep-awake, volume pop-up.</summary>
     private static void HandleConfig(HttpListenerRequest req, HttpListenerResponse res)
     {
         if (req.HttpMethod == "GET")
         {
-            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "", keepAwake = Program.KeepAwakeEnabled }));
+            Reply(res, 200, JsonSerializer.Serialize(new { moviesFolder = Program.MoviesFolder ?? "", keepAwake = Program.KeepAwakeEnabled, volumeOsd = Program.VolumeOsdEnabled }));
             return;
         }
         var root = JsonDocument.Parse(ReadBody(req)).RootElement;
@@ -315,6 +315,13 @@ internal sealed class HttpServer : IDisposable
             Program.KeepAwakeEnabled = ka.GetBoolean();
             if (!Program.KeepAwakeEnabled) PowerWake.SyncToVlc(false);
             Program.Log("Keep-awake while a video is loaded in VLC: " + (Program.KeepAwakeEnabled ? "on" : "off") + ".");
+        }
+        // His "Show volume on PC screen" switch: off hides the pop-up immediately.
+        if (root.TryGetProperty("volumeOsd", out var vo) && (vo.ValueKind == JsonValueKind.True || vo.ValueKind == JsonValueKind.False))
+        {
+            Program.VolumeOsdEnabled = vo.GetBoolean();
+            if (!Program.VolumeOsdEnabled) VolumeOsd.HideNow();
+            Program.Log("Volume pop-up on the PC screen: " + (Program.VolumeOsdEnabled ? "on" : "off") + ".");
         }
         Program.SaveConfig();
         Reply(res, 200, "{\"ok\":true}");
@@ -366,9 +373,13 @@ internal sealed class HttpServer : IDisposable
                 return;
             }
             case "/volume/set":
-                try { VolumeControl.Set(r.GetProperty("volume").GetInt32()); }
+            {
+                var vol = Math.Clamp(r.GetProperty("volume").GetInt32(), 0, 100);
+                try { VolumeControl.Set(vol); }
                 catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
+                VolumeOsd.Show(vol);
                 break;
+            }
             case "/volume/mute":
                 try { VolumeControl.SetMute(r.GetProperty("mute").GetBoolean()); }
                 catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }

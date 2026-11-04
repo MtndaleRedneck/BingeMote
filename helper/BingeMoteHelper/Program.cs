@@ -113,6 +113,9 @@ internal static class Program
     /// (screen may still turn off). He asked for the behavior plus a setting to disable it
     /// (Nov 3); the ON default is the delegated design choice. A saved choice is kept.</summary>
     internal static bool KeepAwakeEnabled = true;
+
+    /// <summary>"Show volume on PC screen" - the small pop-up on each phone volume change. Default ON.</summary>
+    internal static bool VolumeOsdEnabled = true;
     internal static string? PairCode;
     /// <summary>The version that last ran; a change means an upgrade just landed.</summary>
     internal static string? LastRunVersion;
@@ -143,6 +146,15 @@ internal static class Program
             var shotPath = Environment.GetEnvironmentVariable("BINGEMOTE_WINDOW_SHOT")
                 ?? Path.Combine(DataDir, "window.png");
             shot.ShowOffscreenAndCapture(shotPath);
+            return 0;
+        }
+
+        // CI-only: render the volume pop-up (SPEC's 60% example) to a PNG and exit.
+        if (args.Contains("--osd-shot"))
+        {
+            var osdPath = Environment.GetEnvironmentVariable("BINGEMOTE_OSD_SHOT")
+                ?? Path.Combine(DataDir, "osd.png");
+            VolumeOsd.CaptureShot(osdPath, 60);
             return 0;
         }
 #endif
@@ -434,6 +446,7 @@ internal static class Program
                 }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
             KeepAwakeEnabled = !doc.RootElement.TryGetProperty("keepAwake", out var ka) || ka.ValueKind != JsonValueKind.False;
+            VolumeOsdEnabled = !doc.RootElement.TryGetProperty("volumeOsd", out var vo) || vo.ValueKind != JsonValueKind.False;
             LastRunVersion = doc.RootElement.TryGetProperty("lastRunVersion", out var lv) ? lv.GetString() : null;
             _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
             }
@@ -457,6 +470,7 @@ internal static class Program
             pendingVlcPassword = VlcSetup.PendingValue,
             moviesFolder = MoviesFolder,
             keepAwake = KeepAwakeEnabled,
+            volumeOsd = VolumeOsdEnabled,
             declinedNetworks = DeclinedNetworks.ToArray(),
             homeNetworks = HomeNetworks.ToArray(),
             lastRunVersion = LastRunVersion,
@@ -945,7 +959,7 @@ internal sealed class HelperWindow : Form
         // No context means the hold stays disabled - a plain SynchronizationContext would
         // post to pool threads and the per-thread hold could latch.
         var uiSync = SynchronizationContext.Current;
-        if (uiSync != null) PowerWake.BindUi(uiSync);
+        if (uiSync != null) { PowerWake.BindUi(uiSync); VolumeOsd.BindUi(uiSync); }
         else Program.Log("No UI synchronization context at startup: the keep-awake hold is disabled (fail-safe).");
 
         // The movie-session keep-awake: hold the PC (not the display) while a video is
