@@ -306,6 +306,89 @@ adb shell am start -n com.bingemote/.MainActivity --es screen main >/dev/null
 sleep 8
 dismiss_anr
 adb exec-out screencap -p > screenshots/main-tall.png
+
+# --- Prototype review captures (verify branches only): 420dpi settings redesign,
+# pressed states, and a short press recording. 420dpi per the design owner's ask. ---
+adb shell wm size 1080x2310
+adb shell wm density 420
+adb shell settings put system font_scale 1.0
+shoot "settings" "-420"
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen settings --es pcdemo true >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > "screenshots/settings-top-420.png"
+adb shell input swipe 540 1553 540 518 400
+sleep 2
+adb exec-out screencap -p > "screenshots/settings-power-420.png"
+adb shell input swipe 540 1553 540 518 400
+sleep 2
+adb exec-out screencap -p > "screenshots/settings-feel-420.png"
+
+center_of() { # $1 text or content-desc, prints "X Y" center of the first match
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 1
+  local B
+  B=$(adb shell cat /sdcard/ui.xml | tr '<' '\n' | grep "$1" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ')
+  [ -z "$B" ] && return 1
+  echo "$B" | awk '{printf "%d %d", ($1+$3)/2, ($2+$4)/2}'
+}
+
+# Pressed-state stills on the main screen (demo status so Play is live).
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es demostatus true >/dev/null
+sleep 8
+dismiss_anr
+PLAY=$(center_of '"Play"') || PLAY=$(center_of '"Pause"')
+GEAR=$(center_of 'content-desc="Settings"')
+echo "play=$PLAY gear=$GEAR" > screenshots/proto-coords.txt
+if [ -n "${PLAY:-}" ]; then
+  adb shell input swipe $PLAY $PLAY 2500 &
+  HOLD=$!
+  sleep 1
+  adb exec-out screencap -p > screenshots/play-pressed-420.png
+  wait $HOLD || true
+fi
+if [ -n "${GEAR:-}" ]; then
+  adb shell input swipe $GEAR $GEAR 2500 &
+  HOLD=$!
+  sleep 1
+  adb exec-out screencap -p > screenshots/gear-pressed-420.png
+  wait $HOLD || true
+fi
+
+# Short recording: play sink, gear sink into settings, both toggles flipped.
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es demostatus true --es pcdemo true >/dev/null
+sleep 8
+dismiss_anr
+PLAY=$(center_of '"Play"') || PLAY=$(center_of '"Pause"')
+GEAR=$(center_of 'content-desc="Settings"')
+adb shell screenrecord --time-limit 45 /sdcard/proto.mp4 &
+REC=$!
+sleep 2
+[ -n "${PLAY:-}" ] && adb shell input swipe $PLAY $PLAY 1200
+sleep 2
+[ -n "${GEAR:-}" ] && adb shell input tap $GEAR
+sleep 3
+VIB=$(center_of '"Vibrate on press"')
+if [ -n "${VIB:-}" ]; then
+  adb shell input tap $VIB
+  sleep 2
+  adb shell input tap $VIB
+fi
+sleep 2
+adb shell input swipe 540 1553 540 900 400
+sleep 2
+LOCK=$(center_of '"Controls on lock screen"')
+if [ -n "${LOCK:-}" ]; then
+  adb shell input tap $LOCK
+  sleep 2
+  adb shell input tap $LOCK
+fi
+wait $REC || true
+adb pull /sdcard/proto.mp4 screenshots/proto-press.mp4 >/dev/null 2>&1 || true
+adb shell rm /sdcard/proto.mp4 || true
+
 adb shell wm size reset
 adb shell wm density reset
 adb logcat -d | grep BMLayout > screenshots/layout-metrics.txt || true

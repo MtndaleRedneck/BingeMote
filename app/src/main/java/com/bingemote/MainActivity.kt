@@ -59,6 +59,8 @@ class MainActivity : ComponentActivity() {
         store = Store(this)
         // Screenshot rig: pick the cancel-circle treatment for the cancel captures.
         if (BuildConfig.DEBUG) intent.getStringExtra("cancelstyle")?.let { store.cancelStyle = it }
+        // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
+        if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
         // Screenshot-rig only: render one status-notice review scenario per capture.
