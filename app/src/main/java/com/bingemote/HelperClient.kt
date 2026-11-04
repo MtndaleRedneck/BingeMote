@@ -199,6 +199,10 @@ object HelperClient {
     fun setKeepAwake(host: String, port: Int, token: String, keepAwake: Boolean) =
         post(host, port, "/config", JSONObject().put("keepAwake", keepAwake), token)
 
+    /** Toggle the PC volume overlay. Helpers without it ignore the unknown config key. */
+    fun setVolumeOsd(host: String, port: Int, token: String, on: Boolean) =
+        post(host, port, "/config", JSONObject().put("volumeOsd", on), token)
+
     /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
     fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =
         post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)
