@@ -83,16 +83,26 @@ class SettingsReadbackTest {
             device.wait(Until.findObject(By.text("Keep PC awake while watching")), 20000))
     }
 
-    private fun toggleState(device: UiDevice, label: String): Boolean? {
-        // The settings column scrolls; the volume toggle can start off-screen.
+    private fun toggleRow(device: UiDevice, label: String): androidx.test.uiautomator.UiObject2 {
+        // The label is a plain Text and is NEVER checkable; the ROW carries the Switch
+        // semantics (Modifier.toggleable, Role.Switch - v4 read the label itself, which
+        // made leg A's false-expectation vacuous and leg B fail honestly). Association
+        // is structural: the row is the PARENT of the exact label node. If the row is
+        // missing or not checkable the layout changed - REFUSE loudly, never default.
         repeat(6) {
             val o = device.findObject(By.text(label))
-            if (o != null) return o.isChecked
+            if (o != null) {
+                val row = o.parent
+                if (row != null && row.isCheckable) return row
+                throw AssertionError("toggle row for '$label' missing or not checkable")
+            }
             device.executeShellCommand("input swipe 540 1500 540 700 300")
             Thread.sleep(600)
         }
-        return null
+        throw AssertionError("toggle '$label' not found")
     }
+
+    private fun toggleState(device: UiDevice, label: String): Boolean = toggleRow(device, label).isChecked
 
     private fun awaitToggle(device: UiDevice, label: String, want: Boolean, ms: Long) {
         val end = System.currentTimeMillis() + ms
@@ -112,6 +122,10 @@ class SettingsReadbackTest {
         }
         try {
             seed(ctx, helper.port, keepAwake = true, osd = true)
+            // Non-vacuous baseline: the same-process prefs singleton the app reads must
+            // hold the seeded ON values, or a later OFF/ON assertion proves nothing.
+            assertTrue("seeded keepAwake baseline not observable", Store(ctx).keepAwake)
+            assertTrue("seeded volumeOsd baseline not observable", Store(ctx).showVolumeOnPc)
             openSettings(device)
             Thread.sleep(settleMs)
             awaitToggle(device, "Keep PC awake while watching", wantKeepAwake, 15000)
