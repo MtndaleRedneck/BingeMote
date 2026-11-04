@@ -338,30 +338,34 @@ center_of() { # $1 text or content-desc, prints "X Y" center of the first match
 
 # Pressed-state stills on the main screen (demo status so Play is live).
 adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --es demostatus true >/dev/null
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez demostatus true >/dev/null
 sleep 8
 dismiss_anr
 PLAY=$(center_of '"Play"') || PLAY=$(center_of '"Pause"')
 GEAR=$(center_of 'content-desc="Settings"')
 echo "play=$PLAY gear=$GEAR" > screenshots/proto-coords.txt
 if [ -n "${PLAY:-}" ]; then
-  adb shell input swipe $PLAY $PLAY 2500 &
+  adb shell input swipe $PLAY $PLAY 9000 &
   HOLD=$!
-  sleep 1
-  adb exec-out screencap -p > screenshots/play-pressed-420.png
+  for i in 1 2 3 4; do
+    sleep 1.6
+    adb exec-out screencap -p > screenshots/play-pressed-420-$i.png
+  done
   wait $HOLD || true
 fi
 if [ -n "${GEAR:-}" ]; then
-  adb shell input swipe $GEAR $GEAR 2500 &
+  adb shell input swipe $GEAR $GEAR 5000 &
   HOLD=$!
-  sleep 1
-  adb exec-out screencap -p > screenshots/gear-pressed-420.png
+  for i in 1 2; do
+    sleep 1.6
+    adb exec-out screencap -p > screenshots/gear-pressed-420-$i.png
+  done
   wait $HOLD || true
 fi
 
 # Short recording: play sink, gear sink into settings, both toggles flipped.
 adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --es demostatus true --es pcdemo true >/dev/null
+adb shell am start -n com.bingemote/.MainActivity --es screen main --ez demostatus true --es pcdemo true >/dev/null
 sleep 8
 dismiss_anr
 PLAY=$(center_of '"Play"') || PLAY=$(center_of '"Pause"')
