@@ -62,6 +62,20 @@ internal sealed class HttpServer : IDisposable
                     HandlePair(req, res);
                     return;
 
+#if KEEPAWAKE_HOOK
+                // CI-only (never in shipped builds, same gate as the pairing hook): force
+                // the keep-awake hold on/off so the e2e can watch it in powercfg /requests.
+                // Runs on a listener pool thread on purpose - that exercises the
+                // pool-to-UI-thread marshal the hold depends on.
+                case "/ci/hold":
+                {
+                    var on = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("on").GetBoolean();
+                    PowerWake.SyncToVlc(on);
+                    Reply(res, 200, "{\"ok\":true}");
+                    return;
+                }
+#endif
+
                 // The live mouse connection (item 5): one always-open WebSocket for
                 // move/scroll/zoom/button frames, fire-and-forget. Same port, same token
                 // check; an old phone simply never opens it and stays on HTTP.
