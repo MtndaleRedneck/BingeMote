@@ -77,7 +77,12 @@ internal static class PowerWake
         {
             if (_desired == _applied) return;
             // SYSTEM only, never DISPLAY: the screen may turn off, the PC may not sleep.
-            try { SetThreadExecutionState(_desired ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS); } catch { }
+            try
+            {
+                var prev = SetThreadExecutionState(_desired ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS);
+                if (prev == 0) Program.Log("SetThreadExecutionState FAILED - the keep-awake hold is not in effect.");
+            }
+            catch { }
             _applied = _desired;
         }
     }

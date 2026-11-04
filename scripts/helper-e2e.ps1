@@ -142,6 +142,24 @@ try {
     Assert ($r.code -eq 200) "key"
     $r = Invoke-Helper '/type' '{"text":"hi"}' $token
     Assert ($r.code -eq 200) "type"
+    # Keep-awake hold, watched at the OS level: engaging it must add a SYSTEM power
+    # request for the helper (visible in powercfg /requests), releasing must remove it.
+    # The endpoint runs on a listener pool thread, so this also proves the
+    # pool-to-UI-thread marshal (execution state is per-thread; a pool-thread hold would
+    # not survive reliably). The helper's own 10s timer can re-sync, so check promptly.
+    $reqBefore = (powercfg /requests) -join "`n"
+    Assert ($reqBefore -notmatch 'BingeMote') "no helper power request before the hold: $reqBefore"
+    $r = Invoke-Helper '/ci/hold' '{"on":true}' $null
+    Assert ($r.code -eq 200) "ci/hold on"
+    Start-Sleep -Seconds 2
+    $reqOn = (powercfg /requests) -join "`n"
+    Assert ($reqOn -match 'BingeMote') "hold shows a SYSTEM request: $reqOn"
+    $r = Invoke-Helper '/ci/hold' '{"on":false}' $null
+    Assert ($r.code -eq 200) "ci/hold off"
+    Start-Sleep -Seconds 2
+    $reqOff = (powercfg /requests) -join "`n"
+    Assert ($reqOff -notmatch 'BingeMote') "released hold clears the SYSTEM request: $reqOff"
+
     $r = Invoke-Helper '/nope' '{}' $token
     Assert ($r.code -eq 404) "unknown path is 404"
 

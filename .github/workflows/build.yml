@@ -98,7 +98,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Publish helper exe (with the CI-only pairing hook)
-        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK" -o helper/out
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK" -o helper/out
 
       # The movies test launches real VLC; install it as its own step so a mirror hiccup is visible.
       - name: Install VLC (for the movies launch test)
