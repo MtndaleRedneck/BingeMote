@@ -3,8 +3,12 @@ package com.bingemote
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -20,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -50,7 +55,9 @@ fun PressTile(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
     onHoldRepeat: (() -> Unit)? = null,
-    hapticsOn: Boolean = true,
+    // Defaults to the saved Vibrate setting, so a caller that forgets to pass it
+    // still goes quiet when the user turned haptics off.
+    hapticsOn: Boolean? = null,
     background: Brush = CardGradient,
     corner: Dp = 18.dp,
     desc: String? = null,
@@ -58,14 +65,16 @@ fun PressTile(
     content: @Composable BoxScope.(pressed: Boolean) -> Unit,
 ) {
     var pressed by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "sink")
+    // Press feedback per the UI spec: sink to 0.94 and dim ~15%, 90 ms down / 120 ms up.
+    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, tween(if (pressed) 90 else 120), label = "sink")
+    val dim by animateFloatAsState(if (pressed) 0.15f else 0f, tween(if (pressed) 90 else 120), label = "dim")
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     // Read the newest callbacks at fire time, so the gesture never restarts mid-press
     // when the screen recomposes (status polls, volume changes).
     val tap by rememberUpdatedState(onTap)
     val repeat by rememberUpdatedState(onHoldRepeat)
-    val buzz by rememberUpdatedState(hapticsOn)
+    val buzz by rememberUpdatedState(hapticsOn ?: Store(LocalContext.current).haptics)
 
     Box(
         modifier
@@ -108,7 +117,10 @@ fun PressTile(
                 }
             },
         contentAlignment = Alignment.Center,
-    ) { content(pressed) }
+    ) {
+        content(pressed)
+        if (dim > 0f) Box(Modifier.matchParentSize().graphicsLayer { alpha = dim }.background(Color.Black))
+    }
 }
 
 /** Header: logo + app name + centered status pill + Settings. The pill centers in the
@@ -155,22 +167,32 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
 }
 
 @Composable
-fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
+fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean? = null, startPad: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
+    val haptics = hapticsOn ?: Store(LocalContext.current).haptics
+    // Sinks on press like every other button (the settings gear read as inert without it).
+    // Tab: the dark tile must stay visible while held, so only the icon dims (~15%
+    // toward the tile); the tile itself keeps its released color and just scales.
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val sink by animateFloatAsState(if (isPressed) 0.94f else 1f, tween(if (isPressed) 90 else 120), label = "sink")
+    val dim by animateFloatAsState(if (isPressed) 0.15f else 0f, tween(if (isPressed) 90 else 120), label = "dim")
     // startPad defaults to 0 so back buttons line up with the 16dp screen edge like every card.
     Box(
         Modifier
             .padding(start = startPad)
             .size(40.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .graphicsLayer { scaleX = sink; scaleY = sink }
+            .clip(RoundedCornerShape((32f / 3f).dp))
             .background(HeaderBtn)
-            .clickable(role = Role.Button) {
-                tapHaptic(view, hapticsOn)
+            .clickable(interactionSource = interactionSource, indication = LocalIndication.current, role = Role.Button) {
+                tapHaptic(view, haptics)
                 onClick()
             },
         contentAlignment = Alignment.Center,
-        content = content,
-    )
+    ) {
+        Box(Modifier.graphicsLayer { alpha = 1f - dim }, content = content)
+    }
 }
 
 @Composable

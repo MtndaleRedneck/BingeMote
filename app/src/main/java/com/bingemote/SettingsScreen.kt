@@ -18,8 +18,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,7 +38,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.launch
+
+// UI spec tokens for the settings components (mockup colors at 3x density).
+private val OnOrange = Color(0xFF281300)
+private val ToggleOnTrack = Color(0xFFF87C02)
+private val ThumbDark = Color(0xFF1B1B1D)
+private val ThumbRim = Color(0xFFE5882B)
+private val PillGradient = Brush.verticalGradient(listOf(Color(0xFFFC9E2C), Color(0xFFFF9700)))
+private val SegmentOnGradient = Brush.verticalGradient(listOf(Color(0xFFFB9F30), Color(0xFFF87C02)))
 
 @Composable
 fun SettingsScreen(
@@ -49,9 +64,31 @@ fun SettingsScreen(
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var lockControls by remember { mutableStateOf(store.lockScreenControls) }
+    var showVolumeOnPc by remember { mutableStateOf(store.showVolumeOnPc) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
     var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
+    var keepAwake by remember { mutableStateOf(store.keepAwake) }
+    val configScope = rememberCoroutineScope()
+    // The helper owns the real state: read it back so both toggles reflect the PC, not
+    // just the phone's memory. Helpers without a key leave it absent and the phone-local
+    // value stands (best-effort, same as the POST).
+    LaunchedEffect(Unit) {
+        val host = store.host; val port = store.helperPort; val token = store.helperToken
+        configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val cfg = HelperClient.getConfig(host, port, token)
+                if (cfg.has("volumeOsd")) {
+                    val on = cfg.getBoolean("volumeOsd")
+                    showVolumeOnPc = on; store.showVolumeOnPc = on
+                }
+                if (cfg.has("keepAwake")) {
+                    val on = cfg.getBoolean("keepAwake")
+                    keepAwake = on; store.keepAwake = on
+                }
+            } catch (_: Exception) { }
+        }
+    }
     if (pickingMovies) {
         FolderPickerScreen(
             remote,
@@ -65,20 +102,30 @@ fun SettingsScreen(
         Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            HeaderIconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
+            HeaderIconButton(onBack, haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
-            Text("Settings", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Settings", color = TextC, fontSize = 21.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(18.dp))
         BackHandler { onBack() }
 
+        // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry
+        // point (pill + name only; the old "Pair with a different PC" text line is gone).
         SettingsSection("Your PC") {
-            SettingsRow("PC", store.pcName.ifBlank { store.host })
-            Spacer(Modifier.height(6.dp))
-            // No side padding, so the label lines up with "PC" above it (TextButton adds 12dp by default).
-            TextButton(onClick = onRepair, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp)) {
-                Text("Pair with a different PC", color = Orange, fontWeight = FontWeight.SemiBold)
+            SourceRow("PC", store.pcName.ifBlank { store.host }, hapticsOn = haptics, onLabelClick = onRepair)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsSection("PC power") {
+            ToggleRow("Keep PC awake while watching", keepAwake, haptics) {
+                keepAwake = it; store.keepAwake = it
+                val host = store.host; val port = store.helperPort; val token = store.helperToken
+                configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try { HelperClient.setKeepAwake(host, port, token, it) } catch (_: Exception) { }
+                }
             }
+            Spacer(Modifier.height(4.dp))
+            Text("Screen can still turn off. Minimized VLC sleeps normally.", color = Muted, fontSize = 11.3.sp)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -99,6 +146,7 @@ fun SettingsScreen(
                 background = OrangeGradient,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 corner = 14.dp,
+                hapticsOn = haptics,
             ) {
                 Text(
                     "Browse PC folders",
@@ -115,6 +163,7 @@ fun SettingsScreen(
             ChoiceRow(
                 options = listOf(5 to "5s", 10 to "10s", 15 to "15s", 30 to "30s"),
                 selected = mainSkip,
+                haptics = haptics,
             ) { mainSkip = it; store.skipMainSec = it }
             Spacer(Modifier.height(14.dp))
             Text("Secondary skip buttons", color = TextC, fontSize = 14.sp)
@@ -122,36 +171,42 @@ fun SettingsScreen(
             ChoiceRow(
                 options = listOf(15 to "15s", 30 to "30s", 60 to "1m", 120 to "2m", 180 to "3m"),
                 selected = secondarySkip,
+                haptics = haptics,
             ) { secondarySkip = it; store.skipSecondarySec = it }
         }
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Feel") {
-            ToggleRow("Vibrate on press", haptics) { haptics = it; store.haptics = it }
+            ToggleRow("Vibrate on press", haptics, haptics, buzzWhenEnabling = true) { haptics = it; store.haptics = it }
+            Spacer(Modifier.height(9.dp))
+            ToggleRow("Controls on lock screen", lockControls, haptics) {
+                lockControls = it; store.lockScreenControls = it
+                MediaControls.sync(context, store)
+            }
+            Spacer(Modifier.height(9.dp))
+            ToggleRow("Show volume on PC screen", showVolumeOnPc, haptics) {
+                showVolumeOnPc = it; store.showVolumeOnPc = it
+                val host = store.host; val port = store.helperPort; val token = store.helperToken
+                configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try { HelperClient.setVolumeOsd(host, port, token, it) } catch (_: Exception) { }
+                }
+            }
             Spacer(Modifier.height(14.dp))
-            Text("Button flash", color = TextC, fontSize = 14.sp)
+            Text("Button flash", color = TextC, fontSize = 15.sp)
             Spacer(Modifier.height(10.dp))
             ChoiceRow(
-                options = listOf(0 to "Skip rings only", 1 to "All buttons"),
+                options = listOf(1 to "All buttons", 0 to "Skip rings only"),
                 selected = flash,
+                haptics = haptics,
             ) { flash = it; store.buttonFlash = it }
             Spacer(Modifier.height(14.dp))
-            Text("Cancel button style", color = TextC, fontSize = 14.sp)
+            Text("Cancel button style", color = TextC, fontSize = 15.sp)
             Spacer(Modifier.height(10.dp))
             ChoiceRow(
                 options = listOf(0 to "Fills in", 1 to "Ring only"),
                 selected = if (cancelStyle == "ring") 1 else 0,
+                haptics = haptics,
             ) { cancelStyle = if (it == 1) "ring" else "fills"; store.cancelStyle = cancelStyle }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        SettingsSection("Lock screen") {
-            ToggleRow("Controls on lock screen", lockControls) {
-                lockControls = it; store.lockScreenControls = it
-                MediaControls.sync(context, store)
-            }
-            Spacer(Modifier.height(8.dp))
-            Text("Play, pause, and skip from your lock screen while a movie plays.", color = Muted, fontSize = 13.sp)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -198,6 +253,7 @@ fun SettingsScreen(
             var result by remember { mutableStateOf("") }
             val scope = rememberCoroutineScope()
             PressTile(
+                hapticsOn = haptics,
                 onTap = {
                     if (checking) return@PressTile
                     checking = true
@@ -250,10 +306,10 @@ fun fieldColors() = OutlinedTextFieldDefaults.colors(
 @Composable
 fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardGradient).padding(16.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CardGradient).padding(16.dp),
     ) {
         if (title.isNotEmpty()) {
-            Text(title, color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TextC, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
         }
         content()
@@ -269,39 +325,99 @@ fun SettingsRow(label: String, value: String) {
 }
 
 @Composable
-fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+fun ToggleRow(label: String, checked: Boolean, haptics: Boolean, buzzWhenEnabling: Boolean = false, onChange: (Boolean) -> Unit) {
+    val view = LocalView.current
     // The whole row toggles, not just the switch.
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange)
+            .heightIn(min = 32.dp)
+            .toggleable(
+                value = checked,
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onValueChange = { next ->
+                    // UI spec: other toggles tick only while vibrate is ON; the Vibrate
+                    // toggle ticks once when turned ON and stays silent when turned OFF.
+                    tapHaptic(view, if (buzzWhenEnabling) next else haptics)
+                    onChange(next)
+                },
+            )
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = TextC, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Switch(
-            checked = checked, onCheckedChange = null,
-            colors = SwitchDefaults.colors(checkedTrackColor = Orange, uncheckedTrackColor = TrackGray),
+        Text(label, color = TextC, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        SettingToggle(checked)
+    }
+}
+
+/** The shared settings toggle: one 190ms ease-in-out color fade and thumb slide on every
+ * settings switch, so all of them feel identical. Sizes per the UI spec (mockup px / 3):
+ * track 52x32dp radius 16dp, thumb 22.67dp with a 4.67dp inset, 1px rim when ON. */
+@Composable
+fun SettingToggle(checked: Boolean) {
+    val track by animateColorAsState(if (checked) ToggleOnTrack else TrackGray, tween(190, easing = FastOutSlowInEasing), label = "track")
+    val thumbPad by animateDpAsState(if (checked) (52f - 68f / 3f - 14f / 3f).dp else (14f / 3f).dp, tween(190, easing = FastOutSlowInEasing), label = "thumb")
+    Box(
+        Modifier
+            .width(52.dp)
+            .height(32.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(track),
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = thumbPad)
+                .size((68f / 3f).dp)
+                .clip(CircleShape)
+                .background(if (checked) ThumbDark else TextC)
+                .then(if (checked) Modifier.border((1f / 3f).dp, ThumbRim, CircleShape) else Modifier),
+        )
+    }
+}
+
+/** Zephyr's Connected Sources row, ported: the orange pill (128x55, 15dp corner, same
+ * gradient/text as Zephyr's VLC PC pill) is the tappable entry point; the value sits
+ * right-aligned next to it. */
+@Composable
+fun SourceRow(label: String, value: String, hapticsOn: Boolean, onLabelClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        PressTile(
+            onTap = onLabelClick,
+            background = PillGradient,
+            modifier = Modifier.width(128.dp).height(55.dp),
+            corner = 15.dp,
+            hapticsOn = hapticsOn,
+        ) {
+            Text(label, color = OnOrange, fontSize = 16.4.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            value,
+            color = TextC,
+            fontSize = 14.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            modifier = Modifier.weight(1f),
         )
     }
 }
 
 @Composable
-fun ChoiceRow(options: List<Pair<Int, String>>, selected: Int, onPick: (Int) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+fun ChoiceRow(options: List<Pair<Int, String>>, selected: Int, haptics: Boolean, onPick: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.3.dp)) {
         options.forEach { (value, label) ->
             val isSel = value == selected
             PressTile(
                 onTap = { onPick(value) },
-                background = if (isSel) OrangeGradient else CardGradient,
-                modifier = Modifier.weight(1f).height(44.dp),
-                corner = 14.dp,
+                background = if (isSel) SegmentOnGradient else CardGradient,
+                modifier = Modifier.weight(1f).height((130f / 3f).dp),
+                corner = (40f / 3f).dp,
+                hapticsOn = haptics,
             ) {
                 Text(
                     label,
-                    color = if (isSel) androidx.compose.ui.graphics.Color(0xFF1B1B1E) else Muted,
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    color = if (isSel) OnOrange else Muted,
+                    fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                 )
             }
         }
