@@ -70,9 +70,9 @@ fun SettingsScreen(
     var pickingMovies by remember { mutableStateOf(false) }
     var keepAwake by remember { mutableStateOf(store.keepAwake) }
     val configScope = rememberCoroutineScope()
-    // The helper owns the real state: read it back so the toggle reflects the PC, not
-    // just the phone's memory. Helpers without volumeOsd leave the key absent and the
-    // phone-local value stands (best-effort, same as the POST).
+    // The helper owns the real state: read it back so both toggles reflect the PC, not
+    // just the phone's memory. Helpers without a key leave it absent and the phone-local
+    // value stands (best-effort, same as the POST).
     LaunchedEffect(Unit) {
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -81,6 +81,10 @@ fun SettingsScreen(
                 if (cfg.has("volumeOsd")) {
                     val on = cfg.getBoolean("volumeOsd")
                     showVolumeOnPc = on; store.showVolumeOnPc = on
+                }
+                if (cfg.has("keepAwake")) {
+                    val on = cfg.getBoolean("keepAwake")
+                    keepAwake = on; store.keepAwake = on
                 }
             } catch (_: Exception) { }
         }
