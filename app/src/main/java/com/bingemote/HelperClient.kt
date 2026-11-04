@@ -199,6 +199,10 @@ object HelperClient {
     fun setKeepAwake(host: String, port: Int, token: String, keepAwake: Boolean) =
         post(host, port, "/config", JSONObject().put("keepAwake", keepAwake), token)
 
+    /** Read the shared settings back. Helpers without volumeOsd leave the key absent. */
+    fun getConfig(host: String, port: Int, token: String): JSONObject =
+        get(host, port, "/config", token)
+
     /** Toggle the PC volume overlay. Helpers without it ignore the unknown config key. */
     fun setVolumeOsd(host: String, port: Int, token: String, on: Boolean) =
         post(host, port, "/config", JSONObject().put("volumeOsd", on), token)
