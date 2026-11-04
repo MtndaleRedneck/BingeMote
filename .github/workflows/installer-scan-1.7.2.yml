@@ -26,12 +26,17 @@ jobs:
           gh run download 41793580535 --repo MtndaleRedneck/BingeMote -n BingeMote-PC -n BingeMote-PC-raw
       - name: Install the distributed installer silently (admin runner; app does not auto-launch)
         run: |
-          # GUI-subsystem exe: pwsh "&" does not wait for it, leaving $LASTEXITCODE null.
-          # Start-Process -Wait -PassThru gives the real exit code.
+          # GUI-subsystem exe: pwsh "&" does not wait for it (null $LASTEXITCODE), and
+          # Start-Process -Wait hangs: the Inno script relaunches the tray app on SILENT
+          # installs ([Run] skipifnotsilent runasoriginaluser in helper/installer.iss), and
+          # -Wait follows the process tree. Wait on the parent handle with a bound instead.
           $exe = ".\BingeMote-PC\BingeMote-PC-1.7.2.exe"
           if (-not (Test-Path $exe)) { throw "installer missing at $exe" }
-          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+          if (-not $p.WaitForExit(240000)) { throw "installer did not exit within 240s" }
           "installer exit code: $($p.ExitCode)"
+          # Stop the auto-relaunched tray app so verify/uninstall see quiescent bytes.
+          Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
           if ($p.ExitCode -ne 0) { throw "silent install failed: $($p.ExitCode)" }
       - name: Byte-compare installed vs raw vs expected scanned digest + direct marker scan
         run: |
@@ -52,8 +57,14 @@ jobs:
         if: always()
         run: |
           $u = "$env:LOCALAPPDATA\Programs\BingeMote\unins000.exe"
+          Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
           if (Test-Path $u) {
-            $q = Start-Process -FilePath $u -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-            "uninstall exit code: $($q.ExitCode)"
-            if ($q.ExitCode -ne 0) { throw "uninstall failed: $($q.ExitCode)" }
+            # unins000.exe respawns itself from temp and the parent exits early, so wait on
+            # the parent handle with a bound, then confirm the install dir is gone.
+            $q = Start-Process -FilePath $u -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+            [void]$q.WaitForExit(240000)
+            "uninstall parent exit code: $($q.ExitCode)"
+            $dir = "$env:LOCALAPPDATA\Programs\BingeMote"
+            for ($i = 0; $i -lt 24 -and (Test-Path "$dir\BingeMote.exe"); $i++) { Start-Sleep -Seconds 5 }
+            if (Test-Path "$dir\BingeMote.exe") { "WARNING: install dir still present after uninstall" } else { "uninstall removed install dir" }
           }
