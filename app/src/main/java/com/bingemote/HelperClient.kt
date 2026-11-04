@@ -193,6 +193,12 @@ object HelperClient {
         return if (resp.optBoolean("ok")) null else resp.optString("reason").ifBlank { null }
     }
 
+    /** Keep-awake preference for the PC. Best-effort: helpers that don't know the key
+     * leave the movies folder untouched (a missing moviesFolder fails before anything is
+     * written) and ignore it. */
+    fun setKeepAwake(host: String, port: Int, token: String, keepAwake: Boolean) =
+        post(host, port, "/config", JSONObject().put("keepAwake", keepAwake), token)
+
     /** Save the movies folder on the PC (the helper owns it; both sides can set it). */
     fun setMoviesFolder(host: String, port: Int, token: String, folder: String) =
         post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)

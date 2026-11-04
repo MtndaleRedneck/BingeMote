@@ -65,6 +65,14 @@ class Store(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()
 
+    /** Keep the PC awake while a video is loaded in VLC (screen may still turn off;
+     * minimized VLC sleeps normally). Default ON for new installs; a saved choice is kept.
+     * The PC behavior itself ships with the reviewed helper change; helpers that don't
+     * know the setting ignore it. */
+    var keepAwake: Boolean
+        get() = prefs.getBoolean("keepAwake", true)
+        set(v) = prefs.edit().putBoolean("keepAwake", v).apply()
+
     /** Play/pause/skip + position on the lock screen while a movie plays. Off by default. */
     var lockScreenControls: Boolean
         get() = prefs.getBoolean("lockScreenControls", false)

@@ -3,8 +3,11 @@ package com.bingemote
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -157,14 +160,19 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
 @Composable
 fun HeaderIconButton(onClick: () -> Unit, hapticsOn: Boolean = true, startPad: Dp = 0.dp, content: @Composable BoxScope.() -> Unit) {
     val view = LocalView.current
+    // Sinks on press like every other button (the settings gear read as inert without it).
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val sink by animateFloatAsState(if (isPressed) 0.95f else 1f, label = "sink")
     // startPad defaults to 0 so back buttons line up with the 16dp screen edge like every card.
     Box(
         Modifier
             .padding(start = startPad)
             .size(40.dp)
+            .graphicsLayer { scaleX = sink; scaleY = sink }
             .clip(RoundedCornerShape(12.dp))
             .background(HeaderBtn)
-            .clickable(role = Role.Button) {
+            .clickable(interactionSource = interactionSource, indication = LocalIndication.current, role = Role.Button) {
                 tapHaptic(view, hapticsOn)
                 onClick()
             },
