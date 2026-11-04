@@ -26,8 +26,13 @@ jobs:
           gh run download 41793580535 --repo MtndaleRedneck/BingeMote -n BingeMote-PC -n BingeMote-PC-raw
       - name: Install the distributed installer silently (admin runner; app does not auto-launch)
         run: |
-          & ".\BingeMote-PC\BingeMote-PC-1.7.2.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-          if ($LASTEXITCODE -ne 0) { throw "silent install failed: $LASTEXITCODE" }
+          # GUI-subsystem exe: pwsh "&" does not wait for it, leaving $LASTEXITCODE null.
+          # Start-Process -Wait -PassThru gives the real exit code.
+          $exe = ".\BingeMote-PC\BingeMote-PC-1.7.2.exe"
+          if (-not (Test-Path $exe)) { throw "installer missing at $exe" }
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw "silent install failed: $($p.ExitCode)" }
       - name: Byte-compare installed vs raw vs expected scanned digest + direct marker scan
         run: |
           $expected = '53123250a4671c2236a2596383baf25dd16704ec39803f7de40f7e93c5ab9572'
@@ -47,4 +52,8 @@ jobs:
         if: always()
         run: |
           $u = "$env:LOCALAPPDATA\Programs\BingeMote\unins000.exe"
-          if (Test-Path $u) { & $u /VERYSILENT /SUPPRESSMSGBOXES /NORESTART }
+          if (Test-Path $u) {
+            $q = Start-Process -FilePath $u -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+            "uninstall exit code: $($q.ExitCode)"
+            if ($q.ExitCode -ne 0) { throw "uninstall failed: $($q.ExitCode)" }
+          }
