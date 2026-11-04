@@ -53,80 +53,86 @@ class SettingsReadbackTest {
         fun close() { open = false; try { socket.close() } catch (_: Exception) {} }
     }
 
-    @Test
-    fun togglesReflectHelperConfigAndKeepLocalWhenKeysAbsent() {
+    private fun seed(ctx: android.content.Context, port: Int, keepAwake: Boolean, osd: Boolean) {
+        val s = Store(ctx)
+        s.host = "127.0.0.1"; s.helperPort = port
+        s.helperToken = "readback-token"; s.vlcPassword = "pw"
+        s.pcName = "TESTPC"; s.setupDone = true
+        s.keepAwake = keepAwake; s.showVolumeOnPc = osd
+        // Flush the async apply() queue before the APP process (not this test
+        // process) reads the same prefs; secrets need their own sync commit.
+        assertTrue(ctx.getSharedPreferences("settings", 0)
+            .edit().putBoolean("seedCommitted", true).commit())
+        val secrets = androidx.security.crypto.EncryptedSharedPreferences.create(
+            ctx, "secrets",
+            androidx.security.crypto.MasterKey.Builder(ctx)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
+        assertTrue(secrets.edit().putString("helperToken", "readback-token")
+            .putString("vlcPassword", "pw").commit())
+    }
+
+    private fun openSettings(device: UiDevice) {
+        // The workflow force-stops the app BEFORE each read-back run: the cold start
+        // re-reads the seeded prefs from disk and re-fires the settings fetch. Never
+        // kill the process from inside a test - the instrumentation runs IN the app's
+        // process, so a force-stop is a runner suicide (v2's "Process crashed").
+        device.executeShellCommand("am start -n com.bingemote/.MainActivity --es screen settings")
+        assertNotNull("settings screen did not open",
+            device.wait(Until.findObject(By.text("Keep PC awake while watching")), 20000))
+    }
+
+    private fun toggleState(device: UiDevice, label: String): Boolean? {
+        // The settings column scrolls; the volume toggle can start off-screen.
+        repeat(6) {
+            val o = device.findObject(By.text(label))
+            if (o != null) return o.isChecked
+            device.executeShellCommand("input swipe 540 1500 540 700 300")
+            Thread.sleep(600)
+        }
+        return null
+    }
+
+    private fun awaitToggle(device: UiDevice, label: String, want: Boolean, ms: Long) {
+        val end = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < end) {
+            if (toggleState(device, label) == want) return
+            Thread.sleep(300)
+        }
+        assertEquals("toggle '$label'", want, toggleState(device, label))
+    }
+
+    private fun readBack(mockConfig: String, wantKeepAwake: Boolean, wantOsd: Boolean, settleMs: Long) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(instrumentation)
         val ctx = instrumentation.targetContext
-
-        val configBody = java.util.concurrent.atomic.AtomicReference("{\"moviesFolder\":\"\",\"keepAwake\":false,\"volumeOsd\":false}")
         val helper = MockHttp { req ->
-            if (req.startsWith("GET /config")) configBody.get() else "{\"ok\":true}"
+            if (req.startsWith("GET /config")) mockConfig else "{\"ok\":true}"
         }
         try {
-            fun seed(keepAwake: Boolean, osd: Boolean) {
-                val s = Store(ctx)
-                s.host = "127.0.0.1"; s.helperPort = helper.port
-                s.helperToken = "readback-token"; s.vlcPassword = "pw"
-                s.pcName = "TESTPC"; s.setupDone = true
-                s.keepAwake = keepAwake; s.showVolumeOnPc = osd
-                // Flush the async apply() queue before the APP process (not this test
-                // process) reads the same prefs; secrets need their own sync commit.
-                assertTrue(ctx.getSharedPreferences("settings", 0)
-                    .edit().putBoolean("seedCommitted", true).commit())
-                val secrets = androidx.security.crypto.EncryptedSharedPreferences.create(
-                    ctx, "secrets",
-                    androidx.security.crypto.MasterKey.Builder(ctx)
-                        .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-                assertTrue(secrets.edit().putString("helperToken", "readback-token")
-                    .putString("vlcPassword", "pw").commit())
-            }
-
-            fun openSettings() {
-                device.executeShellCommand("am force-stop com.bingemote")
-                device.executeShellCommand("am start -n com.bingemote/.MainActivity --es screen settings")
-                assertNotNull("settings screen did not open",
-                    device.wait(Until.findObject(By.text("Keep PC awake while watching")), 20000))
-            }
-
-            fun toggleState(label: String): Boolean? {
-                // The settings column scrolls; the volume toggle can start off-screen.
-                repeat(6) {
-                    val o = device.findObject(By.text(label))
-                    if (o != null) return o.isChecked
-                    device.executeShellCommand("input swipe 540 1500 540 700 300")
-                    Thread.sleep(600)
-                }
-                return null
-            }
-
-            fun awaitToggle(label: String, want: Boolean, ms: Long) {
-                val end = System.currentTimeMillis() + ms
-                while (System.currentTimeMillis() < end) {
-                    if (toggleState(label) == want) return
-                    Thread.sleep(300)
-                }
-                assertEquals("toggle '$label'", want, toggleState(label))
-            }
-
-            // A) helper reports both OFF: phone-local ON must flip to the helper's state.
-            seed(keepAwake = true, osd = true)
-            openSettings()
-            awaitToggle("Keep PC awake while watching", false, 15000)
-            awaitToggle("Show volume on PC screen", false, 8000)
-
-            // B) an older helper whose config lacks the keys: phone-local values stand.
-            configBody.set("{\"moviesFolder\":\"\"}")
-            seed(keepAwake = true, osd = true)
-            openSettings()
-            Thread.sleep(3000) // give any erroneous overwrite room to land
-            awaitToggle("Keep PC awake while watching", true, 8000)
-            awaitToggle("Show volume on PC screen", true, 8000)
+            seed(ctx, helper.port, keepAwake = true, osd = true)
+            openSettings(device)
+            Thread.sleep(settleMs)
+            awaitToggle(device, "Keep PC awake while watching", wantKeepAwake, 15000)
+            awaitToggle(device, "Show volume on PC screen", wantOsd, 8000)
         } finally {
             helper.close()
-            device.executeShellCommand("am force-stop com.bingemote")
         }
     }
+
+    /** Helper reports both OFF: the phone-local ON must flip to the helper's state. */
+    @Test
+    fun helperStateWinsOverPhoneLocal() {
+        readBack("{\"moviesFolder\":\"\",\"keepAwake\":false,\"volumeOsd\":false}",
+            wantKeepAwake = false, wantOsd = false, settleMs = 0)
+    }
+
+    /** An older helper whose config lacks the keys: the phone-local values stand. */
+    @Test
+    fun absentKeysKeepPhoneLocal() {
+        readBack("{\"moviesFolder\":\"\"}",
+            wantKeepAwake = true, wantOsd = true, settleMs = 3000)
+    }
+
 }

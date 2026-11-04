@@ -76,27 +76,14 @@ public class Win32W {
 }
 '@
 
-# --- a small real media file to play: 20s 8kHz sine WAV (same generator as vlc-e2e) ---
-$wav = Join-Path $env:TEMP 'bingemote-keepawake.wav'
-$bw = New-Object IO.BinaryWriter([IO.File]::Create($wav))
-$sampleRate = 8000; $seconds = 20; $dataSize = $sampleRate * $seconds * 2
-$bw.Write([Text.Encoding]::ASCII.GetBytes('RIFF'))
-$bw.Write([int](36 + $dataSize))
-$bw.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt '))
-$bw.Write([int]16); $bw.Write([int16]1); $bw.Write([int16]1)
-$bw.Write([int]$sampleRate); $bw.Write([int]($sampleRate * 2)); $bw.Write([int16]2); $bw.Write([int16]16)
-$bw.Write([Text.Encoding]::ASCII.GetBytes('data')); $bw.Write([int]$dataSize)
-for ($i = 0; $i -lt $sampleRate * $seconds; $i++) {
-    $bw.Write([int16]([Math]::Sin(2 * [Math]::PI * 440 * $i / $sampleRate) * 12000))
-}
-$bw.Close()
+# --- a small real VIDEO to play (the helper only plays video extensions) ---
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg --no-progress -y }
 
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process vlc -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 $env:BINGEMOTE_PAIR_CODE = '555555'
 $p = Start-Process $exe -PassThru
-$vlc = $null
 try {
     $up = $false
     foreach ($i in 1..40) {
@@ -110,11 +97,11 @@ try {
     $token = $paired.token
     $pw = "keepawake-pw"
 
-    # Movies folder with the wav, then hand the password over exactly like a phone's
-    # setup does, so the helper's VLC poller can read status.
+    # Movies folder, then hand the password over exactly like a phone's setup does,
+    # so the helper's VLC poller can read status.
     $movies = Join-Path $env:TEMP 'bingemote-ka-movies'
     New-Item -ItemType Directory -Force $movies | Out-Null
-    Copy-Item $wav (Join-Path $movies 'clip.wav')
+    Get-ChildItem $movies | Remove-Item -Force
     $folderJson = '{"moviesFolder":"' + ($movies -replace '\\','/') + '"}'
     $r = Invoke-Helper '/config' $folderJson $token
     Assert ($r.code -eq 200) "movies folder set"
@@ -123,22 +110,19 @@ try {
     $r = Invoke-Helper '/vlc/setup' ('{"password":"' + $pw + '"}') $token
     Assert ($r.code -eq 200) "VLC password handed over"
 
-    # Real windowed VLC (default Qt interface, exactly how the helper launches movies),
-    # looping the wav so the media stays loaded across the sync ticks.
-    $vlcArgs = @(
-        (Join-Path $movies 'clip.wav'),
-        '--loop',
-        '--extraintf=http', '--http-host=127.0.0.1', '--http-port=8080', "--http-password=$pw",
-        '--one-instance', '--qt-continue=0'
-    )
-    $vlc = Start-Process $vlcExe -ArgumentList $vlcArgs -PassThru
+    # Play through the HELPER, exactly like a phone tap: /movies/play launches VLC AND
+    # hands the poller the HTTP password (ResumeTracker.NoteLaunch) - a hand-launched
+    # VLC leaves the poller blind and the hold can never turn on (v2's defect).
+    & ffmpeg -y -loglevel error -f lavfi -i testsrc=duration=180:size=640x360:rate=15 -pix_fmt yuv420p (Join-Path $movies 'clip.mp4')
+    $r = Invoke-Helper '/movies/play' '{"path":"clip.mp4","fullscreen":false}' $token
+    Assert ($r.code -eq 200) "helper launches VLC (the real movie flow)"
     $playing = $false
     foreach ($i in 1..30) {
         Start-Sleep -Seconds 1
         $s = & curl.exe -s -u ":$pw" "http://127.0.0.1:8080/requests/status.json" 2>$null
         if ($s -match '"state":"playing"') { $playing = $true; break }
     }
-    Assert $playing "VLC is really playing the wav over its HTTP interface"
+    Assert $playing "VLC is really playing the clip over its HTTP interface"
 
     # 1) playing + window visible: hold ON (helper log + OS power request).
     $mark = LogMark
