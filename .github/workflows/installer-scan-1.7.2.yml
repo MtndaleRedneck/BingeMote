@@ -24,7 +24,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download 41793580535 --repo MtndaleRedneck/BingeMote -n BingeMote-PC -n BingeMote-PC-raw
-      - name: Install the distributed installer silently (admin runner; app does not auto-launch)
+      - name: Install the distributed installer silently (admin runner; silent install relaunches the tray app, killed before verify)
         run: |
           # GUI-subsystem exe: pwsh "&" does not wait for it (null $LASTEXITCODE), and
           # Start-Process -Wait hangs: the Inno script relaunches the tray app on SILENT
@@ -35,8 +35,15 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
           if (-not $p.WaitForExit(240000)) { throw "installer did not exit within 240s" }
           "installer exit code: $($p.ExitCode)"
-          # Stop the auto-relaunched tray app so verify/uninstall see quiescent bytes.
-          Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+          # Silent installs relaunch the tray app nowait runasoriginaluser; the spawn can
+          # race setup's exit, so kill with a bounded retry, not a single snapshot.
+          for ($i = 0; $i -lt 6; $i++) {
+            Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 5
+            if (-not (Get-Process BingeMote -ErrorAction SilentlyContinue)) { break }
+          }
+          if (Get-Process BingeMote -ErrorAction SilentlyContinue) { throw "tray app still running after kill retries" }
+          "tray app quiescent"
           if ($p.ExitCode -ne 0) { throw "silent install failed: $($p.ExitCode)" }
       - name: Byte-compare installed vs raw vs expected scanned digest + direct marker scan
         run: |
@@ -57,7 +64,11 @@ jobs:
         if: always()
         run: |
           $u = "$env:LOCALAPPDATA\Programs\BingeMote\unins000.exe"
-          Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+          for ($i = 0; $i -lt 6; $i++) {
+            Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 5
+            if (-not (Get-Process BingeMote -ErrorAction SilentlyContinue)) { break }
+          }
           if (Test-Path $u) {
             # unins000.exe respawns itself from temp and the parent exits early, so wait on
             # the parent handle with a bound, then confirm the install dir is gone.
