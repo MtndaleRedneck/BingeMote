@@ -382,11 +382,12 @@ object HelperClient {
     fun volumeMute(host: String, port: Int, token: String, mute: Boolean) =
         post(host, port, "/volume/mute", JSONObject().put("mute", mute), token)
 
-    /** True when the PC's screen is dark - or when we can't find out (fail-safe: the tap
-     * becomes wake-only rather than firing blind). False when unpaired, so setup flows
-     * and VLC-direct use without a helper are never gated. */
+    /** True when the PC's screen is dark - or when we can't find out, which includes an
+     * unreachable helper AND an unpaired phone (fail-safe: the tap becomes wake-only
+     * rather than firing blind; without a pairing there is no way to know the screen,
+     * so the strict rule is never to send the original action on an unknown state). */
     fun screenIsDark(host: String, port: Int, token: String): Boolean {
-        if (token.isBlank()) return false
+        if (token.isBlank()) return true
         return try {
             get(host, port, "/screen-state", token, 1500).optBoolean("dark", true)
         } catch (e: Exception) { true }

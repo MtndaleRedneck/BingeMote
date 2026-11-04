@@ -62,6 +62,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     remote.store.host, remote.store.helperPort, remote.store.helperToken, relPath,
                     remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true, resume = resume,
                 )
+                // Screen was dark: the tap only woke the PC. Nothing else happens - the
+                // press sink was the feedback, and the next tap plays normally.
+                if (resp.optBoolean("woke", false)) return@launch
                 val ask = resp.optJSONObject("ask")
                 if (ask != null) {
                     withContext(Dispatchers.Main) {

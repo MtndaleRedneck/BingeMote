@@ -39,27 +39,14 @@ internal static class PowerWake
     /// <summary>Latest display state from the power notification.</summary>
     internal static MonitorState Monitor => _monitor;
 
-    /// <summary>Dark, or not yet known (fail-safe): the first tap wakes only.</summary>
-    internal static bool DisplayDarkOrUnknown
-    {
-        get
-        {
-            if (_monitor != MonitorState.On) return true;
-            lock (Gate)
-            {
-                // WakeDisplay reported success optimistically. If no power notification
-                // confirmed the screen is really on within 2.5s, fall back to dark - the
-                // next tap then wakes again, which is the safe direction.
-                if (_wakePending && DateTime.UtcNow - _wakeUtc > TimeSpan.FromMilliseconds(2500)) return true;
-            }
-            return false;
-        }
-    }
+    /// <summary>Dark, or not yet known (fail-safe): the first tap wakes only. Only a real
+    /// GUID_CONSOLE_DISPLAY_STATE notification ever marks the display On - WakeDisplay never
+    /// does. A wake that failed to turn the screen on therefore stays dark, and the next tap
+    /// simply wakes again; no tap's action can slip through on an assumed On.</summary>
+    internal static bool DisplayDarkOrUnknown => _monitor != MonitorState.On;
 
-    private static bool _wakePending;
-    private static DateTime _wakeUtc;
-
-    /// <summary>The window's power-notification callback feeds this.</summary>
+    /// <summary>The window's power-notification callback feeds this - the only source
+    /// that may mark the display On.</summary>
     internal static void NoteMonitorState(uint raw)
     {
         _monitor = raw switch
@@ -69,7 +56,6 @@ internal static class PowerWake
             2 => MonitorState.Dimmed,
             _ => MonitorState.Unknown,
         };
-        lock (Gate) _wakePending = false; // a real state change confirms the display
     }
 
     /// <summary>Bring the screen back if its idle timer shut it off. One-shot only:
@@ -77,10 +63,10 @@ internal static class PowerWake
     /// hold below untouched, so the screen can still turn off again normally.</summary>
     public static void WakeDisplay()
     {
+        // One-shot timer reset only. The display state itself stays whatever the power
+        // notifications last reported - if the screen does not actually come back, this
+        // changes nothing and the next tap tries again.
         try { SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED); } catch { }
-        // The reset turns the display on; the next power notification corrects us if not.
-        _monitor = MonitorState.On;
-        lock (Gate) { _wakePending = true; _wakeUtc = DateTime.UtcNow; }
     }
 
     // A tap or gesture that lands while the screen is dark is consumed whole - the first
