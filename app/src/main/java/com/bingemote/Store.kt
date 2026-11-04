@@ -73,6 +73,10 @@ class Store(context: Context) {
         get() = prefs.getBoolean("keepAwake", true)
         set(v) = prefs.edit().putBoolean("keepAwake", v).apply()
 
+    var showVolumeOnPc: Boolean
+        get() = prefs.getBoolean("showVolumeOnPc", true)
+        set(v) = prefs.edit().putBoolean("showVolumeOnPc", v).apply()
+
     /** Play/pause/skip + position on the lock screen while a movie plays. Off by default. */
     var lockScreenControls: Boolean
         get() = prefs.getBoolean("lockScreenControls", false)

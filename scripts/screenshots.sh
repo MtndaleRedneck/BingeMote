@@ -54,10 +54,10 @@ dismiss_anr
 adb shell input swipe 540 1553 540 518 400
 sleep 2
 adb exec-out screencap -p > "screenshots/settings-feel.png"
-# One more screenful down: the new Lock screen section below Feel.
+# One more screenful down: the cards below Feel (lock-screen toggle lives in Feel now).
 adb shell input swipe 540 1553 540 518 400
 sleep 2
-adb exec-out screencap -p > "screenshots/settings-lockscreen.png"
+adb exec-out screencap -p > "screenshots/settings-after-feel.png"
 # Resume/Start-over dialog (PC7) and the deferred-VLC-setup line (PC5).
 shoot "movies-resume" ""
 adb shell am force-stop com.bingemote
@@ -324,6 +324,9 @@ adb exec-out screencap -p > "screenshots/settings-power-420.png"
 adb shell input swipe 540 1553 540 518 400
 sleep 2
 adb exec-out screencap -p > "screenshots/settings-feel-420.png"
+adb shell input swipe 540 1553 540 700 400
+sleep 2
+adb exec-out screencap -p > "screenshots/settings-feel2-420.png"
 
 center_of() { # $1 text or content-desc, prints "X Y" center of the first match
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 1
@@ -363,28 +366,28 @@ sleep 8
 dismiss_anr
 PLAY=$(center_of '"Play"') || PLAY=$(center_of '"Pause"')
 GEAR=$(center_of 'content-desc="Settings"')
-adb shell screenrecord --time-limit 45 /sdcard/proto.mp4 &
+adb shell screenrecord --time-limit 60 /sdcard/proto.mp4 &
 REC=$!
 sleep 2
 [ -n "${PLAY:-}" ] && adb shell input swipe $PLAY $PLAY 1200
 sleep 2
 [ -n "${GEAR:-}" ] && adb shell input tap $GEAR
 sleep 3
-VIB=$(center_of '"Vibrate on press"')
-if [ -n "${VIB:-}" ]; then
-  adb shell input tap $VIB
+flip() { # $1 label: tap its row twice (off, back on) if it is on screen
+  local C
+  C=$(center_of ""$1"") || return 0
+  [ -z "$C" ] && return 0
+  adb shell input tap $C
   sleep 2
-  adb shell input tap $VIB
-fi
-sleep 2
+  adb shell input tap $C
+  sleep 1
+}
+flip "Vibrate on press"
+flip "Controls on lock screen"
+flip "Show volume on PC screen"
+sleep 1
 adb shell input swipe 540 1553 540 900 400
 sleep 2
-LOCK=$(center_of '"Controls on lock screen"')
-if [ -n "${LOCK:-}" ]; then
-  adb shell input tap $LOCK
-  sleep 2
-  adb shell input tap $LOCK
-fi
 wait $REC || true
 adb pull /sdcard/proto.mp4 screenshots/proto-press.mp4 >/dev/null 2>&1 || true
 adb shell rm /sdcard/proto.mp4 || true
