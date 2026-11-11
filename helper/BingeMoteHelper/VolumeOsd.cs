@@ -4,18 +4,9 @@ using System.Runtime.InteropServices;
 namespace BingeMoteHelper;
 
 /// <summary>
-/// The small volume pop-up the PC screen shows when the phone changes the volume (his
-/// "like it does when you hit the volume buttons on the laptop", Nov 3; Tab's SPEC +
-/// Nov 4 verdict): a 300x64 rounded panel at 100% scale (scales with Windows DPI),
-/// bottom-center 48px above the screen bottom - speaker icon, bar with orange fill +
-/// thumb, percentage. Muted shows the slashed speaker, grey bar/thumb, and the number
-/// keeps the level it returns to when unmuted. Appears on each change, updates live,
-/// auto-hides 1.5s after the last change (150ms fade). Never takes focus, clicks pass
-/// through, topmost so it shows over fullscreen VLC. The panel fill alone is ~95%
-/// opaque (icon, track and number fully opaque), with a soft ~8px shadow and a faint
-/// 1px white edge. Never shown while the screen is dark or unknown (a wake-only press
-/// is swallowed before it reaches the helper; this is the second wall) and never while
-/// "Show volume on PC screen" is off (default ON).
+/// Frame-relative vector volume pill. It never takes focus or captures clicks, and
+/// retains the existing display-power/setting gates and 1.5s hold + 150ms fade.
+/// All art is drawn here at output resolution; no photo or bitmap assets are shipped.
 /// </summary>
 internal static class VolumeOsd
 {
@@ -70,20 +61,26 @@ internal static class VolumeOsd
     }
 #endif
 
+    internal static Rectangle PanelBounds(Rectangle frame)
+    {
+        if (frame.Width <= 0 || frame.Height <= 0) throw new ArgumentOutOfRangeException(nameof(frame));
+        var w = Math.Max(2, (int)Math.Round(frame.Width * 0.167));
+        var h = Math.Max(2, (int)Math.Round(frame.Height * 0.0375));
+        var gap = (int)Math.Round(frame.Height * 0.059);
+        return new Rectangle(frame.X + (frame.Width - w) / 2, frame.Bottom - gap - h, w, h);
+    }
+
     private sealed class OsdWindow : Form
     {
-        // SPEC layout in 96-DPI units; everything multiplies by the screen's DPI scale.
-        private const int DesignW = 300, DesignH = 64, DesignRadius = 12, DesignBottomGap = 48;
-        private const int ShadowPad = 14; // room for the ~8px soft shadow around the panel
-        private const int PanelAlpha = 242; // #202020 at ~95% - the panel fill ONLY
-        private static readonly Color PanelColor = Color.FromArgb(0x20, 0x20, 0x20);
-        private static readonly Color IconColor = Color.FromArgb(0xE6, 0xE6, 0xE6);
-        private static readonly Color TrackColor = Color.FromArgb(0x8B, 0x8B, 0x8B);
-        private static readonly Color Orange = Color.FromArgb(0xF8, 0x7C, 0x02);
+        private const int PanelAlpha = 140; // #141418, 55% fill only
+        private static readonly Color PanelColor = Color.FromArgb(0x14, 0x14, 0x18);
+        private static readonly Color IconColor = Color.FromArgb(0xEB, 0xEB, 0xEB);
+        private static readonly Color MutedColor = Color.FromArgb(0xAA, 0xAA, 0xAA);
+        private static readonly Color Orange = Color.FromArgb(0xFF, 0x96, 0x28);
+        private Rectangle _panelBounds;
 
         private int _percent;
         private bool _muted;
-        private float _scale = 1f;
         private readonly System.Windows.Forms.Timer _hideTimer = new() { Interval = 1500 };
         private readonly System.Windows.Forms.Timer _fadeTimer = new() { Interval = 15 };
         private int _fadeStep;
@@ -119,19 +116,17 @@ internal static class VolumeOsd
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            _scale = DeviceDpi / 96f;
-            var pad = PadPx();
-            Size = new Size(PanelW() + pad * 2, PanelH() + pad * 2);
-            var screen = Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1920, 1080);
-            // The PANEL (not the shadow padding) sits bottom-center, 48px above the bottom.
-            Location = new Point(
-                screen.X + (screen.Width - PanelW()) / 2 - pad,
-                screen.Bottom - (int)Math.Round(DesignBottomGap * _scale) - PanelH() - pad);
+            PositionOnScreen();
         }
 
-        private int PanelW() => (int)Math.Round(DesignW * _scale);
-        private int PanelH() => (int)Math.Round(DesignH * _scale);
-        private int PadPx() => (int)Math.Ceiling(ShadowPad * _scale);
+        private void PositionOnScreen()
+        {
+            // Use the same primary output as the existing overlay. Bounds, not the
+            // taskbar work area: the pill must keep its position over full-screen video.
+            var screen = Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1920, 1080);
+            _panelBounds = PanelBounds(screen);
+            Bounds = _panelBounds;
+        }
 
         public void ShowValue(int percent, bool muted)
         {
@@ -139,6 +134,7 @@ internal static class VolumeOsd
             _muted = muted;
             _fadeTimer.Stop();
             if (!Visible) Show();
+            PositionOnScreen(); // refresh after display/resolution changes, without DPI double-scaling
             Present(1f);
             _hideTimer.Stop();
             _hideTimer.Start();
@@ -175,7 +171,7 @@ internal static class VolumeOsd
         /// <summary>Render the current state and make it the window's pixels.</summary>
         private void Present(float contentAlpha)
         {
-            using var bmp = RenderBitmap(PanelW(), PanelH(), PadPx(), _scale, _percent, _muted, contentAlpha);
+            using var bmp = RenderBitmap(_panelBounds.Width, _panelBounds.Height, _percent, _muted, contentAlpha);
             SetLayeredBitmap(bmp);
         }
 
@@ -202,52 +198,33 @@ internal static class VolumeOsd
             }
         }
 
-        /// <summary>The full window bitmap: shadow padding around the panel, per-pixel
-        /// alpha (premultiplied for UpdateLayeredWindow). Panel fill at 95%, content at
-        /// full opacity, everything scaled by the fade factor.</summary>
-        private static Bitmap RenderBitmap(int panelW, int panelH, int pad, float s, int percent, bool muted, float fade, bool forLayered = true)
+        /// <summary>Per-pixel alpha pill at final output resolution, no edge or shadow.</summary>
+        private static Bitmap RenderBitmap(int panelW, int panelH, int percent, bool muted, float fade, bool forLayered = true)
         {
-            var w = panelW + pad * 2;
-            var h = panelH + pad * 2;
-            var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var bmp = new Bitmap(panelW, panelH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                var panel = new RectangleF(pad, pad, panelW - 1, panelH - 1);
-                var radius = DesignRadius * s;
-                // Soft shadow: stacked rounded rects, low-opacity black, ~8px spread.
-                using (var path = RoundedRect(panel, radius))
-                {
-                    for (var i = 8; i >= 1; i--)
-                    {
-                        var a = (int)(7 * fade);
-                        if (a <= 0) break;
-                        using var shadow = new SolidBrush(Color.FromArgb(a, 0, 0, 0));
-                        using var shadowPath = RoundedRect(new RectangleF(panel.X - i * s * 0.5f, panel.Y - i * s * 0.35f + 2 * s * 0.5f, panel.Width + i * s, panel.Height + i * s * 0.7f), radius + i * s * 0.5f);
-                        g.FillPath(shadow, shadowPath);
-                    }
-                    // Panel fill #202020 at ~95%; the fill alone is translucent.
-                    using var brush = new SolidBrush(Color.FromArgb((int)(PanelAlpha * fade), PanelColor));
-                    g.FillPath(brush, path);
-                    // Faint 1px white edge (~8%).
-                    using var edge = new Pen(Color.FromArgb((int)(20 * fade), 255, 255, 255), Math.Max(1f, s));
-                    g.DrawPath(edge, path);
-                }
-                DrawContent(g, panel, s, percent, muted, fade);
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                var panel = new RectangleF(0.5f, 0.5f, panelW - 1f, panelH - 1f);
+                using var path = RoundedRect(panel, panel.Height / 2f);
+                using var brush = new SolidBrush(Color.FromArgb((int)(PanelAlpha * fade), PanelColor));
+                g.FillPath(brush, path);
+                DrawContent(g, panel, percent, muted, fade);
             }
             if (forLayered) Premultiply(bmp);
             return bmp;
         }
 
-        private static void DrawContent(Graphics g, RectangleF panel, float s, int percent, bool muted, float fade)
+        private static void DrawContent(Graphics g, RectangleF panel, int percent, bool muted, float fade)
         {
             byte A(int full) => (byte)(full * fade);
-            var cy = panel.Y + panel.Height / 2f;
-            // Speaker icon: 26px at 22px left inset; muted = slashed, no waves.
-            var iconSize = 26f * s;
-            var ix = panel.X + 22f * s;
+            var h = panel.Height;
+            var cy = panel.Y + h / 2f;
+            var iconSize = h * 0.5f;
+            var ix = panel.X + panel.Width * 0.08f;
             var iy = cy - iconSize / 2f;
-            using (var brush = new SolidBrush(Color.FromArgb(A(255), IconColor)))
+            using (var brush = new SolidBrush(Color.FromArgb(A(224), IconColor)))
             {
                 var body = new PointF[]
                 {
@@ -260,46 +237,42 @@ internal static class VolumeOsd
                 };
                 g.FillPolygon(brush, body);
             }
-            using (var pen = new Pen(Color.FromArgb(A(255), IconColor), 2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            // Original vector speaker with two arcs, also visible behind the mute slash.
+            using (var pen = new Pen(Color.FromArgb(A(224), IconColor), Math.Max(1f, h * 0.045f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
-                if (muted)
-                {
-                    g.DrawLine(pen, ix + iconSize * 0.14f, iy + iconSize * 0.12f, ix + iconSize * 0.95f, iy + iconSize * 0.9f);
-                }
-                else
-                {
-                    var wcx = ix + iconSize * 0.58f;
-                    g.DrawArc(pen, wcx - iconSize * 0.10f, cy - iconSize * 0.22f, iconSize * 0.44f, iconSize * 0.44f, -55, 110);
-                    g.DrawArc(pen, wcx - iconSize * 0.06f, cy - iconSize * 0.36f, iconSize * 0.72f, iconSize * 0.72f, -55, 110);
-                }
+                var wcx = ix + iconSize * 0.58f;
+                g.DrawArc(pen, wcx - iconSize * 0.10f, cy - iconSize * 0.22f, iconSize * 0.44f, iconSize * 0.44f, -55, 110);
+                g.DrawArc(pen, wcx - iconSize * 0.06f, cy - iconSize * 0.36f, iconSize * 0.72f, iconSize * 0.72f, -55, 110);
             }
-            // Bar: x 70..232, 4px tall, vertically centered; fill + thumb orange, grey
-            // while muted; the number keeps the level it returns to when unmuted.
-            var barX = panel.X + 70f * s;
-            var barRight = panel.X + 232f * s;
+            if (muted)
+            {
+                var from = new PointF(ix - iconSize * 0.04f, iy + iconSize * 0.98f);
+                var to = new PointF(ix + iconSize * 1.08f, iy + iconSize * 0.02f);
+                using var outline = new Pen(Color.FromArgb(A(255), PanelColor), Math.Max(2f, h * 0.11f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                using var slash = new Pen(Color.FromArgb(A(255), 0xEB, 0x32, 0x2D), Math.Max(1f, h * 0.06f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                g.DrawLine(outline, from, to);
+                g.DrawLine(slash, from, to);
+            }
+            var barX = panel.X + panel.Width * 0.24f;
+            var barRight = panel.X + panel.Width * 0.77f;
             var barW = barRight - barX;
-            var barH = Math.Max(2f, 4f * s);
-            using (var track = new SolidBrush(Color.FromArgb(A(255), TrackColor)))
-                g.FillRectangle(track, barX, cy - barH / 2f, barW, barH);
+            var barH = h * 0.10f;
+            using (var track = new Pen(Color.FromArgb(A(89), Color.White), barH) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawLine(track, barX, cy, barRight, cy);
             var fillW = barW * Math.Clamp(percent, 0, 100) / 100f;
-            var fillColor = muted ? TrackColor : Orange;
+            var fillColor = muted ? MutedColor : Orange;
+            using (var pen = new Pen(Color.FromArgb(A(255), fillColor), barH) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                if (fillW > 0) g.DrawLine(pen, barX, cy, barX + fillW, cy);
             using (var fill = new SolidBrush(Color.FromArgb(A(255), fillColor)))
             {
-                if (fillW > 0) g.FillRectangle(fill, barX, cy - barH / 2f, fillW, barH);
-                var thumbD = 20f * s;
-                var thumbCx = Math.Clamp(barX + fillW, barX, barRight);
-                g.FillEllipse(fill, thumbCx - thumbD / 2f, cy - thumbD / 2f, thumbD, thumbD);
+                var thumbD = h * 0.25f;
+                g.FillEllipse(fill, barX + fillW - thumbD / 2f, cy - thumbD / 2f, thumbD, thumbD);
             }
-            var label = percent.ToString();
-            Font font;
-            try { font = new Font("Segoe UI Semibold", 24f * s, GraphicsUnit.Pixel); }
-            catch { font = new Font(FontFamily.GenericSansSerif, 24f * s, GraphicsUnit.Pixel); }
-            using (font)
-            using (var textBrush = new SolidBrush(Color.FromArgb(A(255), IconColor)))
-            {
-                var size = g.MeasureString(label, font);
-                g.DrawString(label, font, textBrush, panel.Right - 20f * s - size.Width, cy - size.Height / 2f);
-            }
+            using var font = new Font("Segoe UI", h * 0.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var textBrush = new SolidBrush(Color.FromArgb(A(muted ? 255 : 224), muted ? MutedColor : IconColor));
+            using var format = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
+            g.DrawString(Math.Clamp(percent, 0, 100).ToString(), font, textBrush,
+                new RectangleF(panel.X + panel.Width * 0.80f, panel.Y, panel.Width * 0.15f, h), format);
         }
 
         private static GraphicsPath RoundedRect(RectangleF rect, float radius)
@@ -333,12 +306,19 @@ internal static class VolumeOsd
         }
 
 #if WINDOW_SHOT_HOOK
-        /// <summary>CI-only: the exact window bitmap as a PNG (transparent corners,
-        /// shadow, 95% panel), at the SPEC's 100% scale.</summary>
+        /// <summary>CI-only: exact output pixels on a neutral 1920x1080 frame.</summary>
         public static void RenderPng(string path, int percent, bool muted)
         {
-            using var bmp = RenderBitmap(DesignW, DesignH, ShadowPad, 1f, percent, muted, 1f, forLayered: false);
+            var bounds = PanelBounds(new Rectangle(0, 0, 1920, 1080));
+            using var bmp = RenderBitmap(bounds.Width, bounds.Height, percent, muted, 1f, forLayered: false);
             bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            using var frame = new Bitmap(1920, 1080);
+            using (var g = Graphics.FromImage(frame))
+            {
+                g.Clear(Color.FromArgb(48, 54, 62));
+                g.DrawImageUnscaled(bmp, bounds.Location);
+            }
+            frame.Save(Path.ChangeExtension(path, ".frame.png"), System.Drawing.Imaging.ImageFormat.Png);
         }
 #endif
 

@@ -138,6 +138,8 @@ jobs:
             helper/window-diag.txt
             helper/osd.png
             helper/osd-muted.png
+            helper/osd.frame.png
+            helper/osd-muted.frame.png
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
