@@ -1,3 +1,7 @@
+## v1.7.3
+
+- Smaller, sharper volume display with a subtle rounded pill and a clearer mute icon.
+
 ## v1.7.2
 
 - While a video is loaded in VLC and VLC isn't minimized, the laptop stays awake - a paused movie no longer lets it fall asleep and lock. The screen can still turn off on its own, and closing the lid, the power button or Start > Sleep still sleeps it
