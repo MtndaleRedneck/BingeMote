@@ -338,8 +338,10 @@ internal sealed class HttpServer : IDisposable
             "/mouse/move" or "/mouse/scroll" or "/mouse/zoom" => PowerWake.ShouldSwallowContinuous(),
             _ => PowerWake.ShouldSwallowDiscrete(),
         };
+        if (path == "/mouse/move") MoveDiag.RecordMove(viaLiveSocket: false);
         if (swallowed)
         {
+            if (path == "/mouse/move") { MoveDiag.RecordSwallowed(); MoveDiag.AfterInput(CursorProbe.Pos(), true, "http"); }
             Reply(res, 200, "{\"ok\":true,\"woke\":true}");
             return;
         }
@@ -348,9 +350,12 @@ internal sealed class HttpServer : IDisposable
         switch (path)
         {
             case "/mouse/move":
-                MoveDiag.RecordMove(viaLiveSocket: false);
+            {
+                var b0 = CursorProbe.Pos();
                 InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble());
+                MoveDiag.AfterInput(b0, false, "http");
                 break;
+            }
             case "/mouse/button":
                 InputSender.Button(
                     r.GetProperty("button").GetString() ?? "left",
@@ -496,10 +501,11 @@ internal sealed class HttpServer : IDisposable
             }
             // First touch while the screen is dark only wakes it: the frame is consumed
             // whole (no half-gestures, no leaked clicks) and nothing is injected.
-            if (cmd == "button" ? PowerWake.ShouldSwallowDiscrete() : PowerWake.ShouldSwallowContinuous()) return;
+            if (cmd == "move") MoveDiag.RecordMove(viaLiveSocket: true);
+            if (cmd == "button" ? PowerWake.ShouldSwallowDiscrete() : PowerWake.ShouldSwallowContinuous()) { if (cmd == "move") { MoveDiag.RecordSwallowed(); MoveDiag.AfterInput(CursorProbe.Pos(), true, "ws"); } return; }
             switch (cmd)
             {
-                case "move": MoveDiag.RecordMove(viaLiveSocket: true); InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); break;
+                case "move": { var b0 = CursorProbe.Pos(); InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); MoveDiag.AfterInput(b0, false, "ws"); break; }
                 case "button":
                     var b = r.GetProperty("button").GetString() ?? "left";
                     var down = r.GetProperty("down").GetBoolean();

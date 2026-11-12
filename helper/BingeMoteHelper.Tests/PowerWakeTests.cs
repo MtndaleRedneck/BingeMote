@@ -3,6 +3,7 @@ using Xunit;
 
 namespace BingeMoteHelper.Tests;
 
+[Collection("PowerWakeStatic")]
 public class PowerWakeTests
 {
     [Fact]

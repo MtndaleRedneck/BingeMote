@@ -1,3 +1,8 @@
+## v1.7.4 (diagnostic test build - publish as pre-release, NOT latest)
+
+- Test build for "phone starts a movie but the mouse does nothing". The cause is NOT proven. This version loosens the screen-off check on mouse movement, clicks, keys and volume (a likely contributor) and writes a short local log (helper.log, never uploaded) about whether the pointer moves, is shown, and whether a higher-privilege app is in front. Please run it and tell us what happens.
+- rev6: the log now also records when a click/key/volume press is swallowed by the screen-off check, and when Windows refuses injected input outright (it does so silently while a lock screen, UAC prompt or an app run as administrator is in front). Pointer probes in the move stream are now cached 4x a second so the diagnostics cannot slow movement.
+
 ## v1.7.3
 
 - Smaller, sharper volume display with a subtle rounded pill and a clearer mute icon.

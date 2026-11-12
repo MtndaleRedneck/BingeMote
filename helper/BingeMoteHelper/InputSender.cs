@@ -43,7 +43,19 @@ internal static class InputSender
     // Two phones can tap at the same instant; keep one gesture's SendInput calls together.
     private static readonly object Gate = new();
 
-    private static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    // SendInput silently injects nothing when a secure or higher-privilege desktop owns the
+    // screen (UAC prompt, lock screen, an app run as administrator). Its return is the ground
+    // truth for "did Windows take the event"; log only on change, so a long blocked stretch
+    // costs one line and the recovery one more. (rev6)
+    private static uint _lastSendErr;
+    private static void Send(params INPUT[] inputs)
+    {
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        var err = sent == (uint)inputs.Length ? 0u : (uint)Marshal.GetLastWin32Error();
+        if (err == _lastSendErr) return;
+        _lastSendErr = err;
+        MoveDiag.LogSendFailure(sent, (uint)inputs.Length, err);
+    }
 
     private static INPUT Mouse(uint flags, int dx = 0, int dy = 0, uint data = 0) =>
         new() { type = INPUT_MOUSE, U = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = flags, mouseData = data } } };

@@ -28,6 +28,15 @@ internal static class PowerWake
     internal enum MonitorState { Unknown, Off, On, Dimmed }
 
     private static readonly object Gate = new();
+    /// <summary>Clock, replaceable in tests.</summary>
+    internal static Func<DateTime> Now = () => DateTime.UtcNow;
+    private static DateTime _lastDiscreteSwallow = DateTime.MinValue;
+
+    /// <summary>Tests only: back to the just-started state.</summary>
+    internal static void ResetForTest()
+    {
+        lock (Gate) { _monitor = MonitorState.Unknown; _swallowUntil = DateTime.MinValue; _swallowStart = DateTime.MinValue; _lastDiscreteSwallow = DateTime.MinValue; Now = () => DateTime.UtcNow; }
+    }
     private static bool _desired;
     private static bool _applied;
     private static volatile MonitorState _monitor = MonitorState.Unknown;
@@ -49,6 +58,7 @@ internal static class PowerWake
     /// that may mark the display On.</summary>
     internal static void NoteMonitorState(uint raw)
     {
+        var prev = _monitor;
         _monitor = raw switch
         {
             0 => MonitorState.Off,
@@ -56,6 +66,7 @@ internal static class PowerWake
             2 => MonitorState.Dimmed,
             _ => MonitorState.Unknown,
         };
+        if (prev != _monitor) { try { Program.Log($"Display state notification: {prev} -> {_monitor} (raw={raw})."); } catch { } }
     }
 
     /// <summary>Bring the screen back if its idle timer shut it off. One-shot only:
@@ -75,6 +86,7 @@ internal static class PowerWake
     // to its end, and only 400ms of quiet hands control back. Discrete presses are gated
     // on the dark check alone, so the next press after the wake works normally.
     private static DateTime _swallowUntil = DateTime.MinValue;
+    private static DateTime _swallowStart = DateTime.MinValue;
 
     /// <summary>Touchpad moves, scrolls and zooms. True means the frame was consumed
     /// (screen woken if it was dark) and must not be injected.</summary>
@@ -82,29 +94,51 @@ internal static class PowerWake
     {
         lock (Gate)
         {
-            if (DisplayDarkOrUnknown)
+            // UNTESTED fix (H4): only a KNOWN dark screen swallows pointer motion. An
+            // "unknown" display state (no notification received yet) used to swallow every
+            // move forever, with the swallow window renewing itself on each frame. Moving
+            // the pointer is harmless, so unknown no longer blocks it; clicks and keys
+            // still treat unknown as dark.
+            var now = Now();
+            // A gesture is swallowed only while the screen is KNOWN off, or while finishing
+            // a swallowed gesture, and in every case for at most 3 s from its first frame.
+            // After the cap, moves pass even if the display still reads Off: moving the
+            // pointer is harmless, and an indefinite swallow is the failure being chased.
+            if (_swallowStart == DateTime.MinValue || now > _swallowUntil) _swallowStart = DateTime.MinValue; // gesture over
+            var inGesture = _swallowStart != DateTime.MinValue;
+            if (_monitor == MonitorState.Off || inGesture)
             {
-                WakeDisplay();
-                _swallowUntil = DateTime.UtcNow.AddMilliseconds(400);
-                return true;
-            }
-            if (DateTime.UtcNow < _swallowUntil)
-            {
-                _swallowUntil = DateTime.UtcNow.AddMilliseconds(400);
-                return true;
+                if (_swallowStart == DateTime.MinValue) _swallowStart = now;
+                if (now - _swallowStart < TimeSpan.FromSeconds(3))
+                {
+                    if (_monitor == MonitorState.Off) WakeDisplay();
+                    _swallowUntil = now.AddMilliseconds(400);
+                    return true;
+                }
+                _swallowUntil = now.AddMilliseconds(400); // keep the cap window until input goes quiet
+                return false;
             }
             return false;
         }
     }
 
     /// <summary>Clicks, keys and volume. True means the press was consumed (screen woken)
-    /// and must not be injected.</summary>
+    /// and must not be injected. UNTESTED change: while the display is not known to be On
+    /// (off, dimmed or unknown) a press is swallowed at most once per 10 s. The next press
+    /// passes, so a missing display notification can no longer block clicks, keys and
+    /// volume indefinitely. A known-On screen never swallows.</summary>
     public static bool ShouldSwallowDiscrete()
     {
         lock (Gate)
         {
             if (!DisplayDarkOrUnknown) return false;
+            var now = Now();
+            if (now - _lastDiscreteSwallow < TimeSpan.FromSeconds(10)) return false;
+            _lastDiscreteSwallow = now;
             WakeDisplay();
+            // UNTESTED diagnostic (rev6): moves already log their swallows; clicks, keys and
+            // volume did not, so a swallowed press left no trace. Bounded by the 10s cap above.
+            try { Program.Log($"Wake filter swallowed a discrete press (display={_monitor}): the press only wakes, the next press within 10s acts."); } catch { }
             return true;
         }
     }

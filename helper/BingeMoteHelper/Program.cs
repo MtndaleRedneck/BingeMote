@@ -330,6 +330,16 @@ internal static class Program
         using var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
         var window = new HelperWindow();
         _ = window.Handle; // force handle creation so a second launch can always signal us
+        // UNTESTED diagnostic: the handle is forced just above (so OnHandleCreated, and with it
+        // the display-state registration, runs at startup, not on first show). Record that, and
+        // check once at 5 s and 60 s whether any display notification ever arrived.
+        Log($"Startup: window handle forced, created={window.IsHandleCreated} display={PowerWake.Monitor}.");
+        foreach (var delayMs in new[] { 5000, 60000 })
+        {
+            var probe = new System.Windows.Forms.Timer { Interval = delayMs };
+            probe.Tick += (_, _) => { probe.Stop(); probe.Dispose(); Log($"Startup check +{delayMs / 1000}s: display={PowerWake.Monitor} (Unknown means no display-state notification has arrived yet)."); };
+            probe.Start();
+        }
         var watcher = new Thread(() =>
         {
             var events = new WaitHandle[] { showEvent, quitEvent };
@@ -1867,7 +1877,7 @@ internal sealed class HelperWindow : Form
     private static readonly Guid ConsoleDisplayStateGuid = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
     private IntPtr _powerNotify;
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, ref Guid PowerSettingGuid, uint Flags);
 
     [DllImport("user32.dll")]
@@ -1879,6 +1889,10 @@ internal sealed class HelperWindow : Form
         ApplyTitleBarTheme();
         var g = ConsoleDisplayStateGuid;
         _powerNotify = RegisterPowerSettingNotification(Handle, ref g, 0); // DEVICE_NOTIFY_WINDOW_HANDLE
+        // UNTESTED diagnostic: did the hidden window get a handle, and did the display-state
+        // registration work? A missing notification leaves the display "unknown".
+        Program.Log($"Power notification setup: window_handle_created={(Handle != IntPtr.Zero)} registered={(_powerNotify != IntPtr.Zero)}" +
+            (_powerNotify == IntPtr.Zero ? $" win32={Marshal.GetLastWin32Error()}" : "") + $" display={PowerWake.Monitor}.");
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
