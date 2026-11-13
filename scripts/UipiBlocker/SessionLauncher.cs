@@ -13,7 +13,7 @@ namespace UipiBlocker;
 /// </summary>
 internal static class SessionLauncher
 {
-    [DllImport("wtsapi32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
+    [DllImport("kernel32.dll")] private static extern uint WTSGetActiveConsoleSessionId();
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr h, uint access, out IntPtr token);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool DuplicateTokenEx(IntPtr existing, uint access, IntPtr attrs, int impersonation, int tokenType, out IntPtr newToken);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetTokenInformation(IntPtr token, int infoClass, ref uint info, uint infoLen);
