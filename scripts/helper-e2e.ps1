@@ -214,10 +214,38 @@ try {
     $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-restart"}' $token
     Assert ($r.code -eq 410) "the spent adopt grant stays spent across a helper restart"
     $pObj = Get-Process -Id $p.Id
-    # rev10: the helper intentionally owns one invisible 1x1 presence window for its whole
-    # lifetime, so MainWindowHandle can be nonzero now. What must still be true: the real UI
-    # window (title "BingeMote") is NOT the visible main window - only the presence window.
-    Assert ($pObj.MainWindowHandle -eq 0 -or $pObj.MainWindowTitle -eq 'BingeMotePresence') "the listener stays bound with no visible UI window (tray-hidden/headless), handle=$($pObj.MainWindowHandle) title=$($pObj.MainWindowTitle)"
+    # rev10: the helper intentionally owns one invisible 1x1 presence window (class
+    # BingeMotePresence) for its whole lifetime, so MainWindowHandle can be nonzero now.
+    # What must still be true: no VISIBLE window carrying the app's UI. Enumerate the
+    # helper's windows and fail on any visible window outside the presence window.
+    $winSrc = @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class WinEnum {
+    public delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
+}
+"@
+    Add-Type -TypeDefinition $winSrc
+    $windows = New-Object System.Collections.Generic.List[string]
+    $cb = [WinEnum+EnumProc]{ param($h, $l)
+        $wpid = 0; [void][WinEnum]::GetWindowThreadProcessId($h, [ref]$wpid)
+        if ($wpid -eq $p.Id) {
+            $t = New-Object System.Text.StringBuilder 256; [void][WinEnum]::GetWindowTextW($h, $t, $t.Capacity)
+            $c = New-Object System.Text.StringBuilder 128; [void][WinEnum]::GetClassNameW($h, $c, $c.Capacity)
+            $windows.Add("hwnd=0x{0:X} visible={1} class={2} title="{3}"" -f $h.ToInt64(), [WinEnum]::IsWindowVisible($h), $c, $t)
+        }
+        return $true
+    }
+    [void][WinEnum]::EnumWindows($cb, [IntPtr]::Zero)
+    Write-Host ("helper windows: " + ($windows -join " | "))
+    $visibleStrangers = @($windows | Where-Object { $_ -match 'visible=True' -and $_ -notmatch 'class=BingeMotePresence ' })
+    Assert ($visibleStrangers.Count -eq 0) "the listener stays bound with no visible UI window (tray-hidden/headless): $($visibleStrangers -join ' | ')"
 
     # A second phone pairs with a fresh code and both phones stay connected.
     Write-Host "== multi-phone pairing =="
