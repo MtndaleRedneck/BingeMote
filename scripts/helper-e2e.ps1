@@ -57,6 +57,17 @@ try {
     }
     if (-not $up) { throw "helper did not start listening on 8488" }
     Write-Host "helper is listening"
+    # On any failure from here on, dump the helper log and process state so CI
+    # failures are diagnosable from the run log alone.
+    trap {
+        Write-Host "== e2e failure diagnostics =="
+        $logf = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+        if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf } else { Write-Host "(no helper.log)" }
+        Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe' or Name='UipiBlocker.exe'" | ForEach-Object { Write-Host "process: $($_.Name) pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
+        Write-Host "== powercfg /requests =="
+        powercfg /requests
+        throw
+    }
 
     function Invoke-Helper($path, $body, $token) {
         $headers = @{}
