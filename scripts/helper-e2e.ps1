@@ -214,7 +214,10 @@ try {
     $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-restart"}' $token
     Assert ($r.code -eq 410) "the spent adopt grant stays spent across a helper restart"
     $pObj = Get-Process -Id $p.Id
-    Assert ($pObj.MainWindowHandle -eq 0) "the listener stays bound with no visible window (tray-hidden/headless), handle=$($pObj.MainWindowHandle)"
+    # rev10: the helper intentionally owns one invisible 1x1 presence window for its whole
+    # lifetime, so MainWindowHandle can be nonzero now. What must still be true: the real UI
+    # window (title "BingeMote") is NOT the visible main window - only the presence window.
+    Assert ($pObj.MainWindowHandle -eq 0 -or $pObj.MainWindowTitle -eq 'BingeMotePresence') "the listener stays bound with no visible UI window (tray-hidden/headless), handle=$($pObj.MainWindowHandle) title=$($pObj.MainWindowTitle)"
 
     # A second phone pairs with a fresh code and both phones stay connected.
     Write-Host "== multi-phone pairing =="
