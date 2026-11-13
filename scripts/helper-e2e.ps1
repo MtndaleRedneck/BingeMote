@@ -522,7 +522,9 @@ public static class Probe {
     Assert $pipeUp "input broker pipe is listening"
     $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | Select-Object -First 1
     Assert ($null -ne $brokerProc) "broker process is running"
-    Assert ($brokerProc.SessionId -eq (Get-Process -Id $PID).SessionId) "broker runs in the interactive session $($brokerProc.SessionId), not session 0"
+    $harnessSession = (Get-Process -Id $PID).SessionId
+    if ($harnessSession -eq 0) { Write-Host "note: this CI runner itself lives in session 0; the At-Logon trigger lands in the user's session on a real PC" }
+    Assert ($brokerProc.SessionId -eq $harnessSession) "broker runs in the same session as the interactive user (session $($brokerProc.SessionId))"
     $brokerOwner = Invoke-CimMethod -InputObject $brokerProc -MethodName GetOwner
     Assert ($brokerOwner.User -eq 'SYSTEM') "broker runs as SYSTEM (got $($brokerOwner.Domain)\$($brokerOwner.User))"
 
