@@ -29,11 +29,7 @@ internal static class MoveDiag
 
     private static long _inputCount;
     private static readonly object LogGate = new();
-    private static DateTime _budgetWindow = DateTime.MinValue;
-    private static int _budgetUsed;
-    private static string _lastSig = "";
     private static bool _showTriedThisEpisode;
-    private const int PerMinuteLineBudget = 60; // plus a line on every change of state, so a later failure always logs
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int ShowCursor(bool show);
 
     // The cursor/elevation probes are kernel round-trips; their values only change when the
@@ -43,21 +39,15 @@ internal static class MoveDiag
     private static string _visCache = "unknown", _elevCache = "unknown";
     private static bool _presentCache;
 
-    /// <summary>rev6. Ground truth from SendInput itself: logged on every change between working
-    /// and failing, so a blocked stretch costs one line and recovery costs one more.</summary>
-    public static void LogSendFailure(uint sent, uint total, uint win32)
+    /// <summary>Local pointer probes. All output uses the shared bounded asynchronous
+    /// diagnostic writer: state changes cannot bypass its 60-lines/minute limit.</summary>
+    public static void AfterInput((int x, int y)? before, bool swallowed, string via)
     {
-        if (!Enabled) return;
-        Program.Log(win32 == 0
-            ? "SendInput is injecting again after a failed stretch."
-            : $"SendInput FAILED: injected {sent} of {total} event(s), win32={win32}. Windows silently drops injected input while a secure or higher-privilege desktop owns the screen (UAC prompt, lock screen, an app run as administrator).");
+        try { AfterInputCore(before, swallowed, via); }
+        catch { /* optional diagnostics must not affect input */ }
     }
 
-    /// <summary>UNTESTED. Runs for EVERY move input, injected or swallowed. Logs a line when
-    /// the combination of results CHANGES (always), and otherwise up to 60 lines per minute,
-    /// so a failure that starts later is never lost to an early budget. Cursor API and
-    /// elevation are reported separately with failure codes. Never elevates anything.</summary>
-    public static void AfterInput((int x, int y)? before, bool swallowed, string via)
+    private static void AfterInputCore((int x, int y)? before, bool swallowed, string via)
     {
         if (!Enabled) return;
         var n = System.Threading.Interlocked.Increment(ref _inputCount);
@@ -86,19 +76,19 @@ internal static class MoveDiag
                 var vis2 = CursorProbe.Visibility();
                 extra = $" showcursor_candidate: counter={counter} visibility_before={vis} visibility_after={vis2} changed_anything={vis2 != vis}";
             }
-            var sig = $"{swallowed}|{moved}|{vis}|{present}|{elev}|{PowerWake.Monitor}|{via}";
-            var changed = sig != _lastSig;
-            if (now - _budgetWindow > TimeSpan.FromMinutes(1)) { _budgetWindow = now; _budgetUsed = 0; }
-            if (!changed && extra == "" && _budgetUsed >= PerMinuteLineBudget) return;
-            if (!changed) _budgetUsed++;
-            _lastSig = sig;
+
         }
         var line = $"Mouse input #{n} via={via} swallowed={swallowed} cursor_moved={moved} cursor_api={vis} mouse_present={present} foreground_elevation={elev} display={PowerWake.Monitor}{extra}";
         if (elev == "elevated") line += " NOTE: a higher-privilege app is in front; Windows may ignore input from BingeMote. BingeMote does not elevate itself.";
-        Program.Log(line);
+        DiagnosticLog.Write(line);
     }
 
     public static void RecordMove(bool viaLiveSocket)
+    {
+        try { RecordMoveCore(viaLiveSocket); } catch { }
+    }
+
+    private static void RecordMoveCore(bool viaLiveSocket)
     {
         if (!Enabled) return;
         lock (Gate)
@@ -122,7 +112,7 @@ internal static class MoveDiag
     public static void FlushIfIdle()
     {
         if (!Enabled) return;
-        lock (Gate) if (_hadActivity) Flush(DateTime.UtcNow);
+        try { lock (Gate) if (_hadActivity) Flush(DateTime.UtcNow); } catch { }
     }
 
     private static void Flush(DateTime now)
@@ -130,7 +120,7 @@ internal static class MoveDiag
         var avg = _gapCount > 0 ? _gapSumMs / _gapCount : 0;
         var pos = CursorProbe.Pos();
         var moved = CursorProbe.Moved(_posAtWindowStart, pos); _posAtWindowStart = pos;
-        Program.Log($"Mouse diag: ws_received={_ws} http_received={_http} swallowed_by_wake_filter={_swallowed} cursor_moved={moved} cursor_api={CursorProbe.Visibility()} mouse_present={CursorProbe.MousePresent()} foreground_elevation={CursorProbe.ForegroundElevation()} display={PowerWake.Monitor}; " +
+        DiagnosticLog.Write($"Mouse diag: ws_received={_ws} http_received={_http} swallowed_by_wake_filter={_swallowed} cursor_moved={moved} cursor_api={CursorProbe.Visibility()} mouse_present={CursorProbe.MousePresent()} foreground_elevation={CursorProbe.ForegroundElevation()} display={PowerWake.Monitor}; " +
             (_gapCount > 0 ? $"arrival gaps min/avg/max {_gapMinMs}/{avg}/{_gapMaxMs} ms." : "single frame."));
         _ws = _http = _swallowed = 0; _gapMinMs = long.MaxValue; _gapMaxMs = 0; _gapSumMs = _gapCount = 0;
         _windowStart = now; _hadActivity = false;

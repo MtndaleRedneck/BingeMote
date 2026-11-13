@@ -66,7 +66,7 @@ internal static class PowerWake
             2 => MonitorState.Dimmed,
             _ => MonitorState.Unknown,
         };
-        if (prev != _monitor) { try { Program.Log($"Display state notification: {prev} -> {_monitor} (raw={raw})."); } catch { } }
+        if (prev != _monitor) { try { DiagnosticLog.Write($"Display state notification: {prev} -> {_monitor} (raw={raw})."); } catch { } }
     }
 
     /// <summary>Bring the screen back if its idle timer shut it off. One-shot only:
@@ -138,7 +138,7 @@ internal static class PowerWake
             WakeDisplay();
             // UNTESTED diagnostic (rev6): moves already log their swallows; clicks, keys and
             // volume did not, so a swallowed press left no trace. Bounded by the 10s cap above.
-            try { Program.Log($"Wake filter swallowed a discrete press (display={_monitor}): the press only wakes, the next press within 10s acts."); } catch { }
+            try { DiagnosticLog.Write($"Wake filter swallowed a discrete press (display={_monitor}): the press only wakes, the next press within 10s acts."); } catch { }
             return true;
         }
     }
@@ -175,7 +175,7 @@ internal static class PowerWake
             // set per-thread state on a pool thread that can never release it reliably.
             lock (Gate)
             {
-                if (!_noUiLogged) { _noUiLogged = true; Program.Log("Keep-awake hold disabled: no UI thread bound."); }
+                if (!_noUiLogged) { _noUiLogged = true; DiagnosticLog.Write("Keep-awake hold disabled: no UI thread bound."); }
             }
             return;
         }
@@ -201,7 +201,7 @@ internal static class PowerWake
         catch { prev = 0; }
         if (prev == 0)
         {
-            Program.Log("Keep-awake hold " + (want ? "acquire" : "release") +
+            DiagnosticLog.Write("Keep-awake hold " + (want ? "acquire" : "release") +
                 " FAILED (SetThreadExecutionState returned 0); confirmed state stays " +
                 (_applied ? "HELD" : "NOT HELD") + " and the next sync retries.");
             return;

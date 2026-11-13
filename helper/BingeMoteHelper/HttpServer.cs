@@ -172,8 +172,9 @@ internal sealed class HttpServer : IDisposable
                     return;
 
                 default:
-                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
-                    RouteCommand(path, ReadBody(req), res);
+                    var commandPhone = FindPhone(req);
+                    if (commandPhone == null) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    RouteCommand(path, ReadBody(req), res, commandPhone.HttpButtons);
                     return;
             }
         }
@@ -327,11 +328,20 @@ internal sealed class HttpServer : IDisposable
         Reply(res, 200, "{\"ok\":true}");
     }
 
-    private static void RouteCommand(string path, string body, HttpListenerResponse res)
+    private static void RouteCommand(string path, string body, HttpListenerResponse res, ButtonInputState buttons)
     {
         // First press while the screen is dark only wakes it - the tap's action is
         // swallowed whole, never half-applied. Continuous touchpad/scroll input is
         // swallowed to the end of the gesture. Reads (volume/get) carry no action and pass.
+        if (path == "/mouse/button")
+        {
+            using var buttonDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+            var buttonRoot = buttonDoc.RootElement;
+            var applied = buttons.Apply(buttonRoot.GetProperty("button").GetString() ?? "left",
+                buttonRoot.GetProperty("down").GetBoolean(), PowerWake.ShouldSwallowDiscrete, InputSender.Button);
+            Reply(res, 200, applied ? "{\"ok\":true}" : "{\"ok\":true,\"woke\":true}");
+            return;
+        }
         var swallowed = path switch
         {
             "/volume/get" => false,
@@ -356,11 +366,6 @@ internal sealed class HttpServer : IDisposable
                 MoveDiag.AfterInput(b0, false, "http");
                 break;
             }
-            case "/mouse/button":
-                InputSender.Button(
-                    r.GetProperty("button").GetString() ?? "left",
-                    r.GetProperty("down").GetBoolean());
-                break;
             case "/mouse/scroll":
                 InputSender.Scroll((float)r.GetProperty("dy").GetDouble());
                 break;
@@ -419,7 +424,7 @@ internal sealed class HttpServer : IDisposable
         WebSocket? ws = null;
         // This connection's pressed mouse buttons: whatever it still holds when it ends
         // gets released, so a phone that dies mid-drag can't leave the PC's mouse down.
-        var pressed = new HashSet<string>();
+        var pressed = new ButtonInputState();
         // Any frame counts as life (the phone sends a heartbeat every 2 s while open).
         // ~8 s of silence means the phone is gone without a close frame: let go.
         var lastFrameAt = DateTime.UtcNow;
@@ -466,11 +471,7 @@ internal sealed class HttpServer : IDisposable
         catch { /* a dropped connection is normal - Wi-Fi blips, the phone sleeps */ }
         finally
         {
-            foreach (var b in pressed)
-            {
-                try { InputSender.Button(b, false); } catch { }
-                Program.Log("Released a held " + b + " mouse button from the dropped live connection.");
-            }
+            pressed.ReleaseAll(InputSender.Button);
             try { ws?.Dispose(); } catch { }
             MoveDiag.FlushIfIdle();
             Program.Log("Live mouse connection closed.");
@@ -484,7 +485,7 @@ internal sealed class HttpServer : IDisposable
 
     /// <summary>Apply one frame from the live connection. Anything malformed costs nothing.
     /// Frame numbers are counted: a gap means a frame went missing between phone and PC.</summary>
-    private static void DispatchWs(string text, HashSet<string> pressed, ref long lastSeq)
+    private static void DispatchWs(string text, ButtonInputState pressed, ref long lastSeq)
     {
         try
         {
@@ -499,19 +500,17 @@ internal sealed class HttpServer : IDisposable
                     Program.Log($"Live connection frame gap: expected {lastSeq + 1}, got {n} ({n - lastSeq - 1} lost).");
                 lastSeq = n;
             }
-            // First touch while the screen is dark only wakes it: the frame is consumed
-            // whole (no half-gestures, no leaked clicks) and nothing is injected.
+            if (cmd == "button")
+            {
+                pressed.Apply(r.GetProperty("button").GetString() ?? "left",
+                    r.GetProperty("down").GetBoolean(), PowerWake.ShouldSwallowDiscrete, InputSender.Button);
+                return;
+            }
             if (cmd == "move") MoveDiag.RecordMove(viaLiveSocket: true);
             if (cmd == "button" ? PowerWake.ShouldSwallowDiscrete() : PowerWake.ShouldSwallowContinuous()) { if (cmd == "move") { MoveDiag.RecordSwallowed(); MoveDiag.AfterInput(CursorProbe.Pos(), true, "ws"); } return; }
             switch (cmd)
             {
                 case "move": { var b0 = CursorProbe.Pos(); InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble()); MoveDiag.AfterInput(b0, false, "ws"); break; }
-                case "button":
-                    var b = r.GetProperty("button").GetString() ?? "left";
-                    var down = r.GetProperty("down").GetBoolean();
-                    if (down) pressed.Add(b); else pressed.Remove(b);
-                    InputSender.Button(b, down);
-                    break;
                 case "scroll": InputSender.Scroll((float)r.GetProperty("dy").GetDouble()); break;
                 case "zoom": InputSender.Zoom((float)r.GetProperty("delta").GetDouble()); break;
             }

@@ -26,7 +26,11 @@ internal static class CursorProbe
     private const int CURSOR_SHOWING = 1, CURSOR_SUPPRESSED = 2, SM_MOUSEPRESENT = 19;
 
     /// <summary>Null when the position could not be read (never a fake coordinate).</summary>
-    public static (int x, int y)? Pos() => GetCursorPos(out var p) ? (p.x, p.y) : null;
+    public static (int x, int y)? Pos()
+    {
+        try { return GetCursorPos(out var p) ? (p.x, p.y) : null; }
+        catch { return null; }
+    }
 
     /// <summary>moved, not_moved, or unknown (either read failed).</summary>
     public static string Moved((int x, int y)? before, (int x, int y)? after) =>

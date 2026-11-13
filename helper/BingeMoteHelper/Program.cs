@@ -76,6 +76,7 @@ internal static class Program
     /// <summary>A phone paired to this PC. The name is typed in the window when pairing starts.</summary>
     internal sealed class PairedPhone
     {
+        internal readonly ButtonInputState HttpButtons = new();
         public string Token { get; set; } = "";
         public string Name { get; set; } = "";
         /// <summary>The one-shot VLC-password fetch was consumed (adopt flow). Persisted,
@@ -333,11 +334,11 @@ internal static class Program
         // UNTESTED diagnostic: the handle is forced just above (so OnHandleCreated, and with it
         // the display-state registration, runs at startup, not on first show). Record that, and
         // check once at 5 s and 60 s whether any display notification ever arrived.
-        Log($"Startup: window handle forced, created={window.IsHandleCreated} display={PowerWake.Monitor}.");
+        DiagnosticLog.Write($"Startup: window handle forced, created={window.IsHandleCreated} display={PowerWake.Monitor}.");
         foreach (var delayMs in new[] { 5000, 60000 })
         {
             var probe = new System.Windows.Forms.Timer { Interval = delayMs };
-            probe.Tick += (_, _) => { probe.Stop(); probe.Dispose(); Log($"Startup check +{delayMs / 1000}s: display={PowerWake.Monitor} (Unknown means no display-state notification has arrived yet)."); };
+            probe.Tick += (_, _) => { probe.Stop(); probe.Dispose(); DiagnosticLog.Write($"Startup check +{delayMs / 1000}s: display={PowerWake.Monitor} (Unknown means no display-state notification has arrived yet)."); };
             probe.Start();
         }
         var watcher = new Thread(() =>
@@ -1891,7 +1892,7 @@ internal sealed class HelperWindow : Form
         _powerNotify = RegisterPowerSettingNotification(Handle, ref g, 0); // DEVICE_NOTIFY_WINDOW_HANDLE
         // UNTESTED diagnostic: did the hidden window get a handle, and did the display-state
         // registration work? A missing notification leaves the display "unknown".
-        Program.Log($"Power notification setup: window_handle_created={(Handle != IntPtr.Zero)} registered={(_powerNotify != IntPtr.Zero)}" +
+        DiagnosticLog.Write($"Power notification setup: window_handle_created={(Handle != IntPtr.Zero)} registered={(_powerNotify != IntPtr.Zero)}" +
             (_powerNotify == IntPtr.Zero ? $" win32={Marshal.GetLastWin32Error()}" : "") + $" display={PowerWake.Monitor}.");
     }
 
