@@ -1,3 +1,7 @@
+## v1.7.5 (rev9 private diagnostic test build - do not publish)
+
+- rev9: experiment - the phone mouse now moves the pointer with SetCursorPos (direct position set) instead of injected relative SendInput moves, because on the owner's PC injected moves are silently dropped whenever no app window exists. Buttons, wheel and keys are unchanged. SetCursorPos failures are logged on state change through the bounded diagnostic log. Known trade-off: no WM_MOUSEMOVE is generated, so hover effects appear only with real device input.
+
 ## v1.7.4 (rev8 private diagnostic test build - do not publish)
 
 - Test build for "phone starts a movie but the mouse does nothing". The cause is NOT proven. This version loosens the screen-off check on mouse movement, clicks, keys and volume (a likely contributor) and writes a short local log (helper.log, never uploaded) about whether the pointer moves, is shown, and whether a higher-privilege app is in front. Please run it and tell us what happens.

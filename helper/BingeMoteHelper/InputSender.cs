@@ -66,6 +66,28 @@ internal static class InputSender
     // into the next batch instead.
     private static float _fracX, _fracY;
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT p);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int x, y; }
+
+    // State-change logging for the experiment, like SendInputTracker but for one bool.
+    private static bool _setPosFailing;
+
+    // rev9 EXPERIMENT (test build only): move the cursor with SetCursorPos instead of an
+    // injected relative SendInput move. On the owner's machine, injected moves stop
+    // reaching the cursor whenever no app window exists (bare desktop, helper in tray):
+    // SendInput reports success but the position never changes. SetCursorPos sets the
+    // position directly - no input events, no foreground or UIPI involvement - so it
+    // cannot be gated by which windows exist. GetCursorPos and SetCursorPos share this
+    // process's coordinate space (DPI-virtualized the same way), so the pair is
+    // self-consistent. Buttons, wheel and keys stay on SendInput. Known trade-off if
+    // this ships: no WM_MOUSEMOVE is generated, so hover effects (tooltips, hover
+    // highlights) only appear when real input arrives from another device.
     public static void Move(float dx, float dy)
     {
         lock (Gate)
@@ -73,7 +95,22 @@ internal static class InputSender
             _fracX += dx; _fracY += dy;
             var ix = (int)Math.Round(_fracX); var iy = (int)Math.Round(_fracY);
             _fracX -= ix; _fracY -= iy;
-            if (ix != 0 || iy != 0) Send(Mouse(MOUSEEVENTF_MOVE, ix, iy));
+            if (ix == 0 && iy == 0) return;
+            if (!GetCursorPos(out var p)) return;
+            Marshal.SetLastPInvokeError(0);
+            var ok = SetCursorPos(p.x + ix, p.y + iy);
+            var err = Marshal.GetLastPInvokeError();
+            // Log only on state change, through the bounded writer.
+            if (!ok && !_setPosFailing)
+            {
+                _setPosFailing = true;
+                DiagnosticLog.Write($"SetCursorPos FAILED (win32={err}); a clip or a secure desktop can do this.");
+            }
+            else if (ok && _setPosFailing)
+            {
+                _setPosFailing = false;
+                DiagnosticLog.Write("SetCursorPos recovered.");
+            }
         }
     }
 
