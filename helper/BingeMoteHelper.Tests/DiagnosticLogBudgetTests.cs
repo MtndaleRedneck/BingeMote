@@ -1,25 +1,21 @@
 using BingeMoteHelper;
 using Xunit;
-
 namespace BingeMoteHelper.Tests;
-
 public class DiagnosticLogBudgetTests
 {
-    [Fact]
-    public void ChangingStateDoesNotBypassSixtyLineLimit()
+    [Fact] public void MoveSamplesCannotStarveFaults()
     {
-        var budget = new DiagnosticLogBudget();
-        for (var i = 0; i < 60; i++) Assert.True(budget.TryTake(i));
-        for (var i = 60; i < 10000; i++) Assert.False(budget.TryTake(i));
+        var b = new DiagnosticLogBudget();
+        for (int i=0;i<12;i++) Assert.True(b.TryTake(i));
+        for (int i=12;i<10000;i++) Assert.False(b.TryTake(i));
+        for (int i=0;i<48;i++) Assert.True(b.TryTake(10000+i, true));
+        Assert.False(b.TryTake(11000,true));
     }
-
-    [Fact]
-    public void RollingWindowDoesNotAllowDoubleBurstAtMinuteBoundary()
+    [Fact] public void RollingWindowDoesNotAllowDoubleBurstAtBoundary()
     {
-        var budget = new DiagnosticLogBudget();
-        for (var i = 0; i < 60; i++) Assert.True(budget.TryTake(59999));
-        Assert.False(budget.TryTake(60000));
-        Assert.False(budget.TryTake(119998));
-        Assert.True(budget.TryTake(119999));
+        var b = new DiagnosticLogBudget();
+        for(int i=0;i<12;i++) Assert.True(b.TryTake(59999));
+        Assert.False(b.TryTake(60000)); Assert.False(b.TryTake(119998));
+        Assert.True(b.TryTake(119999));
     }
 }

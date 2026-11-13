@@ -3,51 +3,66 @@ using System.Threading.Channels;
 
 namespace BingeMoteHelper;
 
-/// <summary>Shared rolling-minute budget, including diagnostic state transitions.</summary>
+/// <summary>Separate rolling budgets: samples cannot consume fault/transition capacity.</summary>
 internal sealed class DiagnosticLogBudget
 {
-    private readonly Queue<long> _times = new();
-    internal bool TryTake(long nowMilliseconds)
+    private readonly Queue<long> _samples = new(), _faults = new();
+    internal bool TryTake(long nowMilliseconds, bool fault = false)
     {
-        while (_times.Count > 0 && nowMilliseconds - _times.Peek() >= 60_000) _times.Dequeue();
-        if (_times.Count >= 60) return false;
-        _times.Enqueue(nowMilliseconds);
+        var times = fault ? _faults : _samples;
+        while (times.Count > 0 && nowMilliseconds - times.Peek() >= 60_000) times.Dequeue();
+        if (times.Count >= (fault ? 48 : 12)) return false;
+        times.Enqueue(nowMilliseconds);
         return true;
     }
 }
 
-/// <summary>Bounded, best-effort local diagnostics. No disk writes on input threads.
-/// At most 60 lines in any rolling minute, including all state changes. Excess lines
-/// are dropped; this trades exhaustive logging for keeping input responsive.</summary>
+/// <summary>At most 12 sampled move lines plus 48 fault/transition lines in any rolling
+/// minute. Separate bounded queues reserve fault capacity. Admission is reported to
+/// callers. No disk write or queue wait on input threads. Queued lines can be lost at exit.</summary>
 internal static class DiagnosticLog
 {
     private static readonly object Gate = new();
     private static readonly DiagnosticLogBudget Budget = new();
-    private static readonly Channel<string> Pending = Channel.CreateBounded<string>(
-        new BoundedChannelOptions(64) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+    private static readonly Channel<string> Samples = MakeQueue(12), Faults = MakeQueue(48);
+    private static long _sampleDropped, _faultDropped;
+    private static Channel<string> MakeQueue(int capacity) => Channel.CreateBounded<string>(
+        new BoundedChannelOptions(capacity) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
 
     static DiagnosticLog()
     {
         _ = Task.Run(async () =>
         {
-            await foreach (var line in Pending.Reader.ReadAllAsync())
+            while (true)
             {
-                Program.Log(line);
+                string? line;
+                if (Faults.Reader.TryRead(out line) || Samples.Reader.TryRead(out line))
+                {
+                    try { Program.Log(line); } catch { /* keep the diagnostic worker alive */ }
+                }
+                else await Task.Delay(100);
             }
         });
     }
 
-    internal static void Write(string line)
+    internal static bool Write(string line) => Admit(line, true);
+    internal static bool Sample(string line) => Admit(line, false);
+    private static bool Admit(string line, bool fault)
     {
         try
         {
-          lock (Gate)
-          {
-            var milliseconds = (long)(Stopwatch.GetTimestamp() * (1000.0 / Stopwatch.Frequency));
-            if (!Budget.TryTake(milliseconds)) return;
-            Pending.Writer.TryWrite(line); // never wait for the worker or disk
-          }
+            lock (Gate)
+            {
+                var milliseconds = (long)(Stopwatch.GetTimestamp() * (1000.0 / Stopwatch.Frequency));
+                ref long dropped = ref (fault ? ref _faultDropped : ref _sampleDropped);
+                var queue = fault ? Faults : Samples;
+                if (!Budget.TryTake(milliseconds, fault)) { dropped++; return false; }
+                var message = line + (dropped > 0 ? $" diagnostic_lines_dropped={dropped}" : "");
+                if (!queue.Writer.TryWrite(message)) { dropped++; return false; }
+                dropped = 0;
+                return true;
+            }
         }
-        catch { /* diagnostics must never escape into the input path */ }
+        catch { return false; }
     }
 }

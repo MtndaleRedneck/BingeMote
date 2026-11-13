@@ -28,6 +28,7 @@ internal static class MoveDiag
     public static void RecordSwallowed() { if (!Enabled) return; lock (Gate) { _swallowed++; _hadActivity = true; } }
 
     private static long _inputCount;
+    private static DateTime _sampleAt = DateTime.MinValue;
     private static readonly object LogGate = new();
     private static bool _showTriedThisEpisode;
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int ShowCursor(bool show);
@@ -52,6 +53,11 @@ internal static class MoveDiag
         if (!Enabled) return;
         var n = System.Threading.Interlocked.Increment(ref _inputCount);
         var now = DateTime.UtcNow;
+        lock (LogGate)
+        {
+            if (now - _sampleAt < TimeSpan.FromSeconds(5)) return;
+            _sampleAt = now;
+        }
         var after = CursorProbe.Pos(); // cheap, and the actual motion detector: read every frame
         var moved = CursorProbe.Moved(before, after);
         var extra = "";
@@ -80,7 +86,7 @@ internal static class MoveDiag
         }
         var line = $"Mouse input #{n} via={via} swallowed={swallowed} cursor_moved={moved} cursor_api={vis} mouse_present={present} foreground_elevation={elev} display={PowerWake.Monitor}{extra}";
         if (elev == "elevated") line += " NOTE: a higher-privilege app is in front; Windows may ignore input from BingeMote. BingeMote does not elevate itself.";
-        DiagnosticLog.Write(line);
+        DiagnosticLog.Sample(line);
     }
 
     public static void RecordMove(bool viaLiveSocket)
@@ -120,7 +126,7 @@ internal static class MoveDiag
         var avg = _gapCount > 0 ? _gapSumMs / _gapCount : 0;
         var pos = CursorProbe.Pos();
         var moved = CursorProbe.Moved(_posAtWindowStart, pos); _posAtWindowStart = pos;
-        DiagnosticLog.Write($"Mouse diag: ws_received={_ws} http_received={_http} swallowed_by_wake_filter={_swallowed} cursor_moved={moved} cursor_api={CursorProbe.Visibility()} mouse_present={CursorProbe.MousePresent()} foreground_elevation={CursorProbe.ForegroundElevation()} display={PowerWake.Monitor}; " +
+        DiagnosticLog.Sample($"Mouse diag: ws_received={_ws} http_received={_http} swallowed_by_wake_filter={_swallowed} cursor_moved={moved} cursor_api={CursorProbe.Visibility()} mouse_present={CursorProbe.MousePresent()} foreground_elevation={CursorProbe.ForegroundElevation()} display={PowerWake.Monitor}; " +
             (_gapCount > 0 ? $"arrival gaps min/avg/max {_gapMinMs}/{avg}/{_gapMaxMs} ms." : "single frame."));
         _ws = _http = _swallowed = 0; _gapMinMs = long.MaxValue; _gapMaxMs = 0; _gapSumMs = _gapCount = 0;
         _windowStart = now; _hadActivity = false;

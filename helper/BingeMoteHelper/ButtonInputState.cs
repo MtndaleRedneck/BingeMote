@@ -31,7 +31,12 @@ internal sealed class ButtonInputState
         {
             foreach (var button in _pressed.ToArray())
             {
-                try { if (inject(button, false)) _pressed.Remove(button); } catch { }
+                try
+                {
+                    if (inject(button, false) || inject(button, false)) _pressed.Remove(button);
+                    else DiagnosticLog.Write("Held-button cleanup failed after two release attempts.");
+                }
+                catch { /* cleanup must continue for other held buttons */ }
             }
         }
     }

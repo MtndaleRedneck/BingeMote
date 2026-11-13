@@ -1,6 +1,7 @@
-## v1.7.4 (rev7 private diagnostic test build - do not publish)
+## v1.7.4 (rev8 private diagnostic test build - do not publish)
 
 - Test build for "phone starts a movie but the mouse does nothing". The cause is NOT proven. This version loosens the screen-off check on mouse movement, clicks, keys and volume (a likely contributor) and writes a short local log (helper.log, never uploaded) about whether the pointer moves, is shown, and whether a higher-privilege app is in front. Please run it and tell us what happens.
+- rev8: Move samples are limited to 12 lines/minute, with 48 lines/minute reserved for faults and transitions; separate bounded queues prevent sample starvation. SendInput summaries remain pending if logging rejects them. Dropped-line counts accompany later accepted lines.
 - rev7: Button-up bypasses wake filtering only after an accepted down, with per-phone HTTP and per-connection WS ownership. Optional diagnostics are exception-guarded. SendInput failure detection now uses the returned event count, including failures with error zero. All new diagnostic output shares a 60-line rolling-minute limit and uses a bounded background writer instead of writing logs on input threads. Excess lines and queued lines at shutdown can be lost.
 - rev6: the log now also records when a click/key/volume press is swallowed by the screen-off check, and when Windows refuses injected input outright (it does so silently while a lock screen, UAC prompt or an app run as administrator is in front). Pointer probes in the move stream are now cached 4x a second so the diagnostics cannot slow movement.
 

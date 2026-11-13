@@ -1,23 +1,27 @@
 namespace BingeMoteHelper;
 
-/// <summary>
-/// Decides whether a SendInput call failed. Failure is sent &lt; requested,
-/// whatever GetLastError says: Windows can reject injected input (UIPI, an elevated
-/// foreground app) and leave the error at 0. Logs the failure with the error value even
-/// if zero, then "recovered" only after a later call sends everything.
-/// </summary>
+/// <summary>Return count determines failure, even with Win32 error zero. Pending
+/// failures and recovery are retained until the bounded logger admits their summary.</summary>
 internal static class SendInputTracker
 {
     private static readonly object Gate = new();
-    private static bool _failing;
+    private static bool _failing, _failureReported, _recoveryPending;
     private static long _failuresSinceLog;
+    private static uint _pendingSent, _pendingRequested;
+    private static int _pendingError;
     private static DateTime _lastLog = DateTime.MinValue;
     internal static Func<DateTime> Now = () => DateTime.UtcNow;
 
-    internal static void ResetForTest() { lock (Gate) { _failing = false; _failuresSinceLog = 0; _lastLog = DateTime.MinValue; Now = () => DateTime.UtcNow; } }
+    internal static void ResetForTest()
+    {
+        lock (Gate)
+        {
+            _failing = _failureReported = _recoveryPending = false;
+            _failuresSinceLog = 0; _lastLog = DateTime.MinValue; Now = () => DateTime.UtcNow;
+        }
+    }
 
-    /// <summary>Returns true when the call failed (sent &lt; requested).</summary>
-    internal static bool Record(uint requested, uint sent, int lastError, Action<string> log)
+    internal static bool Record(uint requested, uint sent, int lastError, Func<string, bool> log)
     {
         var failed = sent < requested;
         lock (Gate)
@@ -25,19 +29,25 @@ internal static class SendInputTracker
             if (failed)
             {
                 _failuresSinceLog++;
-                var now = Now();
-                // First failure of a run logs at once; a continuing run logs at most every 10 s.
-                if (!_failing || now - _lastLog >= TimeSpan.FromSeconds(10))
-                {
-                    log($"SendInput rejected input: sent={sent} of requested={requested}, win32_error={lastError}{(lastError == 0 ? " (zero does not identify the cause; UIPI blocking is one possibility)" : "")}, failures_since_last_log={_failuresSinceLog}.");
-                    _lastLog = now; _failuresSinceLog = 0;
-                }
+                _pendingSent = sent; _pendingRequested = requested; _pendingError = lastError;
                 _failing = true;
             }
             else if (_failing)
             {
-                log($"SendInput recovered: sent={sent} of requested={requested}.");
-                _failing = false; _failuresSinceLog = 0;
+                _recoveryPending = true;
+                _failing = false;
+            }
+            var now = Now();
+            // No count/timestamp is cleared unless the corresponding line was admitted.
+            if (_failuresSinceLog > 0 && (!_failureReported || _recoveryPending || now - _lastLog >= TimeSpan.FromSeconds(10)))
+            {
+                if (!log($"SendInput rejected input: sent={_pendingSent} of requested={_pendingRequested}, win32_error={_pendingError}{(_pendingError == 0 ? " (zero does not identify the cause; UIPI blocking is one possibility)" : "")}, failures_since_last_log={_failuresSinceLog}.")) return failed;
+                _lastLog = now; _failuresSinceLog = 0; _failureReported = true;
+            }
+            if (_recoveryPending)
+            {
+                if (!log("SendInput recovered after a full successful send (pending recovery summary).")) return failed;
+                _recoveryPending = false; _failureReported = false;
             }
         }
         return failed;
