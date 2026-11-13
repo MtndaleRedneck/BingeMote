@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("UipiBlocker")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+775ce0ca951c1e0d2bb6d1d7adfb112e0e834464")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9b71314c1201ab0a25d8aa92d18e5a90d8f6c545")]
 [assembly: System.Reflection.AssemblyProductAttribute("UipiBlocker")]
 [assembly: System.Reflection.AssemblyTitleAttribute("UipiBlocker")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
