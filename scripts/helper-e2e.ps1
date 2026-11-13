@@ -238,7 +238,7 @@ public static class WinEnum {
         if ($wpid -eq $p.Id) {
             $t = New-Object System.Text.StringBuilder 256; [void][WinEnum]::GetWindowTextW($h, $t, $t.Capacity)
             $c = New-Object System.Text.StringBuilder 128; [void][WinEnum]::GetClassNameW($h, $c, $c.Capacity)
-            $windows.Add("hwnd=0x{0:X} visible={1} class={2} title="{3}"" -f $h.ToInt64(), [WinEnum]::IsWindowVisible($h), $c, $t)
+                        $windows.Add(('hwnd=0x{0:X} visible={1} class={2} title="{3}"' -f $h.ToInt64(), [WinEnum]::IsWindowVisible($h), $c, $t))
         }
         return $true
     }
