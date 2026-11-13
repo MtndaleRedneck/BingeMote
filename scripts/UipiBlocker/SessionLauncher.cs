@@ -46,7 +46,7 @@ internal static class SessionLauncher
             if (!DuplicateTokenEx(own, 0x02000000, IntPtr.Zero, 2 /* SecurityImpersonation */, 1 /* TokenPrimary */, out dup))
                 return Fail("DuplicateTokenEx", logTag);
             var session = target;
-            if (!SetTokenInformation(dup, 9 /* TokenSessionId */, ref session, 4))
+            if (!SetTokenInformation(dup, 12 /* TokenSessionId */, ref session, 4))
                 return Fail("SetTokenInformation", logTag);
             if (!CreateEnvironmentBlock(out env, dup, false)) env = IntPtr.Zero; // fall back to inheriting ours
             var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>(), desktop = "winsta0\\default" };

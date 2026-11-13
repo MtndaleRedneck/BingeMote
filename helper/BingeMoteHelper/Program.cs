@@ -144,9 +144,20 @@ internal static class Program
             // Task Scheduler starts a SYSTEM task in session 0; input injected there
             // never reaches the user's desktop, so hop into the active console
             // session first (no-op when we are already in it).
-            Directory.CreateDirectory(DataDir);
-            if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
-            return InputBroker.Run();
+            // Crash evidence: the DiagnosticLog queue flushes on a 100ms poll, so a
+            // fast broker death loses every line. Log synchronously here instead.
+            try
+            {
+                Directory.CreateDirectory(DataDir);
+                Log("input_broker boot pid=" + Environment.ProcessId + " session=" + Process.GetCurrentProcess().SessionId);
+                if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
+                return InputBroker.Run();
+            }
+            catch (Exception ex)
+            {
+                try { Log("input_broker CRASH " + ex); } catch { }
+                return 42;
+            }
         }
 
 #if WINDOW_SHOT_HOOK
