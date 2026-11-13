@@ -24,7 +24,7 @@ internal static class InputBrokerClient
             if (DateTime.UtcNow < _retryAfter) return false;
             try
             {
-                using var pipe = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.None);
+                using var pipe = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous); // async handle: Read/WriteTimeout below throw InvalidOperationException on a synchronous pipe
                 pipe.Connect(200);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
