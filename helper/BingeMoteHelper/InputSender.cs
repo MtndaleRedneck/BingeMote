@@ -5,6 +5,11 @@ namespace BingeMoteHelper;
 /// <summary>Plays mouse and keyboard input back into Windows with SendInput.</summary>
 internal static class InputSender
 {
+    // rev11: when false (broker mode), ops play locally and never route back over the pipe.
+    internal static bool BrokerRoutingEnabled = true;
+
+    private static string F(float v) => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
@@ -90,6 +95,7 @@ internal static class InputSender
     // highlights) only appear when real input arrives from another device.
     public static void Move(float dx, float dy)
     {
+        if (InputBrokerClient.TryRun("m " + F(dx) + " " + F(dy))) return;
         lock (Gate)
         {
             _fracX += dx; _fracY += dy;
@@ -116,6 +122,7 @@ internal static class InputSender
 
     public static bool Button(string button, bool down)
     {
+        if (InputBrokerClient.TryRun("b " + button + (down ? " down" : " up"))) return true;
         var flags = button == "right"
             ? (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP)
             : (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP);
@@ -128,6 +135,7 @@ internal static class InputSender
 
     public static void Scroll(float dy)
     {
+        if (InputBrokerClient.TryRun("s " + F(dy))) return;
         // Windows wheel units: 120 per notch. Positive = up.
         lock (Gate)
         {
@@ -140,6 +148,7 @@ internal static class InputSender
 
     public static void Zoom(float delta)
     {
+        if (InputBrokerClient.TryRun("z " + F(delta))) return;
         // Ctrl+wheel is what most apps treat as zoom.
         lock (Gate)
         {
@@ -156,6 +165,7 @@ internal static class InputSender
     public static void TypeText(string text)
     {
         if (text.Length > 2000) text = text[..2000];
+        if (InputBrokerClient.TryRun("t " + Uri.EscapeDataString(text))) return;
         lock (Gate)
         {
             foreach (var c in text)
@@ -170,6 +180,7 @@ internal static class InputSender
 
     public static void NamedKey(string key)
     {
+        if (InputBrokerClient.TryRun("k " + key)) return;
         var vk = key switch
         {
             "enter" => (ushort)0x0D,

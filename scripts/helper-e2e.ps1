@@ -490,8 +490,101 @@ public static class WinEnum {
     Assert ($r.code -eq 200) "taking-over copy serves the saved token"
     $p = $p2
 
+    # --- rev11: SYSTEM input broker + UIPI replication (Ezzy's SwUSB mouse-freeze scenario) ---
+    Write-Host "== rev11 input broker =="
+    $probeSrc = @"
+using System;
+using System.Runtime.InteropServices;
+public static class Probe {
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] i, int cb);
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public MI mi; }
+    [StructLayout(LayoutKind.Sequential)] struct MI { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
+    public static bool SendMove(int dx, int dy) {
+        var a = new INPUT[1]; a[0].type = 0; a[0].mi.dx = dx; a[0].mi.dy = dy; a[0].mi.flags = 0x0001;
+        return SendInput(1, a, Marshal.SizeOf<INPUT>()) == 1;
+    }
+    public static POINT Pos() { POINT p; GetCursorPos(out p); return p; }
+    public static uint ForegroundPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }
+}
+"@
+    Add-Type -TypeDefinition $probeSrc
+
+    # Register and start the broker with the exact script the installer ships.
+    & powershell -NoProfile -ExecutionPolicy Bypass -File helper/register-broker.ps1 -ExePath (Resolve-Path $exe).Path
+    Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    $pipeUp = $false
+    foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
+    Assert $pipeUp "input broker pipe is listening"
+    $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | Select-Object -First 1
+    Assert ($null -ne $brokerProc) "broker process is running"
+    Assert ($brokerProc.SessionId -eq (Get-Process -Id $PID).SessionId) "broker runs in the interactive session $($brokerProc.SessionId), not session 0"
+    $brokerOwner = Invoke-CimMethod -InputObject $brokerProc -MethodName GetOwner
+    Assert ($brokerOwner.User -eq 'SYSTEM') "broker runs as SYSTEM (got $($brokerOwner.Domain)\$($brokerOwner.User))"
+
+    # Phone input routes through the broker and the cursor actually moves.
+    $b0 = [Probe]::Pos()
+    $r = Invoke-Helper '/mouse/move' '{"dx":60,"dy":0}' $token
+    Assert ($r.code -eq 200) "mouse/move with broker present"
+    Start-Sleep -Milliseconds 400
+    $a0 = [Probe]::Pos()
+    Assert ([math]::Abs($a0.X - $b0.X) -ge 40) "cursor moved through the broker ($($b0.X) -> $($a0.X))"
+    $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
+    Assert ($helperLog -match 'input_routing=broker') "helper log confirms broker routing"
+
+    # Recreate the SwUSB condition: a SYSTEM-integrity window holds the foreground.
+    Write-Host "== rev11 UIPI replication =="
+    dotnet publish scripts/UipiBlocker -c Release -o "$env:TEMP\uipiblocker" | Out-Host
+    $blockerExe = Join-Path $env:TEMP 'uipiblocker\UipiBlocker.exe'
+    Assert (Test-Path $blockerExe) "blocker built"
+    $bAction = New-ScheduledTaskAction -Execute $blockerExe
+    $bTrigger = New-ScheduledTaskTrigger -AtLogOn
+    $bPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive -RunLevel Highest
+    Register-ScheduledTask -TaskName 'BingeMote UIPI Blocker' -Action $bAction -Trigger $bTrigger -Principal $bPrincipal -Force | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote UIPI Blocker'
+    $blockerProc = $null
+    foreach ($i in 1..40) {
+        $blockerProc = Get-CimInstance Win32_Process -Filter "Name='UipiBlocker.exe'" | Select-Object -First 1
+        if ($blockerProc) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert ($null -ne $blockerProc) "blocker process is running"
+    $blockerOwner = Invoke-CimMethod -InputObject $blockerProc -MethodName GetOwner
+    Assert ($blockerOwner.User -eq 'SYSTEM') "blocker runs as SYSTEM (got $($blockerOwner.Domain)\$($blockerOwner.User))"
+    $fgIsBlocker = $false
+    foreach ($i in 1..40) {
+        if ([Probe]::ForegroundPid() -eq $blockerProc.ProcessId) { $fgIsBlocker = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert $fgIsBlocker "the SYSTEM blocker window holds the foreground (SwUSB condition reproduced)"
+
+    # The bug: a plain SendInput move from this harness (below SYSTEM IL) is swallowed.
+    [Probe]::SetCursorPos(300, 250) | Out-Null
+    Start-Sleep -Milliseconds 300
+    $b1 = [Probe]::Pos()
+    [Probe]::SendMove(80, 0) | Out-Null
+    Start-Sleep -Milliseconds 400
+    $a1 = [Probe]::Pos()
+    Assert ([math]::Abs($a1.X - $b1.X) -lt 20) "direct SendInput is blocked while a SYSTEM window holds foreground (bug reproduced: $($b1.X) -> $($a1.X))"
+
+    # The fix: phone input still moves the cursor, because the broker plays it at SYSTEM IL.
+    $b2 = [Probe]::Pos()
+    $r = Invoke-Helper '/mouse/move' '{"dx":80,"dy":0}' $token
+    Assert ($r.code -eq 200) "mouse/move under UIPI blocking"
+    Start-Sleep -Milliseconds 400
+    $a2 = [Probe]::Pos()
+    Assert ([math]::Abs($a2.X - $b2.X) -ge 40) "phone input still moves the cursor under UIPI blocking ($($b2.X) -> $($a2.X)) - fix verified"
+
     Write-Host "HELPER E2E PASSED"
 } finally {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    Get-Process UipiBlocker -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Unregister-ScheduledTask -TaskName 'BingeMote UIPI Blocker' -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'BingeMote Input Broker' -Confirm:$false -ErrorAction SilentlyContinue
     netsh advfirewall firewall delete rule name="BingeMote" | Out-Null
 }

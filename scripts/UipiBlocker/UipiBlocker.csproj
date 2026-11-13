@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- CI-only test double: mimics the Realtek SwUSB dialog - a window owned by a
+       SYSTEM process that holds the foreground so UIPI swallows lower-IL SendInput.
+       Never shipped; built and run only by scripts/helper-e2e.ps1. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+</Project>

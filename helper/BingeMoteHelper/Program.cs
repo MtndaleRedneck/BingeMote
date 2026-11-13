@@ -135,6 +135,15 @@ internal static class Program
             return FirewallSetup.RunElevated(FirewallMarker);
         }
 
+        // rev11: headless SYSTEM input broker (installed by the installer as a Task
+        // Scheduler SYSTEM task in the interactive session). No UI, no tray, no HTTP:
+        // it only plays input ops the per-user helper sends over the named pipe, so
+        // UIPI can no longer discard phone input while an elevated window holds focus.
+        if (args.Contains("--input-broker"))
+        {
+            return InputBroker.Run();
+        }
+
 #if WINDOW_SHOT_HOOK
         // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
         if (args.Contains("--window-shot"))

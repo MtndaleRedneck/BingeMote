@@ -1,0 +1,15 @@
+/tmp/bingemote-rev9/scripts/UipiBlocker/bin/Release/net8.0-windows/UipiBlocker
+/tmp/bingemote-rev9/scripts/UipiBlocker/bin/Release/net8.0-windows/UipiBlocker.deps.json
+/tmp/bingemote-rev9/scripts/UipiBlocker/bin/Release/net8.0-windows/UipiBlocker.runtimeconfig.json
+/tmp/bingemote-rev9/scripts/UipiBlocker/bin/Release/net8.0-windows/UipiBlocker.dll
+/tmp/bingemote-rev9/scripts/UipiBlocker/bin/Release/net8.0-windows/UipiBlocker.pdb
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.GeneratedMSBuildEditorConfig.editorconfig
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.AssemblyInfoInputs.cache
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.AssemblyInfo.cs
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.csproj.CoreCompileInputs.cache
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.sourcelink.json
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.dll
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/refint/UipiBlocker.dll
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.pdb
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/UipiBlocker.genruntimeconfig.cache
+/tmp/bingemote-rev9/scripts/UipiBlocker/obj/Release/net8.0-windows/ref/UipiBlocker.dll

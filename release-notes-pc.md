@@ -1,3 +1,7 @@
+## v1.7.7 (rev11 private diagnostic test build - do not publish)
+
+- rev11: the mouse can no longer be frozen by an elevated window holding the foreground (the SwUSB bug). The installer now registers a small "BingeMote Input Broker" task that runs at sign-in as SYSTEM inside your session; the helper sends phone input to it over a local named pipe, and it plays the input at an integrity level Windows never filters - the same trick Unified Remote gets from its driver, without a driver. If the broker is not there (old install), the helper plays input itself exactly as before. The broker has no window, no tray icon and no network access; it only accepts mouse, scroll, zoom and keyboard ops from local programs. Log lines: input_routing=broker / input_routing=local in the helper log; input_broker=listening in the broker's log. Removed again by the uninstaller. The rev9 SetCursorPos path, the rev10 presence window and the wake filter are unchanged.
+
 ## v1.7.6 (rev10 private diagnostic test build - do not publish)
 
 - rev10: the helper now owns one invisible 1x1 transparent click-through window for its whole lifetime (topmost tool window, never activated or shown, alpha 0), because the mouse died exactly when the helper owned no window. Startup logs presence_window=created or presence_window=FAILED to the local helper.log. The mouse diag now also logs which app is in front (process name, window class, title) when it changes, local log only. The rev9 SetCursorPos movement path and the wake filter are unchanged.

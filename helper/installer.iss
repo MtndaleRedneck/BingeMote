@@ -21,6 +21,7 @@ WizardStyle=modern
 
 [Files]
 Source: "out\BingeMote.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "register-broker.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; The installer owns the autostart entry so uninstall removes it; the app rewrites the same value.
@@ -46,11 +47,16 @@ Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote""
 Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;WD)"; Flags: runhidden waituntilterminated
+; rev11: register the SYSTEM input broker task (mouse freeze fix). The installer is
+; already elevated, so the task is created without any extra prompt; the broker
+; itself starts at the next sign-in.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-broker.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Input Broker"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delbroker"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
