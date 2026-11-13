@@ -66,6 +66,11 @@ try {
         Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe' or Name='UipiBlocker.exe'" | ForEach-Object { Write-Host "process: $($_.Name) pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
         Write-Host "== powercfg /requests =="
         powercfg /requests
+        $sysLog = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
+        if (Test-Path $sysLog) { Write-Host "== SYSTEM-profile helper.log =="; Get-Content $sysLog }
+        foreach ($tn in 'BingeMote Input Broker','BingeMote UIPI Blocker') {
+            try { $ti = Get-ScheduledTaskInfo -TaskName $tn; Write-Host "task ${tn}: LastRunTime=$($ti.LastRunTime) LastTaskResult=$($ti.LastTaskResult)" } catch { Write-Host "task ${tn}: not registered" }
+        }
         throw
     }
 
@@ -532,6 +537,13 @@ public static class Probe {
     Write-Host "harness session: $harnessSession"
     $pipeUp = $false
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
+    if (-not $pipeUp) {
+        $ti = Get-ScheduledTaskInfo -TaskName 'BingeMote Input Broker'
+        Write-Host "broker task: LastRunTime=$($ti.LastRunTime) LastTaskResult=$($ti.LastTaskResult)"
+        Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | ForEach-Object { Write-Host "process: pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
+        $sysLog = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
+        if (Test-Path $sysLog) { Write-Host "== SYSTEM-profile helper.log =="; Get-Content $sysLog } else { Write-Host "(no SYSTEM-profile helper.log)" }
+    }
     Assert $pipeUp "input broker pipe is listening"
     # The task starts in session 0 as SYSTEM; the broker relaunches itself into the
     # console session (the psexec -s -i pattern). Find that session copy.
