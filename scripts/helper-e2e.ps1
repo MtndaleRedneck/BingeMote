@@ -543,6 +543,10 @@ public static class Probe {
         Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | ForEach-Object { Write-Host "process: pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
         $sysLog = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
         if (Test-Path $sysLog) { Write-Host "== SYSTEM-profile helper.log =="; Get-Content $sysLog } else { Write-Host "(no SYSTEM-profile helper.log)" }
+        Write-Host "== recent Application event log (crash evidence) =="
+        Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -match '\.NET|Application Error|Windows Error Reporting' } |
+            Select-Object -First 8 | ForEach-Object { Write-Host ("event: " + $_.TimeCreated + " " + $_.ProviderName + " id=" + $_.Id + " :: " + ($_.Message -split "`n" | Select-Object -First 12 -join " | ")) }
     }
     Assert $pipeUp "input broker pipe is listening"
     # The task starts in session 0 as SYSTEM; the broker relaunches itself into the
