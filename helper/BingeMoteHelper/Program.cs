@@ -257,6 +257,7 @@ internal static class Program
 
         MigrateDataDir(); // the copy holding the mutex owns the one-time 1.x folder move
         Directory.CreateDirectory(DataDir);
+        PresenceWindow.Start(); // rev10: own one invisible window for the process lifetime (mouse freeze workaround)
         LoadConfig();
         if (LastRunVersion != VersionText)
         {

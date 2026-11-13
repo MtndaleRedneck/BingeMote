@@ -1,3 +1,7 @@
+## v1.7.6 (rev10 private diagnostic test build - do not publish)
+
+- rev10: the helper now owns one invisible 1x1 transparent click-through window for its whole lifetime (topmost tool window, never activated or shown, alpha 0), because the mouse died exactly when the helper owned no window. Startup logs presence_window=created or presence_window=FAILED to the local helper.log. The mouse diag now also logs which app is in front (process name, window class, title) when it changes, local log only. The rev9 SetCursorPos movement path and the wake filter are unchanged.
+
 ## v1.7.5 (rev9 private diagnostic test build - do not publish)
 
 - rev9: experiment - the phone mouse now moves the pointer with SetCursorPos (direct position set) instead of injected relative SendInput moves, because on the owner's PC injected moves are silently dropped whenever no app window exists. Buttons, wheel and keys are unchanged. SetCursorPos failures are logged on state change through the bounded diagnostic log. Known trade-off: no WM_MOUSEMOVE is generated, so hover effects appear only with real device input.

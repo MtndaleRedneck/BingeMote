@@ -39,6 +39,7 @@ internal static class MoveDiag
     private static DateTime _probeAt = DateTime.MinValue;
     private static string _visCache = "unknown", _elevCache = "unknown";
     private static bool _presentCache;
+    private static string _foregroundCache = "";
 
     /// <summary>Local pointer probes. All output uses the shared bounded asynchronous
     /// diagnostic writer: state changes cannot bypass its 60-lines/minute limit.</summary>
@@ -70,6 +71,13 @@ internal static class MoveDiag
                 _visCache = CursorProbe.Visibility();
                 _presentCache = CursorProbe.MousePresent();
                 _elevCache = CursorProbe.ForegroundElevation();
+                // rev10: which app is in front when the phone mouse is used, logged on change.
+                var foreground = CursorProbe.ForegroundIdentity();
+                if (foreground != _foregroundCache)
+                {
+                    _foregroundCache = foreground;
+                    DiagnosticLog.Write($"foreground_changed {foreground}");
+                }
             }
             vis = _visCache; present = _presentCache; elev = _elevCache;
             // CANDIDATE (not proven): one real ShowCursor(true) per hidden episode. It is
