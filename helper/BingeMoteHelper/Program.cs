@@ -141,6 +141,11 @@ internal static class Program
         // UIPI can no longer discard phone input while an elevated window holds focus.
         if (args.Contains("--input-broker"))
         {
+            // Task Scheduler starts a SYSTEM task in session 0; input injected there
+            // never reaches the user's desktop, so hop into the active console
+            // session first (no-op when we are already in it).
+            Directory.CreateDirectory(DataDir);
+            if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
             return InputBroker.Run();
         }
 

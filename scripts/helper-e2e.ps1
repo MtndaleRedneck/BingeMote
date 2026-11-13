@@ -517,14 +517,20 @@ public static class Probe {
     # Register and start the broker with the exact script the installer ships.
     & powershell -NoProfile -ExecutionPolicy Bypass -File helper/register-broker.ps1 -ExePath (Resolve-Path $exe).Path
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    $harnessSession = (Get-Process -Id $PID).SessionId
+    Write-Host "harness session: $harnessSession"
     $pipeUp = $false
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
     Assert $pipeUp "input broker pipe is listening"
-    $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | Select-Object -First 1
-    Assert ($null -ne $brokerProc) "broker process is running"
-    $harnessSession = (Get-Process -Id $PID).SessionId
-    if ($harnessSession -eq 0) { Write-Host "note: this CI runner itself lives in session 0; the At-Logon trigger lands in the user's session on a real PC" }
-    Assert ($brokerProc.SessionId -eq $harnessSession) "broker runs in the same session as the interactive user (session $($brokerProc.SessionId))"
+    # The task starts in session 0 as SYSTEM; the broker relaunches itself into the
+    # console session (the psexec -s -i pattern). Find that session copy.
+    $brokerProc = $null
+    foreach ($i in 1..40) {
+        $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' -and $_.SessionId -eq $harnessSession } | Select-Object -First 1
+        if ($brokerProc) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert ($null -ne $brokerProc) "broker relaunched into the console session $harnessSession (not stuck in session 0)"
     $brokerOwner = Invoke-CimMethod -InputObject $brokerProc -MethodName GetOwner
     Assert ($brokerOwner.User -eq 'SYSTEM') "broker runs as SYSTEM (got $($brokerOwner.Domain)\$($brokerOwner.User))"
 
@@ -550,11 +556,11 @@ public static class Probe {
     Start-ScheduledTask -TaskName 'BingeMote UIPI Blocker'
     $blockerProc = $null
     foreach ($i in 1..40) {
-        $blockerProc = Get-CimInstance Win32_Process -Filter "Name='UipiBlocker.exe'" | Select-Object -First 1
+        $blockerProc = Get-CimInstance Win32_Process -Filter "Name='UipiBlocker.exe'" | Where-Object { $_.SessionId -eq $harnessSession } | Select-Object -First 1
         if ($blockerProc) { break }
         Start-Sleep -Milliseconds 500
     }
-    Assert ($null -ne $blockerProc) "blocker process is running"
+    Assert ($null -ne $blockerProc) "blocker process is running in the console session $harnessSession"
     $blockerOwner = Invoke-CimMethod -InputObject $blockerProc -MethodName GetOwner
     Assert ($blockerOwner.User -eq 'SYSTEM') "blocker runs as SYSTEM (got $($blockerOwner.Domain)\$($blockerOwner.User))"
     $fgIsBlocker = $false

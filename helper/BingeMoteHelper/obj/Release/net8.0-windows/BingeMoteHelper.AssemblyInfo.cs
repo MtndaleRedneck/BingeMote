@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("BingeMote for Windows: mouse and keyboard control for the BingeMote Android app.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.7.7.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.7.7.0+c4d310c8bdc246f6ff79304c3c786c4062b425e2")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.7.7.0+775ce0ca951c1e0d2bb6d1d7adfb112e0e834464")]
 [assembly: System.Reflection.AssemblyProductAttribute("BingeMote")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BingeMote")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.7.7.0")]

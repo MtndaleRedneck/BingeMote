@@ -17,6 +17,10 @@ internal static class BlockerProgram
 
     private static void Main()
     {
+        // Started as SYSTEM by Task Scheduler we land in session 0, whose desktop the
+        // test harness cannot see; hop into the active console session first.
+        if (SessionLauncher.RelaunchIntoActiveConsoleSession("", "blocker")) return;
+
         // Take the foreground lock off so SetForegroundWindow always wins.
         SystemParametersInfo(0x2001 /* SPI_SETFOREGROUNDLOCKTIMEOUT */, 0, IntPtr.Zero, 0);
         var t = new Thread(() =>
