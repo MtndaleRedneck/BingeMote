@@ -33,7 +33,9 @@ if (Test-Path $legacyDir) {
   if (Test-Path $legacyDir) { Write-Host "warning: legacy copy still present at $legacyDir" }
   else { Write-Host "ok: removed legacy per-user copy at $legacyDir" }
 }
-& schtasks.exe /Delete /TN "BingeMote Watchdog" /F 2>$null | Out-Null
+# try/catch: pwsh 7.4+ turns a nonzero native exit (task absent) into a terminating
+# error under ErrorActionPreference=Stop, which must not abort broker registration.
+try { & schtasks.exe /Delete /TN "BingeMote Watchdog" /F 2>$null | Out-Null } catch { }
 
 $action = New-ScheduledTaskAction -Execute $exe -Argument '--input-broker'
 $trigger = New-ScheduledTaskTrigger -AtLogOn

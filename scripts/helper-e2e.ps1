@@ -84,7 +84,7 @@ if ($LASTEXITCODE -ne 0) { throw "silent upgrade reinstall failed with exit $LAS
 # (protected) path after register-broker.ps1 deleted the stale task.
 $wdOk = $false
 for ($i = 0; $i -lt 10 -and -not $wdOk; $i++) {
-  $wdXml = schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String
+  $wdXml = try { schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String } catch { '' }
   if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else { Start-Sleep -Seconds 2 }
 }
 if (-not $wdOk) { throw "rev15: watchdog task not re-registered at the protected copy" }
