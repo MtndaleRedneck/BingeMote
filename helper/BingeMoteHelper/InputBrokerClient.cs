@@ -24,14 +24,16 @@ internal static class InputBrokerClient
             if (DateTime.UtcNow < _retryAfter) return false;
             try
             {
-                using var pipe = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous); // async handle: Read/WriteTimeout below throw InvalidOperationException on a synchronous pipe
-                pipe.Connect(200);
+                using var pipe = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous); // async handle: real overlapped IO, cancelled on dispose
+                pipe.Connect(1000);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
                 using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-                pipe.WriteTimeout = 1000;
-                pipe.ReadTimeout = 1000;
-                writer.WriteLine(opLine);
-                var reply = reader.ReadLine();
+                // .NET 8's PipeStream.ReadTimeout/WriteTimeout throw InvalidOperationException
+                // ("Timeouts are not supported on this stream") on this stream in both sync and
+                // async modes (CI run 43532556389), so bound the round-trip with WaitAsync instead;
+                // on timeout the abandoned overlapped op is cancelled when the pipe is disposed.
+                writer.WriteLineAsync(opLine).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+                var reply = reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
                 if (reply == "ok")
                 {
                     if (!_everUsed)
