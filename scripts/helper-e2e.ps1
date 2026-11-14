@@ -661,9 +661,14 @@ public static class Probe {
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Seconds 2
     $fake = Start-Job {
-        $srv = New-Object System.IO.Pipes.NamedPipeServerStream('BingeMoteInputBroker', 'InOut', 1, 'Byte', 'None')
-        $srv.WaitForConnection()
-        Start-Sleep -Seconds 60
+        # Loop: Test-Path probes and the helper's own connects each consume one accept,
+        # so re-listen after every connection or the real client finds the pipe busy.
+        while ($true) {
+            $srv = New-Object System.IO.Pipes.NamedPipeServerStream('BingeMoteInputBroker', 'InOut', 4, 'Byte', 'None')
+            $srv.WaitForConnection()
+            Start-Sleep -Milliseconds 250
+            $srv.Dispose()
+        }
     }
     foreach ($i in 1..20) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 250 }
     # Fresh helper so its client has no cached connection or backoff state.
