@@ -18,6 +18,10 @@ AppVerName=BingeMote {#MyAppVersion}
 DefaultDirName={commonpf}\BingeMote
 DefaultGroupName=BingeMote
 PrivilegesRequired=admin
+; 64-bit install mode so {commonpf} is C:\Program Files (not the x86 view the
+; 32-bit installer would otherwise target). The exe is x64 self-contained.
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=BingeMote-PC-{#MyAppVersion}
 SetupIconFile=Assets\bingemote.ico
 UninstallDisplayIcon={app}\BingeMote.exe
