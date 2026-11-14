@@ -69,9 +69,33 @@ jobs:
       - name: Helper unit tests
         run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
 
-      - name: Publish helper exe
+      # SHIPPING build. No CI hooks and no TRACE: DefineConstants is pinned empty so
+      # the hook code (BROKER_TEST_HOOK: --broker-hold/--broker-flood; PAIR_CODE_HOOK:
+      # fixed pairing codes; KEEPAWAKE_HOOK: /ci/hold; WINDOW_SHOT_HOOK: --window-shot)
+      # is compiled OUT of the exe that ships in BingeMote-PC-*.exe. The hooked build
+      # the e2e runs against is a separate publish inside the helper-e2e job below and
+      # never leaves that job.
+      - name: Publish helper exe (shipping build: no CI hooks, no TRACE)
         run: |
-          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=" -o helper/out
+
+      # Prove it at the binary level on every build: the shipped raw exe must contain
+      # neither the hook verbs (string literals, stored UTF-16) nor the hook symbols
+      # (metadata, stored UTF-8). The installer compresses its payload, so only the
+      # raw exe can be scanned - scan both alignments of a UTF-16 decode for literals.
+      - name: Verify the shipping exe carries no CI hooks
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("helper/out/BingeMote.exe")
+          $even = [Text.Encoding]::Unicode.GetString($bytes, 0, $bytes.Length - ($bytes.Length % 2))
+          $odd  = [Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 1 - (($bytes.Length - 1) % 2))
+          $meta = [Text.Encoding]::UTF8.GetString($bytes)
+          $literals = @('--broker-hold', '--broker-flood', '--window-shot', '--osd-shot', 'ci/hold')
+          $symbols  = @('BrokerTestHook', 'BROKER_TEST_HOOK', 'PAIR_CODE_HOOK', 'KEEPAWAKE_HOOK', 'WINDOW_SHOT_HOOK')
+          $bad = @()
+          foreach ($m in $literals) { if ($even.Contains($m) -or $odd.Contains($m)) { $bad += "literal '$m'" } }
+          foreach ($m in $symbols)  { if ($meta.Contains($m)) { $bad += "symbol '$m'" } }
+          if ($bad.Count) { throw "shipping exe contains CI hook markers: $($bad -join ', ')" }
+          Write-Host "clean: the shipping exe contains no CI hook markers ($($bytes.Length) bytes scanned)"
 
       - name: Name the exe (helper versions separately from the app)
         run: |
@@ -105,7 +129,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Publish helper exe (with the CI-only pairing hook)
+      # TEST build: the only build with the CI hooks. Runs the e2e below and builds
+      # the installer for the install/uninstall test; none of its outputs ship.
+      - name: Publish TEST helper exe (CI hooks; never shipped)
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
 
       # The movies test launches real VLC; install it as its own step so a mirror hiccup is visible.
