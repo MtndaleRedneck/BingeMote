@@ -73,7 +73,7 @@ internal static class MoveDiag
                 _visCache = CursorProbe.Visibility();
                 _presentCache = CursorProbe.MousePresent();
                 _elevCache = CursorProbe.ForegroundElevation();
-            }            }
+            }
             vis = _visCache; present = _presentCache; elev = _elevCache;
             // CANDIDATE (not proven): one real ShowCursor(true) per hidden episode. It is
             // per-thread, so it may change nothing; the log says whether visibility changed.
