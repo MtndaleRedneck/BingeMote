@@ -191,6 +191,9 @@ internal static class InputBroker
                 var w = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
                 await w.WriteLineAsync("err unauthorized");
                 await w.FlushAsync();
+                // Give the client a beat to actually read the reply before we drop the
+                // pipe, so a rejection is observable instead of racing the dispose.
+                await pipe.WaitForPipeDrainAsync().WaitAsync(TimeSpan.FromSeconds(2));
             }
             catch { }
             return;

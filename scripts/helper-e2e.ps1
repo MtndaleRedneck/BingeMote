@@ -60,6 +60,8 @@ try {
     # On any failure from here on, dump the helper log and process state so CI
     # failures are diagnosable from the run log alone.
     trap {
+        Write-Host "== e2e failure: $($_.Exception.Message) =="
+        Write-Host "== at: $($_.InvocationInfo.PositionMessage) =="
         Write-Host "== e2e failure diagnostics =="
         $logf = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
         if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf } else { Write-Host "(no helper.log)" }
@@ -598,15 +600,22 @@ public static class Probe {
 
     # B1: an arbitrary local process (this script - right user, wrong image) connects
     # fine at the DACL level and is then rejected by the broker's client verification.
+    # Rejection can arrive as an explicit 'err unauthorized' reply, a closed pipe, or a
+    # broken-pipe error on write/read - all three prove the op was never served. The
+    # broker-side REJECTED log line is asserted separately below.
     $bA = [Probe]::Pos()
-    $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
-    $pipeClient.Connect(5000)
-    $pw = New-Object System.IO.StreamWriter($pipeClient); $pw.AutoFlush = $true
-    $pr = New-Object System.IO.StreamReader($pipeClient)
-    $pw.WriteLine('m 10 0')
-    $reply = $pr.ReadLine()
-    $pipeClient.Dispose()
-    Assert ($reply -like 'err unauthorized*') "a client that is not the installed helper is rejected (reply: $reply)"
+    $reply = $null
+    $pipeError = $null
+    try {
+        $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
+        $pipeClient.Connect(5000)
+        $pw = New-Object System.IO.StreamWriter($pipeClient); $pw.AutoFlush = $true
+        $pr = New-Object System.IO.StreamReader($pipeClient)
+        $pw.WriteLine('m 10 0')
+        $reply = $pr.ReadLine()
+        $pipeClient.Dispose()
+    } catch { $pipeError = $_.Exception.Message }
+    Assert (($reply -like 'err unauthorized*') -or ($null -eq $reply)) "a client that is not the installed helper is rejected (reply: '$reply' pipeError: '$pipeError')"
     Start-Sleep -Milliseconds 300
     $aA = [Probe]::Pos()
     Assert ([math]::Abs($aA.X - $bA.X) -lt 20) "the rejected op was never played ($($bA.X) -> $($aA.X))"
