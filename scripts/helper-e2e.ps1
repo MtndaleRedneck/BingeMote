@@ -45,24 +45,27 @@ Start-Sleep -Seconds 2
 $low = 'bm-e2e-low'
 $lowPass = 'E2e!' + (Get-Random -Minimum 100000 -Maximum 999999)
 net user $low $lowPass /add | Out-Null
-$probe = 'C:\Windows\Temp\bm-acl-probe.txt'
-$probeScript = 'C:\Windows\Temp\bm-acl-probe.ps1'
-Remove-Item $probe, $probeScript -Force -ErrorAction SilentlyContinue
+$probeDir = "$env:PUBLIC\bm-acl-probe"
+New-Item -ItemType Directory -Path $probeDir -Force | Out-Null
+$probe = "$probeDir\result.txt"
+$probeScript = "$probeDir\probe.ps1"
+Remove-Item $probe -Force -ErrorAction SilentlyContinue
 @'
 try { [IO.File]::WriteAllText('<EXE>', 'x'); 'EXE_WRITE_OK' | Out-File '<OUT>' } catch { ("EXE_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' }
 try { [IO.File]::WriteAllText('<DIR>\probe-bm-e2e-low.txt', 'x'); 'DIR_WRITE_OK' | Out-File '<OUT>' -Append } catch { ("DIR_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' -Append }
 '@ -replace '<EXE>', $appExe -replace '<DIR>', $appDir -replace '<OUT>', $probe | Set-Content $probeScript
-$pa = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File $probeScript"
+$pa = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$probeScript`""
 Register-ScheduledTask -TaskName 'bm-acl-probe' -Action $pa -User $low -Password $lowPass -Force | Out-Null
 Start-ScheduledTask -TaskName 'bm-acl-probe'
 $deadline = (Get-Date).AddSeconds(60)
 while (-not (Test-Path $probe) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-$probeOut = if (Test-Path $probe) { Get-Content $probe -Raw } else { '(probe never wrote)' }
+$ti = Get-ScheduledTaskInfo -TaskName 'bm-acl-probe'
+$probeOut = if (Test-Path $probe) { Get-Content $probe -Raw } else { "(probe never wrote; LastTaskResult=0x{0:X8} LastRunTime={1})" -f $ti.LastTaskResult, $ti.LastRunTime }
 Write-Host "== non-admin probe result =="
 Write-Host $probeOut
 Unregister-ScheduledTask -TaskName 'bm-acl-probe' -Confirm:$false
 net user $low /delete | Out-Null
-Remove-Item $probe, $probeScript -Force -ErrorAction SilentlyContinue
+Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
 if ($probeOut -match 'WRITE_OK') { throw "rev14: a standard user wrote to the SYSTEM task target - $probeOut" }
 if (-not ($probeOut -match 'EXE_DENIED' -and $probeOut -match 'DIR_DENIED')) { throw "rev14: non-admin probe inconclusive - $probeOut" }
 Write-Host "ok: a standard user cannot write or replace the SYSTEM task target"
