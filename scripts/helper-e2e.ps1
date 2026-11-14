@@ -16,9 +16,72 @@ if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the
 $acl = netsh http show urlacl
 if (-not ($acl | Select-String ':8488/')) { throw "installer did not add the listen permission" }
 Write-Host "ok: installer added the firewall rule and listen permission"
-$unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
+
+# --- rev14: the SYSTEM task target must live in an admin-only location (Instinct 2 blocker) ---
+Write-Host "== rev14 install ACL =="
+$appDir = Join-Path $env:ProgramFiles 'BingeMote'
+$appExe = Join-Path $appDir 'BingeMote.exe'
+if (-not (Test-Path $appExe)) { throw "rev14: install did not land in Program Files ($appExe missing)" }
+if (Test-Path (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe')) { throw "rev14: a user-writable copy still installs under LOCALAPPDATA" }
+$task = Get-ScheduledTask -TaskName 'BingeMote Input Broker'
+$target = $task.Actions[0].Execute
+if ($target -ne $appExe) { throw "rev14: broker task target is '$target', expected '$appExe'" }
+Write-Host "ok: broker task target is the protected copy: $target"
+Write-Host "== ACL evidence: task target directory and exe =="
+icacls $appDir
+icacls $appExe
+$userAces = (Get-Acl $appExe).Access | Where-Object { $_.IdentityReference.Value -match 'BUILTIN\\Users' }
+if (-not $userAces) { throw "rev14: no explicit Users ACE on the task target" }
+foreach ($ace in $userAces) {
+    if ("$($ace.FileSystemRights)" -ne 'ReadAndExecute, Synchronize') { throw "rev14: Users ACE is '$($ace.FileSystemRights)', expected read+execute only" }
+}
+Write-Host "ok: Users have read+execute only on the task target"
+
+# Prove it with a real non-admin process: a standard user tries to replace the exe
+# and to drop a file beside it; both must be denied. Stop the auto-relaunched app
+# first so an exe denial means ACL, not file-in-use.
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+$low = 'bm-e2e-low'
+$lowPass = 'E2e!' + (Get-Random -Minimum 100000 -Maximum 999999)
+net user $low $lowPass /add | Out-Null
+$probe = 'C:\Windows\Temp\bm-acl-probe.txt'
+$probeScript = 'C:\Windows\Temp\bm-acl-probe.ps1'
+Remove-Item $probe, $probeScript -Force -ErrorAction SilentlyContinue
+@'
+try { [IO.File]::WriteAllText('<EXE>', 'x'); 'EXE_WRITE_OK' | Out-File '<OUT>' } catch { ("EXE_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' }
+try { [IO.File]::WriteAllText('<DIR>\probe-bm-e2e-low.txt', 'x'); 'DIR_WRITE_OK' | Out-File '<OUT>' -Append } catch { ("DIR_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' -Append }
+'@ -replace '<EXE>', $appExe -replace '<DIR>', $appDir -replace '<OUT>', $probe | Set-Content $probeScript
+$pa = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File $probeScript"
+Register-ScheduledTask -TaskName 'bm-acl-probe' -Action $pa -User $low -Password $lowPass -Force | Out-Null
+Start-ScheduledTask -TaskName 'bm-acl-probe'
+$deadline = (Get-Date).AddSeconds(60)
+while (-not (Test-Path $probe) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+$probeOut = if (Test-Path $probe) { Get-Content $probe -Raw } else { '(probe never wrote)' }
+Write-Host "== non-admin probe result =="
+Write-Host $probeOut
+Unregister-ScheduledTask -TaskName 'bm-acl-probe' -Confirm:$false
+net user $low /delete | Out-Null
+Remove-Item $probe, $probeScript -Force -ErrorAction SilentlyContinue
+if ($probeOut -match 'WRITE_OK') { throw "rev14: a standard user wrote to the SYSTEM task target - $probeOut" }
+if (-not ($probeOut -match 'EXE_DENIED' -and $probeOut -match 'DIR_DENIED')) { throw "rev14: non-admin probe inconclusive - $probeOut" }
+Write-Host "ok: a standard user cannot write or replace the SYSTEM task target"
+
+# Upgrade path: a silent reinstall re-copies the protected exe and keeps the task target.
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "silent upgrade reinstall failed with exit $LASTEXITCODE" }
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+if (-not (Test-Path $appExe)) { throw "rev14: upgrade removed the protected copy" }
+$task = Get-ScheduledTask -TaskName 'BingeMote Input Broker'
+if ($task.Actions[0].Execute -ne $appExe) { throw "rev14: upgrade changed the task target to $($task.Actions[0].Execute)" }
+Write-Host "ok: upgrade re-copies the protected exe and keeps the task target"
+
+$unins = Join-Path $env:ProgramFiles 'BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null
 Start-Sleep -Seconds 3
+if (Test-Path $appExe) { throw "rev14: uninstall left the protected copy behind" }
+Write-Host "ok: uninstall removed the protected copy"
 try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
 if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind" }
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }

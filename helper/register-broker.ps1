@@ -8,6 +8,16 @@
 param([string]$ExePath)
 $ErrorActionPreference = 'Stop'
 $exe = if ($ExePath) { $ExePath } else { Join-Path $PSScriptRoot 'BingeMote.exe' }
+
+# rev14: the task runs this exe as SYSTEM, so its directory must be admin-only.
+# The installer already ACLs {app} (Program Files defaults agree); re-assert here so
+# upgrades and manual runs of this script cannot leave a user-writable SYSTEM target.
+$dir = Split-Path $exe -Parent
+& icacls $dir /inheritance:r /grant 'SYSTEM:(OI)(CI)F' /grant 'Administrators:(OI)(CI)F' /grant 'Users:(OI)(CI)RX' | Out-Null
+& icacls $exe /inheritance:r /grant 'SYSTEM:F' /grant 'Administrators:F' /grant 'Users:RX' | Out-Null
+& icacls $dir
+& icacls $exe
+
 $action = New-ScheduledTaskAction -Execute $exe -Argument '--input-broker'
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive -RunLevel Highest

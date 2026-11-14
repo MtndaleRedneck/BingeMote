@@ -9,7 +9,13 @@
 AppName=BingeMote
 AppVersion={#MyAppVersion}
 AppVerName=BingeMote {#MyAppVersion}
-DefaultDirName={localappdata}\Programs\BingeMote
+; rev14 (Instinct 2 publish blocker): the SYSTEM input-broker task runs this exe, so it
+; cannot live in a user-writable per-user dir - a normal user could swap it and own
+; SYSTEM at the next task launch. Install per-machine under Program Files (install is
+; already elevated for the firewall rule and the task) with an explicit ACL:
+; SYSTEM/Administrators full, authenticated users read+execute only. Program Files
+; defaults to that already; the explicit ACL keeps it true on nonstandard machines.
+DefaultDirName={commonpf}\BingeMote
 DefaultGroupName=BingeMote
 PrivilegesRequired=admin
 OutputBaseFilename=BingeMote-PC-{#MyAppVersion}
@@ -18,6 +24,12 @@ UninstallDisplayIcon={app}\BingeMote.exe
 CloseApplications=yes
 RestartApplications=no
 WizardStyle=modern
+
+[Dirs]
+; The exe the SYSTEM task launches and everything beside it: admins/SYSTEM write,
+; everyone else read+execute. (The single-file exe is the whole payload - no loose
+; DLLs or runtimeconfig a user could swap.)
+Name: "{app}"; Permissions: admins-full system-full authusers-readexec
 
 [Files]
 Source: "out\BingeMote.exe"; DestDir: "{app}"; Flags: ignoreversion

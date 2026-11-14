@@ -82,6 +82,17 @@ internal static class InputSender
 
     // State-change logging for the experiment, like SendInputTracker but for one bool.
     private static bool _setPosFailing;
+    private static bool _getPosFailing;
+    private static long _getPosFailures;
+    // Failed moves re-accumulate into the next call; clamp so a long failure streak
+    // (secure desktop held for minutes) cannot pile up one huge jump on recovery.
+    private const float MaxAccumulatedMotion = 4096f;
+
+    private static void KeepMotion(int ix, int iy)
+    {
+        _fracX = Math.Clamp(_fracX + ix, -MaxAccumulatedMotion, MaxAccumulatedMotion);
+        _fracY = Math.Clamp(_fracY + iy, -MaxAccumulatedMotion, MaxAccumulatedMotion);
+    }
 
     // rev9 EXPERIMENT (test build only): move the cursor with SetCursorPos instead of an
     // injected relative SendInput move. On the owner's machine, injected moves stop
@@ -102,23 +113,55 @@ internal static class InputSender
             var ix = (int)Math.Round(_fracX); var iy = (int)Math.Round(_fracY);
             _fracX -= ix; _fracY -= iy;
             if (ix == 0 && iy == 0) return;
-            if (!GetCursorPos(out var p)) return;
+            if (!GetCursorPos(out var p))
+            {
+                // Never eat the motion: keep it (clamped) for the next call and say so
+                // once per failure streak, only after the log line is admitted.
+                _getPosFailures++;
+                KeepMotion(ix, iy);
+                if (!_getPosFailing && DiagnosticLog.Write("GetCursorPos FAILED; motion kept for retry instead of dropped."))
+                    _getPosFailing = true;
+                return;
+            }
+            if (_getPosFailing && DiagnosticLog.Write($"GetCursorPos recovered after {_getPosFailures} failure(s)."))
+            {
+                _getPosFailing = false;
+                _getPosFailures = 0;
+            }
             Marshal.SetLastPInvokeError(0);
             var ok = SetCursorPos(p.x + ix, p.y + iy);
             var err = Marshal.GetLastPInvokeError();
-            // Log only on state change, through the bounded writer.
-            if (!ok && !_setPosFailing)
+            if (!ok)
             {
-                _setPosFailing = true;
-                DiagnosticLog.Write($"SetCursorPos FAILED (win32={err}); a clip or a secure desktop can do this.");
+                KeepMotion(ix, iy);
+                if (!_setPosFailing && DiagnosticLog.Write($"SetCursorPos FAILED (win32={err}); a clip or a secure desktop can do this. Motion kept for retry."))
+                    _setPosFailing = true;
+                return;
             }
-            else if (ok && _setPosFailing)
+            // SetCursorPos success is not proof of movement (the rev9 SendInput lesson:
+            // reported success, unmoved cursor). Confirm the position before calling it
+            // recovered - but clipping counts: movement in the requested direction that
+            // lands short at the screen edge DID consume the motion. Only a cursor that
+            // never went anywhere means the op was swallowed; keep that motion.
+            var confirmed = GetCursorPos(out var q) && AxisMoved(p.x, q.x, ix) && AxisMoved(p.y, q.y, iy);
+            if (confirmed)
             {
-                _setPosFailing = false;
-                DiagnosticLog.Write("SetCursorPos recovered.");
+                if (_setPosFailing && DiagnosticLog.Write("SetCursorPos recovered (position confirmed moved)."))
+                    _setPosFailing = false;
+            }
+            else
+            {
+                KeepMotion(ix, iy);
+                if (!_setPosFailing && DiagnosticLog.Write("SetCursorPos reported success but the cursor did not move; motion kept for retry."))
+                    _setPosFailing = true;
             }
         }
     }
+
+    private static bool AxisMoved(int start, int end, int delta) =>
+        delta == 0
+        || Math.Abs(end - (start + delta)) <= 1                          // landed on target
+        || (Math.Sign(end - start) == Math.Sign(delta) && Math.Abs(end - start) > 1); // moved that way, clipped
 
     public static bool Button(string button, bool down)
     {

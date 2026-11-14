@@ -90,7 +90,9 @@ jobs:
           $odd  = [Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 1 - (($bytes.Length - 1) % 2))
           $meta = [Text.Encoding]::UTF8.GetString($bytes)
           $literals = @('--broker-hold', '--broker-flood', '--window-shot', '--osd-shot', 'ci/hold')
-          $symbols  = @('BrokerTestHook', 'BROKER_TEST_HOOK', 'PAIR_CODE_HOOK', 'KEEPAWAKE_HOOK', 'WINDOW_SHOT_HOOK')
+          # Compile-time constant names never appear in a binary, so only the hook
+          # type's own metadata name is worth scanning for here.
+          $symbols  = @('BrokerTestHook')
           $bad = @()
           foreach ($m in $literals) { if ($even.Contains($m) -or $odd.Contains($m)) { $bad += "literal '$m'" } }
           foreach ($m in $symbols)  { if ($meta.Contains($m)) { $bad += "symbol '$m'" } }
