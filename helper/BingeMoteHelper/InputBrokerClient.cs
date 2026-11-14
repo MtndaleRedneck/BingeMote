@@ -43,7 +43,7 @@ internal static class InputBrokerClient
                 }
                 throw new InvalidOperationException(reply ?? "no reply");
             }
-            catch
+            catch (Exception ex)
             {
                 _retryAfter = DateTime.UtcNow.AddSeconds(30);
                 if (!_everFellBack)
@@ -51,6 +51,8 @@ internal static class InputBrokerClient
                     _everFellBack = true;
                     DiagnosticLog.Write("input_routing=local (input broker unavailable, using local SendInput)");
                 }
+                // Always recorded (fault budget): the first failure needs its reason.
+                DiagnosticLog.Write($"input_broker_client error {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
         }
