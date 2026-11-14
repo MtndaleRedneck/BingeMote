@@ -54,16 +54,17 @@ Remove-Item $probe -Force -ErrorAction SilentlyContinue
 try { [IO.File]::WriteAllText('<EXE>', 'x'); 'EXE_WRITE_OK' | Out-File '<OUT>' } catch { ("EXE_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' }
 try { [IO.File]::WriteAllText('<DIR>\probe-bm-e2e-low.txt', 'x'); 'DIR_WRITE_OK' | Out-File '<OUT>' -Append } catch { ("DIR_DENIED: " + $_.Exception.GetType().Name) | Out-File '<OUT>' -Append }
 '@ -replace '<EXE>', $appExe -replace '<DIR>', $appDir -replace '<OUT>', $probe | Set-Content $probeScript
-$pa = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$probeScript`""
-Register-ScheduledTask -TaskName 'bm-acl-probe' -Action $pa -User $low -Password $lowPass -Force | Out-Null
-Start-ScheduledTask -TaskName 'bm-acl-probe'
-$deadline = (Get-Date).AddSeconds(60)
-while (-not (Test-Path $probe) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-$ti = Get-ScheduledTaskInfo -TaskName 'bm-acl-probe'
-$probeOut = if (Test-Path $probe) { Get-Content $probe -Raw } else { "(probe never wrote; LastTaskResult=0x{0:X8} LastRunTime={1})" -f $ti.LastTaskResult, $ti.LastRunTime }
+$sec = ConvertTo-SecureString $lowPass -AsPlainText -Force
+$cred = [pscredential]::new($low, $sec)
+try {
+  $proc = Start-Process powershell.exe -Credential $cred -WindowStyle Hidden -Wait -PassThru `
+    -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$probeScript
+  $probeOut = if (Test-Path $probe) { Get-Content $probe -Raw } else { "(probe never wrote; exit=$($proc.ExitCode))" }
+} catch {
+  $probeOut = "(probe launch failed: $($_.Exception.Message))"
+}
 Write-Host "== non-admin probe result =="
 Write-Host $probeOut
-Unregister-ScheduledTask -TaskName 'bm-acl-probe' -Confirm:$false
 net user $low /delete | Out-Null
 Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
 if ($probeOut -match 'WRITE_OK') { throw "rev14: a standard user wrote to the SYSTEM task target - $probeOut" }
