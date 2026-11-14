@@ -717,7 +717,9 @@ public static class Probe {
     }
     if (-not $up) { throw "helper did not restart after broker restore" }
     $bR = [Probe]::Pos()
-    $r = Invoke-Helper '/mouse/move' '{"dx":60,"dy":0}' $token
+    # Move LEFT: the flood test above drives the cursor into the right screen edge,
+    # where a rightward move would be clipped and look like a routing failure.
+    $r = Invoke-Helper '/mouse/move' '{"dx":-60,"dy":0}' $token
     Assert ($r.code -eq 200) "mouse/move with the real broker restored"
     Start-Sleep -Milliseconds 400
     $aR = [Probe]::Pos()
