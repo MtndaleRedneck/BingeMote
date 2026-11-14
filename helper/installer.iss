@@ -53,6 +53,9 @@ Name: "{userdesktop}\BingeMote"; Filename: "{app}\BingeMote.exe"; IconFilename: 
 Type: files; Name: "{app}\BingeMoteHelper.exe"
 Type: files; Name: "{userprograms}\BingeMote Helper.lnk"
 Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
+; rev15: pre-rev14 per-user install. register-broker.ps1 also removes it (and stops
+; a running legacy process first); this is the belt-and-braces for a quiet copy.
+Type: filesandordirs; Name: "{localappdata}\Programs\BingeMote"
 
 [Run]
 ; The installer is already elevated, so it owns the firewall rule and the listen

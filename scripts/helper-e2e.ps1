@@ -71,15 +71,34 @@ if ($probeOut -match 'WRITE_OK') { throw "rev14: a standard user wrote to the SY
 if (-not ($probeOut -match 'EXE_DENIED' -and $probeOut -match 'DIR_DENIED')) { throw "rev14: non-admin probe inconclusive - $probeOut" }
 Write-Host "ok: a standard user cannot write or replace the SYSTEM task target"
 
+# rev15: plant a legacy per-user install first so the upgrade must remove it and
+# repoint the user's Run entry and Watchdog task at the protected copy.
+$legacy = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
+New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+Set-Content (Join-Path $legacy 'BingeMote.exe') 'legacy-stub'
+Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'BingeMote' -Value "`"$legacy\BingeMote.exe`" --autostart"
 # Upgrade path: a silent reinstall re-copies the protected exe and keeps the task target.
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "silent upgrade reinstall failed with exit $LASTEXITCODE" }
+# The silent install relaunches the app; it re-registers the Watchdog with its own
+# (protected) path after register-broker.ps1 deleted the stale task.
+$wdOk = $false
+for ($i = 0; $i -lt 10 -and -not $wdOk; $i++) {
+  $wdXml = schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String
+  if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else { Start-Sleep -Seconds 2 }
+}
+if (-not $wdOk) { throw "rev15: watchdog task not re-registered at the protected copy" }
+Write-Host "ok: watchdog task re-registered at the protected copy"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 if (-not (Test-Path $appExe)) { throw "rev14: upgrade removed the protected copy" }
 $task = Get-ScheduledTask -TaskName 'BingeMote Input Broker'
 if ($task.Actions[0].Execute -ne $appExe) { throw "rev14: upgrade changed the task target to $($task.Actions[0].Execute)" }
 Write-Host "ok: upgrade re-copies the protected exe and keeps the task target"
+if (Test-Path $legacy) { throw "rev15: upgrade left the legacy per-user copy at $legacy" }
+$runVal = (Get-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'BingeMote').BingeMote
+if ($runVal -notlike "*$appExe*") { throw "rev15: Run entry not repointed at the protected copy: $runVal" }
+Write-Host "ok: upgrade removed the legacy per-user copy and repointed the Run entry"
 
 $unins = Join-Path $env:ProgramFiles 'BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null

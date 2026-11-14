@@ -31,6 +31,10 @@ internal static class SendInputTracker
                 _failuresSinceLog++;
                 _pendingSent = sent; _pendingRequested = requested; _pendingError = lastError;
                 _failing = true;
+                // A newer failure cancels a not-yet-admitted recovery: logging "recovered"
+                // after this failure would put the events out of order. That older
+                // incident's recovery is subsumed by this failure's summary.
+                _recoveryPending = false;
             }
             else if (_failing)
             {

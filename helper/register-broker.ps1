@@ -18,6 +18,23 @@ $dir = Split-Path $exe -Parent
 & icacls $dir
 & icacls $exe
 
+# rev15: safe legacy cleanup. Pre-rev14 builds installed per-user under
+# %LOCALAPPDATA%\Programs\BingeMote and pointed that user's Run entry and the
+# "BingeMote Watchdog" task at the user-writable copy. Remove the stale copy and
+# the stale task so nothing keeps the old path. The app's first run from the
+# protected copy re-registers the watchdog with its own (now protected) path,
+# and the installer's HKCU Run entry already points there.
+$legacyDir = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
+Get-Process BingeMote -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -and $_.Path.StartsWith($legacyDir, [System.StringComparison]::OrdinalIgnoreCase) } |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+if (Test-Path $legacyDir) {
+  Remove-Item $legacyDir -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path $legacyDir) { Write-Host "warning: legacy copy still present at $legacyDir" }
+  else { Write-Host "ok: removed legacy per-user copy at $legacyDir" }
+}
+& schtasks.exe /Delete /TN "BingeMote Watchdog" /F 2>$null | Out-Null
+
 $action = New-ScheduledTaskAction -Execute $exe -Argument '--input-broker'
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive -RunLevel Highest
