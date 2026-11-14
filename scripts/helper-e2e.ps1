@@ -507,6 +507,23 @@ public static class WinEnum {
 
     # --- rev11: SYSTEM input broker + UIPI replication (Ezzy's SwUSB mouse-freeze scenario) ---
     Write-Host "== rev11 input broker =="
+    # rev12: the broker verifies that a client runs its OWN image path, and the helper
+    # verifies the broker the same way. The takeover test above left a TEMP COPY of the
+    # exe running as the helper, which (correctly) fails that check - restart the helper
+    # from the original path, like a real install where broker and helper are one exe.
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart from the original path for the broker tests" }
+    $r = Invoke-Helper '/ping' '{}' $token
+    Assert ($r.code -eq 200) "saved token still works on the original-path helper"
     $probeSrc = @"
 using System;
 using System.Runtime.InteropServices;
