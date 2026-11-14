@@ -75,7 +75,7 @@ jobs:
       # is compiled OUT of the exe that ships in BingeMote-PC-*.exe. The hooked build
       # the e2e runs against is a separate publish inside the helper-e2e job below and
       # never leaves that job.
-      - name: Publish helper exe (shipping build: no CI hooks, no TRACE)
+      - name: Publish helper exe (shipping build - no CI hooks, no TRACE)
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=" -o helper/out
 
