@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using WinForms = System.Windows.Forms;
@@ -143,14 +144,35 @@ internal static class Program
         {
             // Task Scheduler starts a SYSTEM task in session 0; input injected there
             // never reaches the user's desktop, so hop into the active console
-            // session first (no-op when we are already in it).
+            // session first. rev12 (review blockers B2/B3): fail CLOSED at every step -
+            // a broker that is not SYSTEM, cannot name the console session, or cannot
+            // reach it exits non-zero and never serves, so the helper falls back to
+            // local input instead of trusting a broker that cannot deliver.
             // Crash evidence: the DiagnosticLog queue flushes on a 100ms poll, so a
             // fast broker death loses every line. Log synchronously here instead.
             try
             {
                 Directory.CreateDirectory(DataDir);
                 Log("input_broker boot pid=" + Environment.ProcessId + " session=" + Process.GetCurrentProcess().SessionId);
-                if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
+                if (WindowsIdentity.GetCurrent().User?.Value != "S-1-5-18")
+                {
+                    // A user-mode fake broker would squat the pipe endpoint; refuse to be one.
+                    Log("input_broker REFUSED: not running as SYSTEM (broker start is the installer's task only)");
+                    return 45;
+                }
+                var current = (uint)Process.GetCurrentProcess().SessionId;
+                var console = SessionLauncher.ActiveConsoleSessionId();
+                if (console != current)
+                {
+                    if (console == 0xFFFFFFFF)
+                    {
+                        Log("input_broker FAIL-CLOSED: active console session unknown; exiting so the helper falls back to local input");
+                        return 44;
+                    }
+                    if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
+                    Log("input_broker FAIL-CLOSED: could not relaunch into console session " + console + " from session " + current + "; no broker will serve from here");
+                    return 43;
+                }
                 return InputBroker.Run();
             }
             catch (Exception ex)
@@ -159,6 +181,16 @@ internal static class Program
                 return 42;
             }
         }
+
+#if BROKER_TEST_HOOK
+        // CI-only broker pipe client behaviors (wedged client, flooding client) for the
+        // broker security e2e tests. Compiled only into the CI test build; the release
+        // exe carries no trace of it.
+        if (args.Contains("--broker-hold") || args.Contains("--broker-flood"))
+        {
+            return BrokerTestHook.Run(args);
+        }
+#endif
 
 #if WINDOW_SHOT_HOOK
         // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
@@ -282,7 +314,8 @@ internal static class Program
 
         MigrateDataDir(); // the copy holding the mutex owns the one-time 1.x folder move
         Directory.CreateDirectory(DataDir);
-        PresenceWindow.Start(); // rev10: own one invisible window for the process lifetime (mouse freeze workaround)
+        // rev12: the rev10 invisible presence window is gone (rev11 review blocker B4).
+        // The SYSTEM broker is the mouse-freeze fix; the helper owns no hidden window.
         LoadConfig();
         if (LastRunVersion != VersionText)
         {

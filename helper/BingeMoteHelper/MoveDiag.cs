@@ -13,7 +13,10 @@ internal static class MoveDiag
     // DEBUG-only per the agreed scope: the RELEASE helper carries no active timing
     // logging. Flip to true only in a diagnostic build; the compiler removes the
     // call-site bodies when false.
-    private const bool Enabled = true; // UNTESTED: on for the mouse-does-nothing investigation; local log only
+    // rev12 (review blocker B4): OFF for good - the investigation this fed is closed
+    // (root cause was UIPI; the broker is the fix), and nothing here may leak window
+    // titles or foreground identity into helper.log or CI dumps.
+    private const bool Enabled = false;
 
     private static readonly object Gate = new();
     private static long _ws, _http;
@@ -39,7 +42,6 @@ internal static class MoveDiag
     private static DateTime _probeAt = DateTime.MinValue;
     private static string _visCache = "unknown", _elevCache = "unknown";
     private static bool _presentCache;
-    private static string _foregroundCache = "";
 
     /// <summary>Local pointer probes. All output uses the shared bounded asynchronous
     /// diagnostic writer: state changes cannot bypass its 60-lines/minute limit.</summary>
@@ -71,14 +73,7 @@ internal static class MoveDiag
                 _visCache = CursorProbe.Visibility();
                 _presentCache = CursorProbe.MousePresent();
                 _elevCache = CursorProbe.ForegroundElevation();
-                // rev10: which app is in front when the phone mouse is used, logged on change.
-                var foreground = CursorProbe.ForegroundIdentity();
-                if (foreground != _foregroundCache)
-                {
-                    _foregroundCache = foreground;
-                    DiagnosticLog.Write($"foreground_changed {foreground}");
-                }
-            }
+            }            }
             vis = _visCache; present = _presentCache; elev = _elevCache;
             // CANDIDATE (not proven): one real ShowCursor(true) per hidden episode. It is
             // per-thread, so it may change nothing; the log says whether visibility changed.

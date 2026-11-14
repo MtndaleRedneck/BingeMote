@@ -230,10 +230,9 @@ try {
     $r = Invoke-Helper '/vlc/adopt' '{"requestId":"req-after-restart"}' $token
     Assert ($r.code -eq 410) "the spent adopt grant stays spent across a helper restart"
     $pObj = Get-Process -Id $p.Id
-    # rev10: the helper intentionally owns one invisible 1x1 presence window (class
-    # BingeMotePresence) for its whole lifetime, so MainWindowHandle can be nonzero now.
-    # What must still be true: no VISIBLE window carrying the app's UI. Enumerate the
-    # helper's windows and fail on any visible window outside the presence window.
+    # rev12: the rev10 invisible presence window is gone (review blocker B4). The helper
+    # must own NO visible window while it serves from the tray/headless. Enumerate its
+    # windows and fail on any visible one.
     $winSrc = @"
 using System;
 using System.Text;
@@ -260,7 +259,7 @@ public static class WinEnum {
     }
     [void][WinEnum]::EnumWindows($cb, [IntPtr]::Zero)
     Write-Host ("helper windows: " + ($windows -join " | "))
-    $visibleStrangers = @($windows | Where-Object { $_ -match 'visible=True' -and $_ -notmatch 'class=BingeMotePresence ' })
+    $visibleStrangers = @($windows | Where-Object { $_ -match 'visible=True' })
     Assert ($visibleStrangers.Count -eq 0) "the listener stays bound with no visible UI window (tray-hidden/headless): $($visibleStrangers -join ' | ')"
 
     # A second phone pairs with a fresh code and both phones stay connected.
@@ -571,6 +570,130 @@ public static class Probe {
     $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
     Assert ($helperLog -match 'input_routing=broker') "helper log confirms broker routing"
 
+    # --- rev12: broker hardening (Instinct 2 review blockers) ---
+    Write-Host "== rev12 broker hardening =="
+    $sysLogPath = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
+
+    # B3: fail-closed session hop. The relaunching session-0 copy must be gone; every
+    # --input-broker process still alive serves from the harness (console) session only.
+    $strays = @(Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' -and $_.SessionId -ne $harnessSession })
+    Assert ($strays.Count -eq 0) "no broker copy serves outside the console session (fail-closed session hop)"
+
+    # B1: an arbitrary local process (this script - right user, wrong image) connects
+    # fine at the DACL level and is then rejected by the broker's client verification.
+    $bA = [Probe]::Pos()
+    $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
+    $pipeClient.Connect(5000)
+    $pw = New-Object System.IO.StreamWriter($pipeClient); $pw.AutoFlush = $true
+    $pr = New-Object System.IO.StreamReader($pipeClient)
+    $pw.WriteLine('m 10 0')
+    $reply = $pr.ReadLine()
+    $pipeClient.Dispose()
+    Assert ($reply -like 'err unauthorized*') "a client that is not the installed helper is rejected (reply: $reply)"
+    Start-Sleep -Milliseconds 300
+    $aA = [Probe]::Pos()
+    Assert ([math]::Abs($aA.X - $bA.X) -lt 20) "the rejected op was never played ($($bA.X) -> $($aA.X))"
+
+    # B2: an authorized but wedged client (connects, then goes silent) neither blocks
+    # other connections nor lives forever: multi-instance server + server read timeout.
+    $holdSecs = 25
+    $hold = Start-Process $exe -ArgumentList '--broker-hold', "$holdSecs" -PassThru
+    Start-Sleep -Seconds 2
+    $bB = [Probe]::Pos()
+    $r = Invoke-Helper '/mouse/move' '{"dx":60,"dy":0}' $token
+    Assert ($r.code -eq 200) "mouse/move while a wedged client holds a connection"
+    Start-Sleep -Milliseconds 400
+    $aB = [Probe]::Pos()
+    Assert ([math]::Abs($aB.X - $bB.X) -ge 40) "broker keeps serving while another client is wedged ($($bB.X) -> $($aB.X))"
+    $holdExited = $hold.WaitForExit(($holdSecs + 10) * 1000)
+    Assert $holdExited "the wedge client exits on schedule"
+    # The broker's 15s read timeout drops the silent connection before the hold ends.
+    $sysLogText = ''
+    foreach ($i in 1..30) {
+        if (Test-Path $sysLogPath) { $sysLogText = Get-Content $sysLogPath -Raw }
+        if ($sysLogText -match 'idle timeout') { break }
+        Start-Sleep -Seconds 1
+    }
+    Assert ($sysLogText -match 'idle timeout') "the broker idle-dropped the wedged client (server read timeout)"
+    Assert ($sysLogText -match 'client REJECTED') "the broker logged the unauthorized-client rejection"
+
+    # B5: a flooding client hits the per-connection rate cap and is dropped; the real
+    # helper's own connection is unaffected.
+    $floodOut = Join-Path $env:TEMP 'broker-flood.txt'
+    Remove-Item $floodOut -Force -ErrorAction SilentlyContinue
+    Start-Process $exe -ArgumentList '--broker-flood', '2000', $floodOut -Wait | Out-Null
+    Assert (Test-Path $floodOut) "flood hook wrote its result file"
+    $floodResult = Get-Content $floodOut -Raw
+    Assert ($floodResult -match 'rate_limited') "a flooding client is rate-limited and dropped: $floodResult"
+    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":0}' $token
+    Assert ($r.code -eq 200) "the helper's own connection is unaffected by another client's flood"
+
+    # B2 client side: a fake broker squatting the pipe name is never trusted. Kill the
+    # real broker, squat the name from this script, and the helper must refuse it and
+    # fall back to local input instead of streaming phone input into the impostor.
+    Write-Host "== rev12 fake broker rejected =="
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    Start-Sleep -Seconds 2
+    $fake = Start-Job {
+        $srv = New-Object System.IO.Pipes.NamedPipeServerStream('BingeMoteInputBroker', 'InOut', 1, 'Byte', 'None')
+        $srv.WaitForConnection()
+        Start-Sleep -Seconds 60
+    }
+    foreach ($i in 1..20) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 250 }
+    # Fresh helper so its client has no cached connection or backoff state.
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart for the fake-broker test" }
+    $r = Invoke-Helper '/mouse/move' '{"dx":60,"dy":0}' $token
+    Assert ($r.code -eq 200) "mouse/move while a fake broker squats the pipe"
+    Start-Sleep -Milliseconds 400
+    $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
+    Assert ($helperLog -match 'peer image is not the installed helper') "the helper rejected the fake broker's server identity"
+    Assert ($helperLog -match 'input_routing=local') "the helper fell back to local input instead of trusting the impostor"
+    Stop-Job $fake -ErrorAction SilentlyContinue
+    Remove-Job $fake -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    # Restore the real broker and prove end-to-end routing recovers.
+    Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    $pipeUp = $false
+    foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
+    Assert $pipeUp "real broker pipe is back after the fake-broker test"
+    $brokerProc = $null
+    foreach ($i in 1..40) {
+        $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' -and $_.SessionId -eq $harnessSession } | Select-Object -First 1
+        if ($brokerProc) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert ($null -ne $brokerProc) "real broker is back in the console session"
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart after broker restore" }
+    $bR = [Probe]::Pos()
+    $r = Invoke-Helper '/mouse/move' '{"dx":60,"dy":0}' $token
+    Assert ($r.code -eq 200) "mouse/move with the real broker restored"
+    Start-Sleep -Milliseconds 400
+    $aR = [Probe]::Pos()
+    Assert ([math]::Abs($aR.X - $bR.X) -ge 40) "input routes through the real broker again ($($bR.X) -> $($aR.X))"
+    $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
+    Assert ($helperLog -match 'input_routing=broker') "fresh helper confirms broker routing after restore"
+
     # Recreate the SwUSB condition: a SYSTEM-integrity window holds the foreground.
     Write-Host "== rev11 UIPI replication =="
     dotnet publish scripts/UipiBlocker -c Release -o "$env:TEMP\uipiblocker" | Out-Host
@@ -617,6 +740,8 @@ public static class Probe {
     Write-Host "HELPER E2E PASSED"
 } finally {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    Get-Job -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
+    Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
     Get-Process UipiBlocker -ErrorAction SilentlyContinue | Stop-Process -Force
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Unregister-ScheduledTask -TaskName 'BingeMote UIPI Blocker' -Confirm:$false -ErrorAction SilentlyContinue

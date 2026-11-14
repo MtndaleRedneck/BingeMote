@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace BingeMoteHelper;
 
@@ -18,8 +16,6 @@ internal static class CursorProbe
     [DllImport("user32.dll", SetLastError = true)] private static extern bool GetCursorInfo(ref CURSORINFO ci);
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int idx);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder text, int count);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr h, StringBuilder text, int count);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
@@ -49,28 +45,6 @@ internal static class CursorProbe
     }
 
     public static bool MousePresent() => GetSystemMetrics(SM_MOUSEPRESENT) != 0;
-
-    /// <summary>rev10: which window is in front - process name, window class and title -
-    /// for the local mouse diag. Local helper.log only, never uploaded. Logged on change
-    /// through the bounded diagnostic writer. Any unreadable piece is labeled, never guessed.</summary>
-    public static string ForegroundIdentity()
-    {
-        try
-        {
-            var fg = GetForegroundWindow();
-            if (fg == IntPtr.Zero) return "none";
-            GetWindowThreadProcessId(fg, out var pid);
-            var cls = new StringBuilder(128);
-            if (GetClassName(fg, cls, cls.Capacity) == 0) cls.Clear().Append("unreadable");
-            var title = new StringBuilder(256);
-            GetWindowText(fg, title, title.Capacity); // 0 length also means "no title"; left as-is
-            string proc;
-            try { proc = pid == 0 ? "no_pid" : Process.GetProcessById((int)pid).ProcessName; }
-            catch { proc = "unreadable"; }
-            return $"pid={pid} process={proc} class={cls} title=\"{title}\"";
-        }
-        catch (Exception e) { return "unreadable:exception:" + e.GetType().Name; }
-    }
 
     /// <summary>Elevation of the foreground window's process, reported on its own:
     /// "elevated", "not_elevated", or "unreadable:<step>:win32=N" (never guessed either way).</summary>
