@@ -115,6 +115,7 @@ Write-Host "== T-xml: broker task restart settings (F10) =="
 $xml = Export-ScheduledTask -TaskName 'BingeMote Input Broker'
 Check ($xml -match '<RestartCount>3</RestartCount>') "task restarts the broker 3x on failure"
 Check ($xml -match '<RestartInterval>PT1M</RestartInterval>') "task restart interval is one minute"
+Check ($xml -match '--broker-launcher') "task action runs the launcher (which hops and watches the serving broker)"
 
 # --- T2: framed op dedup against the real broker (F2) ---
 Write-Host "== T2: framed op resend dedup (F2) =="

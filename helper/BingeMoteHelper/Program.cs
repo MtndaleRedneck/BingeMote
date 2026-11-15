@@ -140,20 +140,25 @@ internal static class Program
         // Scheduler SYSTEM task in the interactive session). No UI, no tray, no HTTP:
         // it only plays input ops the per-user helper sends over the named pipe, so
         // UIPI can no longer discard phone input while an elevated window holds focus.
-        if (args.Contains("--input-broker"))
+        if (args.Contains("--input-broker") || args.Contains("--broker-launcher"))
         {
-            // Task Scheduler starts a SYSTEM task in session 0; input injected there
-            // never reaches the user's desktop, so hop into the active console
-            // session first. rev12 (review blockers B2/B3): fail CLOSED at every step -
-            // a broker that is not SYSTEM, cannot name the console session, or cannot
-            // reach it exits non-zero and never serves, so the helper falls back to
-            // local input instead of trusting a broker that cannot deliver.
+            // Two roles, two verbs, so a process listing always says which is which:
+            //   --broker-launcher  the Task Scheduler entry. Runs in session 0, hops the
+            //     broker into the active console session, then stays alive for the
+            //     broker's whole lifetime and exits with its status, so the task's
+            //     restart-on-failure actually fires when the broker dies (F10). It
+            //     serves nothing and holds no pipe.
+            //   --input-broker  the serving broker. Runs only inside the console
+            //     session. rev12 (review blockers B2/B3): fail CLOSED at every step - a
+            //     broker that is not SYSTEM, cannot name the console session, or finds
+            //     itself outside it exits non-zero and never serves, so the helper falls
+            //     back to local input instead of trusting a broker that cannot deliver.
             // Crash evidence: the DiagnosticLog queue flushes on a 100ms poll, so a
             // fast broker death loses every line. Log synchronously here instead.
             try
             {
                 Directory.CreateDirectory(DataDir);
-                Log("input_broker boot pid=" + Environment.ProcessId + " session=" + Process.GetCurrentProcess().SessionId);
+                Log("input_broker boot pid=" + Environment.ProcessId + " session=" + Process.GetCurrentProcess().SessionId + " role=" + (args.Contains("--broker-launcher") ? "launcher" : "broker"));
                 if (WindowsIdentity.GetCurrent().User?.Value != "S-1-5-18")
                 {
                     // A user-mode fake broker would squat the pipe endpoint; refuse to be one.
@@ -162,12 +167,18 @@ internal static class Program
                 }
                 var current = (uint)Process.GetCurrentProcess().SessionId;
                 var console = SessionLauncher.ActiveConsoleSessionId();
-                if (console != current)
+                if (args.Contains("--broker-launcher"))
                 {
                     if (console == 0xFFFFFFFF)
                     {
                         Log("input_broker FAIL-CLOSED: active console session unknown; exiting so the helper falls back to local input");
                         return 44;
+                    }
+                    if (console == current)
+                    {
+                        // Already in the console session (a manual run): no hop needed,
+                        // just serve. Same code path the hop lands in.
+                        return InputBroker.Run();
                     }
                     if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker", out var brokerPid))
                     {
@@ -192,6 +203,14 @@ internal static class Program
                         }
                     }
                     Log("input_broker FAIL-CLOSED: could not relaunch into console session " + console + " from session " + current + "; no broker will serve from here");
+                    return 43;
+                }
+                // --input-broker: serve, but only from the console session. A broker
+                // outside it would inject input into nowhere while squatting the pipe,
+                // so refuse (B3 fail-closed); the launcher does the hop.
+                if (console != current)
+                {
+                    Log("input_broker FAIL-CLOSED: serving broker must live in the console session (in " + current + ", console is " + (console == 0xFFFFFFFF ? "unknown" : console.ToString()) + "); the --broker-launcher task does the hop");
                     return 43;
                 }
                 return InputBroker.Run();

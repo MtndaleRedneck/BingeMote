@@ -1,10 +1,11 @@
 # BingeMote Input Broker registration (runs once from the elevated installer).
-# Creates/replaces a Task Scheduler task that starts "BingeMote.exe --input-broker"
-# as SYSTEM in the interactive session at every logon. The broker only plays input
-# ops the per-user helper sends over a local named pipe. Because SYSTEM is the
-# highest integrity level, UIPI can no longer discard phone input while an elevated
-# window (e.g. Realtek's SwUSB dialog) holds the foreground - the same immunity
-# Unified Remote gets from its signed uvhid.sys driver, without a driver.
+# Creates/replaces a Task Scheduler task that starts "BingeMote.exe --broker-launcher"
+# as SYSTEM in the interactive session at every logon. The launcher hops the serving
+# broker (--input-broker) into the active console session and watches its lifetime; the
+# broker only plays input ops the per-user helper sends over a local named pipe.
+# Because SYSTEM is the highest integrity level, UIPI can no longer discard phone input
+# while an elevated window (e.g. Realtek's SwUSB dialog) holds the foreground - the same
+# immunity Unified Remote gets from its signed uvhid.sys driver, without a driver.
 param([string]$ExePath)
 $ErrorActionPreference = 'Stop'
 $exe = if ($ExePath) { $ExePath } else { Join-Path $PSScriptRoot 'BingeMote.exe' }
@@ -37,11 +38,11 @@ if (Test-Path $legacyDir) {
 # error under ErrorActionPreference=Stop, which must not abort broker registration.
 try { & schtasks.exe /Delete /TN "BingeMote Watchdog" /F 2>$null | Out-Null } catch { }
 
-$action = New-ScheduledTaskAction -Execute $exe -Argument '--input-broker'
+$action = New-ScheduledTaskAction -Execute $exe -Argument '--broker-launcher'
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive -RunLevel Highest
 # rev16 (F10): restart a failed broker 3x at one-minute intervals. This pairs with the
-# launcher's new lifetime watch in Program.cs: the task instance now ends nonzero when
-# the console-session broker dies, so these settings actually fire.
+# launcher's lifetime watch in Program.cs: the task instance now ends nonzero when the
+# console-session broker dies, so these settings actually fire.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName 'BingeMote Input Broker' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null

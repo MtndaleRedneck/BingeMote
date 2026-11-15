@@ -686,8 +686,10 @@ public static class Probe {
     Write-Host "== rev12 broker hardening =="
     $sysLogPath = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
 
-    # B3: fail-closed session hop. The relaunching session-0 copy must be gone; every
-    # --input-broker process still alive serves from the harness (console) session only.
+    # B3: fail-closed session hop. Every --input-broker process still alive must serve
+    # from the harness (console) session only. The session-0 --broker-launcher that
+    # hopped it here and now watches its lifetime serves nothing and holds no pipe, so
+    # it is not a stray - a *serving* broker outside the console session is.
     $strays = @(Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' -and $_.SessionId -ne $harnessSession })
     Assert ($strays.Count -eq 0) "no broker copy serves outside the console session (fail-closed session hop)"
 
@@ -750,8 +752,11 @@ public static class Probe {
     # B2 client side: a fake broker squatting the pipe name is never trusted. Kill the
     # real broker, squat the name from this script, and the helper must refuse it and
     # fall back to local input instead of streaming phone input into the impostor.
+    # Disable the task first: the launcher's restart-on-failure would otherwise revive
+    # the real broker mid-test and race the squatter.
     Write-Host "== rev12 fake broker rejected =="
-    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    Disable-ScheduledTask -TaskName 'BingeMote Input Broker' | Out-Null
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Seconds 2
     $fake = Start-Job {
         # Loop: Test-Path probes and the helper's own connects each consume one accept,
@@ -787,6 +792,7 @@ public static class Probe {
     Remove-Job $fake -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     # Restore the real broker and prove end-to-end routing recovers.
+    Enable-ScheduledTask -TaskName 'BingeMote Input Broker' | Out-Null
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
     $pipeUp = $false
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
@@ -869,7 +875,7 @@ public static class Probe {
     Get-Job -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
     Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
     Get-Process UipiBlocker -ErrorAction SilentlyContinue | Stop-Process -Force
-    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Unregister-ScheduledTask -TaskName 'BingeMote UIPI Blocker' -Confirm:$false -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName 'BingeMote Input Broker' -Confirm:$false -ErrorAction SilentlyContinue
     netsh advfirewall firewall delete rule name="BingeMote" | Out-Null
