@@ -83,17 +83,7 @@ class MainActivity : ComponentActivity() {
             store.demoControls = true
             MediaControls.sync(this, store)
         }
-        // CI proof that the bar's skip labels follow the SETTING, not a constant:
-        // re-seed the demo bar with a chosen primary interval.
-        if (BuildConfig.DEBUG && intent.hasExtra("skipmain")) {
-            store.skipMainSec = intent.getIntExtra("skipmain", 10)
-            store.demoControls = true
-            MediaControls.sync(this, store)
-        }
-        // CI experiment: post the same bar as a token-free plain row (see postDemoRow).
-        if (BuildConfig.DEBUG && intent.hasExtra("demorow")) {
-            startService(Intent(this, MediaControlsService::class.java).setAction("com.bingemote.action.DEMO_ROW"))
-        }
+        if (BuildConfig.DEBUG) handleControlExtras(intent)
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
             ManualUpdate.offer = UpdateInfo(
@@ -157,6 +147,28 @@ class MainActivity : ComponentActivity() {
                 UpdateHost(store)
             }
         }
+    }
+
+    /** CI screenshot/notification rig extras that must work whether the activity is
+     * cold-started OR already on top (am start delivers to onNewIntent for the
+     * running instance - the skip-5 proof failed its first run on exactly that). */
+    private fun handleControlExtras(intent: Intent) {
+        // Proof that the bar's skip labels follow the SETTING, not a constant:
+        // re-seed the demo bar with a chosen primary interval.
+        if (intent.hasExtra("skipmain")) {
+            store.skipMainSec = intent.getIntExtra("skipmain", 10)
+            store.demoControls = true
+            MediaControls.sync(this, store)
+        }
+        // Experiment: post the same bar as a token-free plain row (see postDemoRow).
+        if (intent.hasExtra("demorow")) {
+            startService(Intent(this, MediaControlsService::class.java).setAction("com.bingemote.action.DEMO_ROW"))
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (BuildConfig.DEBUG) handleControlExtras(intent)
     }
 
     override fun onStart() {
