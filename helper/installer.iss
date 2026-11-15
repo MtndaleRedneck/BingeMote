@@ -79,3 +79,12 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" 
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Input Broker"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delbroker"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
+Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote VLC"""; Flags: runhidden waituntilterminated; RunOnceId: "delvlcrule"
+
+; rev16 retention decision: uninstall keeps the pairing (config.json) and movie resume
+; places (a reinstall must come back paired and remember where movies were left), but
+; deletes logs and stray temp/broken config copies.
+[UninstallDelete]
+Type: files; Name: "{localappdata}\BingeMote\helper.log"
+Type: files; Name: "{localappdata}\BingeMote\config.json.tmp"
+Type: files; Name: "{localappdata}\BingeMote\config.json.broken"
