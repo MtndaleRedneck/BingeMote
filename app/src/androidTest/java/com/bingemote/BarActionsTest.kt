@@ -53,13 +53,19 @@ class BarActionsTest {
                                 }
                                 val query = line.substringAfter('?', "")
                                 if (line.contains("command=")) {
-                                    requests += query
+                                    // Mutate BEFORE recording: the test wakes on the recorded
+                                    // request, so the state must already be applied. The request
+                                    // line ends with " HTTP/1.1", so val= needs substringBefore(' ')
+                                    // as well as '&' - without it toLongOrNull fails and the seek
+                                    // silently never applies (the forward seek then reads the OLD
+                                    // clock and lands 5s past the expected target).
                                     when {
                                         query.contains("pl_forcepause") -> state = "paused"
                                         query.contains("pl_forceresume") -> state = "playing"
-                                        query.contains("command=seek") -> query.substringAfter("val=", "").substringBefore('&').toLongOrNull()?.let { time = it }
-                                        query.contains("command=volume") -> query.substringAfter("val=", "").substringBefore('&').toIntOrNull()?.let { volume = it }
+                                        query.contains("command=seek") -> query.substringAfter("val=", "").substringBefore('&').substringBefore(' ').toLongOrNull()?.let { time = it }
+                                        query.contains("command=volume") -> query.substringAfter("val=", "").substringBefore('&').substringBefore(' ').toIntOrNull()?.let { volume = it }
                                     }
+                                    requests += query
                                 } else {
                                     requests += "status"
                                 }
