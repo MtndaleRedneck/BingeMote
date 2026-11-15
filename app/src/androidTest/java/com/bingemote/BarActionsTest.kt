@@ -82,7 +82,7 @@ class BarActionsTest {
             if (cond()) return
             Thread.sleep(250)
         }
-        fail<Unit>("timeout waiting for: $what")
+        fail("timeout waiting for: $what")
     }
 
     @Test
@@ -104,9 +104,9 @@ class BarActionsTest {
         fun bar() = nm.activeNotifications.firstOrNull { it.id == 101 }?.notification
         fun fire(title: String) {
             val n = bar()
-            if (n == null) { fail<Unit>("notification gone before firing $title"); return }
+            if (n == null) { fail("notification gone before firing $title"); return }
             val a = n.actions?.firstOrNull { it.title?.toString() == title }
-            if (a == null) { fail<Unit>("no action '$title' (have ${n.actions?.map { it.title }})"); return }
+            if (a == null) { fail("no action '$title' (have ${n.actions?.map { it.title }})"); return }
             a.actionIntent.send()
         }
         try {
