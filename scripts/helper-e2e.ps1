@@ -9,8 +9,8 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 Write-Host "== installer firewall setup =="
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
-& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bingemote-install.log" | Out-Null
+if ($LASTEXITCODE -ne 0) { Get-Content "$env:TEMP\bingemote-install.log" -Tail 60 -ErrorAction SilentlyContinue; throw "silent install failed with exit $LASTEXITCODE" }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
 $acl = netsh http show urlacl
@@ -88,8 +88,8 @@ foreach ($i in 1..40) {
   catch { Start-Sleep -Milliseconds 500 }
 }
 if (-not $liveUp) { throw "installed copy did not start serving before the live upgrade" }
-& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent LIVE upgrade failed with exit $LASTEXITCODE (P7: rev15 aborted with 5 here)" }
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bingemote-upgrade.log" | Out-Null
+if ($LASTEXITCODE -ne 0) { Get-Content "$env:TEMP\bingemote-upgrade.log" -Tail 60 -ErrorAction SilentlyContinue; throw "silent LIVE upgrade failed with exit $LASTEXITCODE (P7: rev15 aborted with 5 here)" }
 if (-not $liveApp.HasExited) { throw "live upgrade left the old app process running (pid $($liveApp.Id))" }
 Write-Host "ok: silent live upgrade over the running app succeeded and replaced the process"
 # The silent install relaunches the app; it re-registers the Watchdog with its own

@@ -101,11 +101,18 @@ var
   Code: Integer;
   MarkerDir: String;
 begin
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Input Broker"', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Watchdog"', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM BingeMote.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  MarkerDir := ExpandConstant('{userlocalappdata}\BingeMote');
-  ForceDirectories(MarkerDir);
-  SaveStringToFile(MarkerDir + '\updating', 'installer', False);
+  try
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Input Broker"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Watchdog"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM BingeMote.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    MarkerDir := ExpandConstant('{userlocalappdata}\BingeMote');
+    ForceDirectories(MarkerDir);
+    SaveStringToFile(MarkerDir + '\updating', 'installer', False);
+  except
+    { Best effort: never abort the install from here (silent aborts were the
+      original P7 bug), but leave a trace an admin or CI can read. }
+    ForceDirectories(ExpandConstant('{commonappdata}\BingeMote'));
+    SaveStringToFile(ExpandConstant('{commonappdata}\BingeMote\install-prep-error.txt'), GetExceptionMessage, False);
+  end;
   Result := '';
 end;
