@@ -819,22 +819,24 @@ public static class Probe {
     Write-Host "== rev17 non-elevated broker client =="
     $opOut = Join-Path $env:TEMP 'bingemote-broker-op.txt'
     Remove-Item $opOut -Force -ErrorAction SilentlyContinue
-    # Start-Process -Wait: the call operator does NOT reliably wait for a WinExe
-    # (CI run 43682006798: $LASTEXITCODE read 0 while the hook was still running).
-    # The restriction happens in the --run-restricted parent (CreateProcessAsUser child);
-    # --broker-op itself is token-neutral so its result line reflects whatever token ran it.
-    $opErr = Join-Path $env:TEMP 'bingemote-broker-op-err.txt'
-    $opStd = Join-Path $env:TEMP 'bingemote-broker-op-out.txt'
-    Remove-Item $opErr, $opStd -Force -ErrorAction SilentlyContinue
-    $opProc = Start-Process $exe -ArgumentList @('--run-restricted', '--broker-op', 'm 1 0', $opOut) -PassThru -RedirectStandardError $opErr -RedirectStandardOutput $opStd
-    if (-not $opProc.WaitForExit(60000)) { try { $opProc.Kill() } catch { }; throw "--run-restricted --broker-op hook did not exit in 60s" }
-    $opRc = $opProc.ExitCode
-    if (Test-Path $opErr) { Get-Content $opErr | ForEach-Object { Write-Host "hook stderr: $_" } }
-    if (Test-Path $opStd) { Get-Content $opStd | ForEach-Object { Write-Host "hook stdout: $_" } }
+    # Token shaping via Task Scheduler: a task running as the current interactive user at
+    # RunLevel Limited gets a genuine UAC-filtered token (Administrators deny-only) - the
+    # exact shape of Ezzy's token. Process-level shaping from the runner's interactive
+    # admin token is unreliable (CI: CreateProcessAsUser win32=5). LogonType Interactive
+    # needs no password and lands in this session, so the broker's same-session peer
+    # check applies exactly as it does for Ezzy.
+    $ciUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $opAction = New-ScheduledTaskAction -Execute $exe -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
+    $limited = New-ScheduledTaskPrincipal -UserId $ciUser -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Action $opAction -Principal $limited -Force | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote CI RestrictedOp'
+    $opDeadline = (Get-Date).AddSeconds(60)
+    while (-not (Test-Path $opOut) -and (Get-Date) -lt $opDeadline) { Start-Sleep -Milliseconds 500 }
+    Unregister-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Confirm:$false
     $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
-    Write-Host "restricted client: rc=$opRc $opLine"
-    Assert ($opLine -match 'legacy_win32=5') "restricted token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
-    Assert ($opRc -eq 0 -and $opLine -match 'result=Played') "non-elevated client verified the SYSTEM broker (handle-free) and played an op"
+    Write-Host "restricted client: $opLine"
+    Assert ($opLine -match 'legacy_win32=5') "filtered token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
+    Assert ($opLine -match 'result=Played') "non-elevated client verified the SYSTEM broker (handle-free) and played an op"
 
     # --- rev17: a second launch must SHOW the running copy, not take it over, when the
     # same-named SYSTEM broker shadows RunningCopyPath for a non-elevated user. Ezzy:
@@ -853,14 +855,20 @@ public static class Probe {
     if (-not $up) { throw "helper did not restart for the second-launch shadow test" }
     $logPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     $logBefore = (Get-Item $logPath).Length
-    $showProc = Start-Process $exe -ArgumentList '--run-restricted' -PassThru
-    if (-not $showProc.WaitForExit(120000)) { try { $showProc.Kill() } catch { }; throw "--run-restricted did not exit in 120s" }
-    $showRc = $showProc.ExitCode
-    Start-Sleep -Seconds 1
-    $fullLog = Get-Content $logPath -Raw
-    $newLog = $fullLog.Substring([Math]::Min($logBefore, $fullLog.Length))
-    Assert ($showRc -eq 0) "non-elevated second launch exited cleanly (rc=$showRc)"
-    Assert ($newLog -match 'Launched while already running') "second launch asked the running copy to show its window despite the unreadable SYSTEM broker (no update takeover)"
+    # Same filtered-token shaping: a plain second launch from a non-elevated user.
+    $launchAction = New-ScheduledTaskAction -Execute $exe
+    Register-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch' -Action $launchAction -Principal $limited -Force | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch'
+    $showDeadline = (Get-Date).AddSeconds(60)
+    $newLog = ''
+    while ((Get-Date) -lt $showDeadline) {
+        Start-Sleep -Milliseconds 500
+        $fullLog = Get-Content $logPath -Raw
+        $newLog = $fullLog.Substring([Math]::Min($logBefore, $fullLog.Length))
+        if ($newLog -match 'Launched while already running' -or $newLog -match 'Update launched while an older copy ran') { break }
+    }
+    Unregister-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch' -Confirm:$false
+    Assert ($newLog -match 'Launched while already running') "non-elevated second launch asked the running copy to show its window despite the unreadable SYSTEM broker (no update takeover)"
     Assert ($newLog -notmatch 'Update launched while an older copy ran') "no bogus update-takeover of the running copy"
     Start-Sleep -Milliseconds 500
     Assert (-not $p.HasExited) "running UI copy survived the second launch"

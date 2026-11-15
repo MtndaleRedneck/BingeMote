@@ -255,7 +255,7 @@ internal static class Program
                 InputBroker.ReplyDelayMs = delayMs;
             return InputBroker.Run();
         }
-        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server") || args.Contains("--run-restricted") || args.Contains("--broker-op"))
+        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server") || args.Contains("--broker-op"))
         {
             return BrokerTestHook.Run(args);
         }
