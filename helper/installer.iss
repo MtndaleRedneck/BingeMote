@@ -88,3 +88,24 @@ Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMot
 Type: files; Name: "{localappdata}\BingeMote\helper.log"
 Type: files; Name: "{localappdata}\BingeMote\config.json.tmp"
 Type: files; Name: "{localappdata}\BingeMote\config.json.broken"
+
+[Code]
+{ rev16 (P7): a live upgrade must not hang on RestartManager closing the tray app -
+  in silent mode the suppressed close-apps prompt defaulted to Abort and the whole
+  install rolled back (exit 5, exe unchanged). Stop the broker task, the watchdog's
+  running round and every live copy ourselves, then mark the update so the watchdog
+  cannot relaunch the app onto half-replaced files. Any normal app start clears the
+  marker; its freshness window is 3 minutes. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+  MarkerDir: String;
+begin
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Input Broker"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "BingeMote Watchdog"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM BingeMote.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  MarkerDir := ExpandConstant('{userlocalappdata}\BingeMote');
+  ForceDirectories(MarkerDir);
+  SaveStringToFile(MarkerDir + '\updating', 'installer', False);
+  Result := '';
+end;

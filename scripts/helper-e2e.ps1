@@ -77,9 +77,21 @@ $legacy = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'
 New-Item -ItemType Directory -Path $legacy -Force | Out-Null
 Set-Content (Join-Path $legacy 'BingeMote.exe') 'legacy-stub'
 Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name 'BingeMote' -Value "`"$legacy\BingeMote.exe`" --autostart"
-# Upgrade path: a silent reinstall re-copies the protected exe and keeps the task target.
+# Upgrade path (P7): a silent LIVE upgrade over the running app must succeed - rev15
+# aborted with exit 5 here (RestartManager could not close the tray app and the
+# suppressed prompt defaulted to Abort). Start the installed copy, prove it serves,
+# then reinstall over it.
+$liveApp = Start-Process $appExe -PassThru
+$liveUp = $false
+foreach ($i in 1..40) {
+  try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8488); $c.Close(); $liveUp = $true; break }
+  catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $liveUp) { throw "installed copy did not start serving before the live upgrade" }
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent upgrade reinstall failed with exit $LASTEXITCODE" }
+if ($LASTEXITCODE -ne 0) { throw "silent LIVE upgrade failed with exit $LASTEXITCODE (P7: rev15 aborted with 5 here)" }
+if (-not $liveApp.HasExited) { throw "live upgrade left the old app process running (pid $($liveApp.Id))" }
+Write-Host "ok: silent live upgrade over the running app succeeded and replaced the process"
 # The silent install relaunches the app; it re-registers the Watchdog with its own
 # (protected) path after register-broker.ps1 deleted the stale task.
 $wdOk = $false
