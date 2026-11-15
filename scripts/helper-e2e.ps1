@@ -872,7 +872,7 @@ public static class Probe {
     $logPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     $logBefore = (Get-Item $logPath).Length
     # Same filtered-token shaping: a plain second launch from a non-elevated user.
-    $launchAction = New-ScheduledTaskAction -Execute $exe
+    $launchAction = New-ScheduledTaskAction -Execute $exeAbs
     Register-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch' -Action $launchAction -Principal $limited -Force | Out-Null
     Start-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch'
     $showDeadline = (Get-Date).AddSeconds(60)
