@@ -115,17 +115,21 @@ sleep 3
 adb exec-out screencap -p > "screenshots/media-card-collapsed.png"
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
 adb shell cat /sdcard/ui.xml > screenshots/shade-ui.xml 2>/dev/null || true
-# grep no-match must not kill the script under set -e/pipefail: || true inside the substitution.
-BTN=$(grep 'Volume down' screenshots/shade-ui.xml | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
-echo "shade 'Volume down' bounds: '${BTN:-none}' (shade-ui.xml saved)"
-if [ -n "$BTN" ]; then
-  BX=$(echo $BTN | awk '{printf "%d", ($1+$3)/2}')
-  BY=$(echo $BTN | awk '{printf "%d", ($2+$4)/2}')
-  adb shell input tap "$BX" "$((BY - 160))"
+# Expand the player in place by tapping the media card itself (the compact view
+# caps at 3 actions on stock, so Volume down only exists after expansion).
+CARD=$(grep -o 'resource-id="com.android.systemui:id/qs_media_controls"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' screenshots/shade-ui.xml | grep -o '[0-9]*' | tr '\n' ' ' || true)
+echo "media card bounds: '${CARD:-none}' (shade-ui.xml saved)"
+if [ -n "$CARD" ]; then
+  CX=$(echo $CARD | awk '{printf "%d", ($1+$3)/2}')
+  CY=$(echo $CARD | awk '{printf "%d", ($2+$4)/2}')
+  adb shell input tap "$CX" "$CY"
   sleep 2
 else
-  echo "NOTE: no Volume down button on the shade; media card expansion not attempted"
+  echo "NOTE: no media card on the shade; media card expansion not attempted"
 fi
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+adb shell cat /sdcard/ui.xml > screenshots/shade-ui-expanded.xml 2>/dev/null || true
+if grep -q 'Volume down' screenshots/shade-ui-expanded.xml; then echo 'ok: expanded player shows all five actions'; else echo 'NOTE: expanded player lacks Volume down'; fi
 adb exec-out screencap -p > "screenshots/media-card-expanded.png"
 adb shell cmd statusbar collapse
 sleep 1
@@ -134,9 +138,14 @@ sleep 1
 # session token (MediaStyle lineage) and the five actions.
 adb shell dumpsys notification --noredact > screenshots/notification-dump.txt 2>/dev/null || true
 # Non-default skip interval proof (Instinct 2): re-seed the bar with a 5s primary
-# skip; the labels and content descriptions must follow the setting.
+# skip; the labels and content descriptions must follow the setting. Force-stop
+# first: a plain am start re-delivers the intent to the RUNNING MainActivity
+# ("intent has been delivered to currently running top-most instance") and the
+# extra is never applied, leaving the 10s defaults in the dump.
+adb shell am force-stop com.bingemote
+sleep 1
 adb shell am start -n com.bingemote/.MainActivity --ei skipmain 5 >/dev/null
-sleep 2
+sleep 3
 adb shell dumpsys notification --noredact > screenshots/notification-dump-skip5.txt 2>/dev/null || true
 if grep -q 'Back 5 seconds' screenshots/notification-dump-skip5.txt && grep -q 'Forward 5 seconds' screenshots/notification-dump-skip5.txt && ! grep -q 'Back 10 seconds' screenshots/notification-dump-skip5.txt; then
   echo "ok: media card skip labels follow the 5s setting"
