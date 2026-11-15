@@ -810,6 +810,50 @@ public static class Probe {
     $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
     Assert ($helperLog -match 'input_routing=broker') "helper log confirms broker routing"
 
+    # --- rev17: a NON-ELEVATED client must be able to verify and use the SYSTEM broker ---
+    # Ezzy's PC (Nov 15 2026): the app runs with his UAC-filtered token (Administrators
+    # deny-only); rev16's PipePeer.OpenProcess on the SYSTEM broker got win32=5, every op
+    # fell back to local SendInput, and the mouse lost to elevated windows. The always-admin
+    # runner cannot see that, so this runs one op through the real InputBrokerClient under
+    # a restricted token with the same shape (Administrators deny-only, minimal privileges).
+    Write-Host "== rev17 non-elevated broker client =="
+    $opOut = Join-Path $env:TEMP 'bingemote-broker-op.txt'
+    Remove-Item $opOut -Force -ErrorAction SilentlyContinue
+    & $exe --broker-op-restricted "m 1 0" $opOut
+    $opRc = $LASTEXITCODE
+    $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
+    Write-Host "restricted client: rc=$opRc $opLine"
+    Assert ($opLine -match 'legacy_win32=5') "restricted token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
+    Assert ($opRc -eq 0 -and $opLine -match 'result=Played') "non-elevated client verified the SYSTEM broker (handle-free) and played an op"
+
+    # --- rev17: a second launch must SHOW the running copy, not take it over, when the
+    # same-named SYSTEM broker shadows RunningCopyPath for a non-elevated user. Ezzy:
+    # double-click never opened the window; each launch killed and replaced the running
+    # copy ("Update launched while an older copy ran" churn in his helper.log).
+    Write-Host "== rev17 second launch shows window despite SYSTEM broker shadow =="
+    # Restart the UI copy AFTER the broker exists so the SYSTEM broker (lower pid) sorts
+    # first in process enumeration and shadows the readable UI copy, as on Ezzy's PC.
+    Stop-Tracked $p
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart for the second-launch shadow test" }
+    $logPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    $logBefore = (Get-Item $logPath).Length
+    & $exe --run-restricted
+    $showRc = $LASTEXITCODE
+    Start-Sleep -Seconds 1
+    $fullLog = Get-Content $logPath -Raw
+    $newLog = $fullLog.Substring([Math]::Min($logBefore, $fullLog.Length))
+    Assert ($showRc -eq 0) "non-elevated second launch exited cleanly (rc=$showRc)"
+    Assert ($newLog -match 'Launched while already running') "second launch asked the running copy to show its window despite the unreadable SYSTEM broker (no update takeover)"
+    Assert ($newLog -notmatch 'Update launched while an older copy ran') "no bogus update-takeover of the running copy"
+    Start-Sleep -Milliseconds 500
+    Assert (-not $p.HasExited) "running UI copy survived the second launch"
+
     # --- rev12: broker hardening (Instinct 2 review blockers) ---
     Write-Host "== rev12 broker hardening =="
     $sysLogPath = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'

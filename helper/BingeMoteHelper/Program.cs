@@ -255,7 +255,7 @@ internal static class Program
                 InputBroker.ReplyDelayMs = delayMs;
             return InputBroker.Run();
         }
-        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server"))
+        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server") || args.Contains("--run-restricted") || args.Contains("--broker-op-restricted"))
         {
             return BrokerTestHook.Run(args);
         }
@@ -327,10 +327,20 @@ internal static class Program
         if (!onlyCopy)
         {
             if (quietLaunch) return 0; // automatic launch: another copy is up, nothing to do, no window
-            var runningPath = RunningCopyPath();
+            var runningPath = RunningCopyPath(out var copyShadowed);
             var selfPath = Environment.ProcessPath;
             var sameExe = runningPath != null && selfPath != null &&
                 string.Equals(runningPath, selfPath, StringComparison.OrdinalIgnoreCase);
+            if (!sameExe && runningPath == null && copyShadowed)
+            {
+                // rev17: the mutex holder could not be read, but an unreadable same-named
+                // process exists (the SYSTEM broker, or an elevated copy). Broker mode
+                // returns before this mutex, so the holder is a live UI copy: ask it to
+                // show its window instead of "update takeover" killing it (Ezzy's PC,
+                // Nov 15 2026: double-click never opened the window; every launch took
+                // over and restarted the app).
+                sameExe = true;
+            }
             // A different exe is an update only when this launch is the same or a newer
             // version; an older exe (e.g. left in Downloads) must not downgrade the running copy.
             var isDowngrade = false;
@@ -500,16 +510,31 @@ internal static class Program
     }
 
     /// <summary>True when the copy holding the mutex runs from the same exe file as this launch.</summary>
-    /// <summary>The exe path of the other running copy, or null when there is none or it cannot be read.</summary>
-    private static string? RunningCopyPath()
+    /// <summary>The exe path of the other running copy, or null when there is none or it
+    /// cannot be read. shadowedByUnreadable is set when at least one same-named process
+    /// exists whose path we cannot read - the SYSTEM input broker is this same exe image
+    /// and process name, and a non-elevated user gets access denied on its module.
+    /// rev17: skip unreadable matches and keep looking for the readable UI copy (pre-rev17
+    /// returned null on the FIRST unreadable process, so the broker shadowed the real copy
+    /// and every launch became a bogus "update takeover").</summary>
+    private static string? RunningCopyPath(out bool shadowedByUnreadable)
     {
+        shadowedByUnreadable = false;
         try
         {
             var me = Environment.ProcessId;
             foreach (var proc in Process.GetProcessesByName("BingeMote").Concat(Process.GetProcessesByName("BingeMoteHelper")))
             {
                 if (proc.Id == me) continue;
-                try { return proc.MainModule?.FileName; } catch { return null; }
+                try
+                {
+                    var path = proc.MainModule?.FileName;
+                    if (path != null) return path;
+                }
+                catch
+                {
+                    shadowedByUnreadable = true; // never the mutex holder: see the caller
+                }
             }
         }
         catch { }
