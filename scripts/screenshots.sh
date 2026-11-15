@@ -302,11 +302,17 @@ grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSER
 # on localhost must receive every tap's command, the card must follow stub state, and
 # poll failures must be loud in BMBar.
 adb logcat -c
-adb shell am instrument -w -e class com.bingemote.BarActionsTest \
+adb shell am instrument -w -e class 'com.bingemote.BarActionsTest#buttonsReachStubPcAndCardFollowsState' \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/bar-actions-instrument.txt
 adb logcat -d -s BMBar:I BMBar:W > screenshots/bar-actions-log.txt
 cat screenshots/bar-actions-log.txt
-grep -q '^OK (2 tests)' screenshots/bar-actions-instrument.txt || { echo 'ASSERT FAIL: notification action end-to-end test failed (see bar-actions-instrument.txt)'; SEEK_FAIL=1; }
+grep -q '^OK (1 test)' screenshots/bar-actions-instrument.txt || { echo 'ASSERT FAIL: notification action end-to-end test failed (see bar-actions-instrument.txt + bar-actions-log.txt)'; SEEK_FAIL=1; }
+adb logcat -c
+adb shell am instrument -w -e class 'com.bingemote.BarActionsTest#pollFailuresAreLoud' \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/bar-failures-instrument.txt
+adb logcat -d -s BMBar:I BMBar:W > screenshots/bar-failures-log.txt
+cat screenshots/bar-failures-log.txt
+grep -q '^OK (1 test)' screenshots/bar-failures-instrument.txt || { echo 'ASSERT FAIL: poll-failure loudness test failed (see bar-failures-instrument.txt + bar-failures-log.txt)'; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \

@@ -76,13 +76,13 @@ class BarActionsTest {
         fun stop() { running.set(false); try { server.close() } catch (_: Exception) {} }
     }
 
-    private fun waitFor(what: String, timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitFor(what: String, timeoutMs: Long, diag: () -> String = { "" }, cond: () -> Boolean) {
         val end = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < end) {
             if (cond()) return
             Thread.sleep(250)
         }
-        fail("timeout waiting for: $what")
+        fail("timeout waiting for: $what | ${diag()}")
     }
 
     @Test
@@ -121,14 +121,14 @@ class BarActionsTest {
             waitFor("label flips to Pause", 15_000) { bar()?.actions?.any { it.title?.toString() == "Pause" } == true }
             // Skips use his 5s interval (absolute seek from the stub's clock).
             fire("Back 5 seconds")
-            waitFor("seek back at stub", 10_000) { stub.requests.any { it.contains("command=seek&val=25") } }
+            waitFor("seek back at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=seek&val=25") } }
             fire("Forward 5 seconds")
-            waitFor("seek fwd at stub", 10_000) { stub.requests.any { it.contains("command=seek&val=30") } }
+            waitFor("seek fwd at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=seek&val=30") } }
             // Volume: 128 -> 115 -> 128 in raw VLC units.
             fire("Volume down")
-            waitFor("volume down at stub", 10_000) { stub.requests.any { it.contains("command=volume&val=115") } }
+            waitFor("volume down at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=115") } }
             fire("Volume up")
-            waitFor("volume up at stub", 10_000) { stub.requests.any { it.contains("command=volume&val=128") } }
+            waitFor("volume up at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=128") } }
         } finally {
             ctx.stopService(Intent(ctx, MediaControlsService::class.java))
             stub.stop()
