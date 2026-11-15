@@ -1,7 +1,7 @@
 name: stress
 on:
   push:
-    branches: [stress-untested, i1/rev16]
+    branches: [stress-untested, "i1/*"]
   workflow_dispatch:
 
 jobs:
