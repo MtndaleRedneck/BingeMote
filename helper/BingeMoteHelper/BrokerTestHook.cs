@@ -699,7 +699,14 @@ internal static class BrokerTestHook
     {
         var secs = Math.Max(ArgInt(args, "--hold-events", 30), 1);
         var pidFile = ArgStr(args, "--hold-events", 2, "hold-events-pid.txt");
-        using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out _);
+        using var single = new Mutex(true, @"Local\BingeMoteHelper.SingleInstance", out var owned);
+        if (!owned)
+        {
+            // The just-stopped UI copy may still be releasing it; wait rather than fail blind.
+            try { owned = single.WaitOne(TimeSpan.FromSeconds(20)); }
+            catch (AbandonedMutexException) { owned = true; }
+        }
+        if (!owned) { File.WriteAllText(pidFile + ".result", "mutex-not-owned"); return 1; }
         using var show = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\BingeMoteHelper.ShowWindow");
         using var quit = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\BingeMoteHelper.Quit");
         File.WriteAllText(pidFile, Environment.ProcessId.ToString());

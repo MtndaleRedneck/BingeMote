@@ -1225,6 +1225,9 @@ public static class BmWinEnum {
     Stop-ScheduledTask -TaskName 'BingeMote Input Broker' -ErrorAction SilentlyContinue
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Tracked $p
+    # The 5-minute Watchdog would relaunch a SAME-NAMED UI copy mid-test and re-mask
+    # the unidentified holder; pause it for this test, re-enabled at the restore below.
+    Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
     Start-Sleep -Seconds 1
     $unDir = Join-Path $env:TEMP 'bingemote-unidentified'
     New-Item -ItemType Directory -Force $unDir | Out-Null
@@ -1234,7 +1237,8 @@ public static class BmWinEnum {
     $holder = Start-Process (Join-Path $unDir 'NotBinge.exe') -ArgumentList ('--hold-events 45 "{0}"' -f $holdPidFile) -PassThru
     $holdDeadline = (Get-Date).AddSeconds(30)
     while (-not (Test-Path $holdPidFile) -and (Get-Date) -lt $holdDeadline) { Start-Sleep -Milliseconds 500 }
-    Assert (Test-Path $holdPidFile) "unidentified holder acquired the mutex + events"
+    $holdEarly = (Test-Path "$holdPidFile.result") ? (Get-Content "$holdPidFile.result" -Raw).Trim() : ''
+    Assert (Test-Path $holdPidFile) "unidentified holder acquired the mutex + events$(if ($holdEarly) { " (holder: $holdEarly)" })"
     $logPathU = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     $logBeforeU = (Get-Item $logPathU).Length
     $launcher = Start-Process $exeAbs -PassThru
@@ -1252,7 +1256,8 @@ public static class BmWinEnum {
     $holdResult = (Test-Path "$holdPidFile.result") ? (Get-Content "$holdPidFile.result" -Raw).Trim() : '(no result file)'
     Write-Host "holder side: $holdResult"
     Assert ($holdResult -eq 'no-quit-signal') "holder-observed truth: the quit event was never set"
-    # Restore the broker and the running UI copy for the sections below.
+    # Restore the broker, the watchdog, and the running UI copy for the sections below.
+    Enable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 500 }
     $p = Start-Process $exe -PassThru
