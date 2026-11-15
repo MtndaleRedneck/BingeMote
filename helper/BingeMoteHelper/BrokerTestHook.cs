@@ -36,6 +36,8 @@ internal static class BrokerTestHook
     {
         try
         {
+            if (args.Contains("--verify-pid")) return VerifyPid(args);
+            if (args.Contains("--idle")) return Idle(args);
             if (args.Contains("--broker-op")) return BrokerOp(args);
             if (args.Contains("--broker-silent-server")) return SilentServer(args);
             if (args.Contains("--broker-holddown")) return HoldDown(args);
@@ -56,6 +58,11 @@ internal static class BrokerTestHook
             return 1;
         }
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
 
     private static int ArgInt(string[] args, string flag, int fallback)
     {
@@ -234,6 +241,17 @@ internal static class BrokerTestHook
         var op = oi + 1 < args.Length ? args[oi + 1] : null;
         var outfile = oi + 2 < args.Length ? args[oi + 2] : null;
         if (op == null || outfile == null) { Console.Error.WriteLine("--broker-op needs <line> <outfile>"); return 1; }
+        // Token evidence next to the result: proves the probe ran with Ezzy's token
+        // shape (whoami /groups shows BUILTIN\Administrators "Used for deny only").
+        try
+        {
+            var who = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("whoami.exe", "/user /groups /priv")
+                { RedirectStandardOutput = true, UseShellExecute = false })!;
+            var whoText = who.StandardOutput.ReadToEnd();
+            who.WaitForExit(10000);
+            File.WriteAllText(outfile + ".whoami.txt", whoText);
+        }
+        catch (Exception ex) { File.WriteAllText(outfile + ".whoami.txt", "whoami failed: " + ex.Message); }
         string pidNote = "nopipe"; var legacy = -1;
         try
         {
@@ -243,9 +261,48 @@ internal static class BrokerTestHook
             legacy = probe.Win32; pidNote = probe.Pid.ToString();
         }
         catch (Exception ex) { pidNote = "probe:" + ex.GetType().Name; }
+        // The op itself goes through the REAL InputBrokerClient (connect, server
+        // verification, framing, retry) - the trace below is from THAT connection,
+        // endpoint-bound, not from a side pipe. Cursor before/after measures the
+        // effect: result=Played must mean the pointer actually moved.
+        PipePeer.LastVerifyTrace = null;
+        GetCursorPos(out var before);
         var result = InputBrokerClient.TryRun(op);
-        File.WriteAllText(outfile, $"broker_pid={pidNote} legacy_win32={legacy} result={result}");
+        Thread.Sleep(300); // let the broker's SendInput land before reading the position back
+        GetCursorPos(out var after);
+        var trace = PipePeer.LastVerifyTrace ?? "(none)";
+        File.WriteAllText(outfile,
+            $"broker_pid={pidNote} legacy_win32={legacy} result={result} cursor={before.X},{before.Y}->{after.X},{after.Y} trace="{trace}"");
         return result == InputBrokerClient.BrokerResult.Played ? 0 : 1;
+    }
+
+    /// <summary>--verify-pid &lt;pid&gt; &lt;outfile&gt;: run the real PipePeer verification against
+    /// an arbitrary pid and record the outcome + branch trace. The e2e points it at a
+    /// same-named copy from another folder running as SYSTEM: a filtered token cannot
+    /// open it (denied-handle squatter) and the handle-free identity check must REJECT
+    /// it - the anti-squat negative control.</summary>
+    private static int VerifyPid(string[] args)
+    {
+        var pid = ArgInt(args, "--verify-pid", 0);
+        var outfile = ArgStr(args, "--verify-pid", 2, "verify-pid.txt");
+        PipePeer.LastVerifyTrace = null;
+        string outcome;
+        try { PipePeer.TestHookVerifyPid((uint)pid); outcome = "accepted"; }
+        catch (Exception ex) { outcome = "rejected:" + ex.Message; }
+        File.WriteAllText(outfile, $"outcome={outcome} trace="{PipePeer.LastVerifyTrace ?? "(none)"}"");
+        return outcome == "accepted" ? 0 : 1;
+    }
+
+    /// <summary>--idle &lt;seconds&gt; &lt;pidfile&gt;: sit still without touching the pipe or the
+    /// mutex. The e2e runs a copied exe this way (as SYSTEM) to stand in for a squatter:
+    /// same process name, different file.</summary>
+    private static int Idle(string[] args)
+    {
+        var secs = Math.Max(ArgInt(args, "--idle", 30), 1);
+        var pidFile = ArgStr(args, "--idle", 2, "idle-pid.txt");
+        File.WriteAllText(pidFile, Environment.ProcessId.ToString());
+        Thread.Sleep(TimeSpan.FromSeconds(secs));
+        return 0;
     }
 }
 #endif

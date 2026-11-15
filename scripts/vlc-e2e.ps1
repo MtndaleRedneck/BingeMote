@@ -89,6 +89,21 @@ try {
     $s = (Vlc "$base/status.json").body | ConvertFrom-Json
     Assert ($s.state -eq 'playing') "pl_pause resumes"
 
+    # The notification bar's state-driven contract (rev18): explicit force commands
+    # are idempotent, so a stale cached state or double tap can never flip playback.
+    Vlc "$base/status.json?command=pl_forcepause" | Out-Null
+    Start-Sleep -Milliseconds 800
+    Vlc "$base/status.json?command=pl_forcepause" | Out-Null
+    Start-Sleep -Milliseconds 800
+    $s = (Vlc "$base/status.json").body | ConvertFrom-Json
+    Assert ($s.state -eq 'paused') "pl_forcepause twice stays paused (idempotent)"
+    Vlc "$base/status.json?command=pl_forceresume" | Out-Null
+    Start-Sleep -Milliseconds 800
+    Vlc "$base/status.json?command=pl_forceresume" | Out-Null
+    Start-Sleep -Milliseconds 800
+    $s = (Vlc "$base/status.json").body | ConvertFrom-Json
+    Assert ($s.state -eq 'playing') "pl_forceresume twice stays playing (idempotent)"
+
     # absolute seek, then relative +5s encoded as %2B5s like the app sends
     Vlc "$base/status.json?command=seek&val=2" | Out-Null
     Start-Sleep -Milliseconds 800

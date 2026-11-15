@@ -335,11 +335,19 @@ internal static class Program
             {
                 // rev17: the mutex holder could not be read, but an unreadable same-named
                 // process exists (the SYSTEM broker, or an elevated copy). Broker mode
-                // returns before this mutex, so the holder is a live UI copy: ask it to
-                // show its window instead of "update takeover" killing it (Ezzy's PC,
+                // returns before this mutex, so the holder is a live UI copy (Ezzy's PC,
                 // Nov 15 2026: double-click never opened the window; every launch took
                 // over and restarted the app).
-                sameExe = true;
+                // rev18 (Instinct 2 MEDIUM): show-window authority and kill/takeover
+                // authority stay separate. Showing is safe to request blind - the named
+                // event belongs to whoever owns the single-instance mutex, so it reaches
+                // exactly the running copy whoever that is. Quit/takeover is NOT safe
+                // blind: an unidentified copy is "unknown", and unknown is never killed,
+                // never replaced. The old rev17 code pretended sameExe=true here, which
+                // would also have passed an unidentified copy into the downgrade path.
+                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+                Log("Launched while already running (the running copy could not be read) - asked it to show its window, not taking over.");
+                return 0;
             }
             // A different exe is an update only when this launch is the same or a newer
             // version; an older exe (e.g. left in Downloads) must not downgrade the running copy.
@@ -523,9 +531,14 @@ internal static class Program
         try
         {
             var me = Environment.ProcessId;
+            var mySession = Process.GetCurrentProcess().SessionId;
             foreach (var proc in Process.GetProcessesByName("BingeMote").Concat(Process.GetProcessesByName("BingeMoteHelper")))
             {
                 if (proc.Id == me) continue;
+                // rev18 (Instinct 2 MEDIUM): bind the candidate to this session from the
+                // handle-free process snapshot before trusting its module path - a
+                // same-named copy in another session is never "the running copy" here.
+                try { if (proc.SessionId != mySession) continue; } catch { continue; }
                 try
                 {
                     var path = proc.MainModule?.FileName;

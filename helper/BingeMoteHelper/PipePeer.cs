@@ -27,6 +27,36 @@ internal static class PipePeer
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr h);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out ByHandleFileInformation info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    private const int ERROR_ACCESS_DENIED = 5;
+    private const int ERROR_INSUFFICIENT_BUFFER = 122;
+
+#if BROKER_TEST_HOOK
+    /// <summary>CI-only: how the last peer verification identified the peer's image
+    /// (openprocess vs handlefree:win32=N) and how it compared (file-identity vs
+    /// path-compare). Endpoint-bound proof for the e2e: the filtered-token op must
+    /// show the fallback branch on the SAME connection TryRun used. Compiled out of
+    /// the shipping exe.</summary>
+    internal static volatile string? LastVerifyTrace;
+#endif
+
     private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     private const int SystemProcessIdInformationClass = 88; // 0x58
 
@@ -50,8 +80,14 @@ internal static class PipePeer
         public UnicodeString ImageName;
     }
 
-    private static string ImagePath(uint pid)
+    /// <summary>The peer's image path, and how it was read: viaHandleFree is true when
+    /// the handle-free query answered because OpenProcess was denied. openWin32 is the
+    /// original OpenProcess error (0 when OpenProcess succeeded) - preserved so a
+    /// rejection never loses the reason.</summary>
+    private static string ImagePath(uint pid, out bool viaHandleFree, out int openWin32)
     {
+        viaHandleFree = false;
+        openWin32 = 0;
         var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (h == IntPtr.Zero)
         {
@@ -62,24 +98,36 @@ internal static class PipePeer
             // and the mouse fell back to the local path that loses to elevated windows).
             // The peer check must work from ANY local token, so fall back to the
             // handle-free query Task Manager itself uses for SYSTEM image paths.
-            var openError = Marshal.GetLastWin32Error();
-            try { return ImagePathHandleFree(pid); }
-            catch (Exception fallbackEx)
-            {
-                throw new InvalidOperationException("open_process:win32=" + openError + " (handle-free fallback: " + fallbackEx.Message + ")");
-            }
+            // rev18 (Instinct 2 review): fall back ONLY on access-denied (5) - other
+            // errors (no such process, invalid handle) must not take the weaker-read
+            // path, and the original error is never dropped.
+            openWin32 = Marshal.GetLastWin32Error();
+            if (openWin32 != ERROR_ACCESS_DENIED)
+                throw new InvalidOperationException("open_process:win32=" + openWin32);
+            viaHandleFree = true;
+            return ImagePathHandleFree(pid);
         }
         try
         {
-            var sb = new StringBuilder(1024);
-            uint size = (uint)sb.Capacity;
-            if (!QueryFullProcessImageName(h, 0, sb, ref size))
+            // rev18: grow the buffer instead of failing on a long path.
+            var capacity = 1024;
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                // The same privilege gap can bite here (handle opened, query denied).
-                try { return ImagePathHandleFree(pid); }
-                catch { throw new InvalidOperationException("image_query:win32=" + Marshal.GetLastWin32Error()); }
+                var sb = new StringBuilder(capacity);
+                uint size = (uint)sb.Capacity;
+                if (QueryFullProcessImageName(h, 0, sb, ref size)) return sb.ToString();
+                var err = Marshal.GetLastWin32Error();
+                if (err == ERROR_INSUFFICIENT_BUFFER) { capacity *= 8; continue; }
+                if (err == ERROR_ACCESS_DENIED)
+                {
+                    // The same privilege gap can bite here (handle opened, query denied).
+                    openWin32 = err;
+                    viaHandleFree = true;
+                    return ImagePathHandleFree(pid);
+                }
+                throw new InvalidOperationException("image_query:win32=" + err);
             }
-            return sb.ToString();
+            throw new InvalidOperationException("image_query:win32=" + ERROR_INSUFFICIENT_BUFFER);
         }
         finally { CloseHandle(h); }
     }
@@ -113,21 +161,86 @@ internal static class PipePeer
         finally { Marshal.FreeHGlobal(buf); }
     }
 
-    /// <summary>\Device\HarddiskVolumeN\... to C:\... via QueryDosDevice mappings.</summary>
-    private static string NtPathToDos(string ntPath)
+    /// <summary>rev18 (Instinct 2 HIGH): strict \Device\... to DOS mapping. The old
+    /// prefix match had no component boundary (\Device\HarddiskVolume1 matched a peer
+    /// at \Device\HarddiskVolume10\BingeMote.exe, producing the invented drive-relative
+    /// path "C:0\BingeMote.exe") and took the first drive letter of several. The strict
+    /// core is pure and unit-tested: longest device first, the character after the
+    /// device must be a backslash with at least one path component behind it (no bare
+    /// volume roots, no drive-relative output), no match means unmapped - never a
+    /// guessed path.</summary>
+    internal static bool TryMapNtPath(string ntPath, IReadOnlyList<(string Letter, string Device)> map, out string dosPath)
     {
+        dosPath = "";
+        foreach (var (letter, device) in map.OrderByDescending(m => m.Device.Length))
+        {
+            if (device.Length == 0) continue;
+            if (ntPath.Length > device.Length + 1
+                && ntPath.StartsWith(device, StringComparison.OrdinalIgnoreCase)
+                && ntPath[device.Length] == '\\')
+            {
+                dosPath = letter + ntPath[device.Length..]; // letter + "\rest" = "C:\rest", always rooted
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>The machine's live drive map, longest device target first. QueryDosDevice
+    /// grows its buffer on demand instead of truncating at a fixed size.</summary>
+    private static IReadOnlyList<(string Letter, string Device)> DriveMap()
+    {
+        var map = new List<(string, string)>();
         foreach (var drive in Environment.GetLogicalDrives())
         {
             var letter = drive.TrimEnd('\\');
-            var sb = new StringBuilder(256);
-            if (QueryDosDevice(letter, sb, (uint)sb.Capacity) == 0) continue;
-            var target = sb.ToString();
-            var nul = target.IndexOf('\0');
-            if (nul >= 0) target = target[..nul];
-            if (ntPath.StartsWith(target, StringComparison.OrdinalIgnoreCase))
-                return letter + ntPath[target.Length..];
+            var capacity = 256;
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var sb = new StringBuilder(capacity);
+                var got = QueryDosDevice(letter, sb, (uint)sb.Capacity);
+                if (got == 0)
+                {
+                    if (Marshal.GetLastWin32Error() == ERROR_INSUFFICIENT_BUFFER) { capacity *= 4; continue; }
+                    break;
+                }
+                var target = sb.ToString();
+                var nul = target.IndexOf('\0');
+                if (nul >= 0) target = target[..nul];
+                if (target.Length > 0) map.Add((letter, target));
+                break;
+            }
         }
-        return ntPath; // unconvertible: leave native; the equality check fails loudly
+        return map;
+    }
+
+    /// <summary>Strict live mapping; throws when the device has no drive letter (a peer
+    /// image on an unmapped volume is unverifiable, not guessed).</summary>
+    private static string NtPathToDos(string ntPath)
+    {
+        if (!TryMapNtPath(ntPath, DriveMap(), out var dosPath))
+            throw new InvalidOperationException("image_query_nt:unmapped_device");
+        return dosPath;
+    }
+
+    /// <summary>rev18: peer identity by FILE IDENTITY, not by path spelling. Volume
+    /// serial + file index survive every alias the path check could not see: SUBST and
+    /// namespace games, reparse points, hardlinks, 8.3 names. A same-named copy of the
+    /// exe from another folder is a different file and never matches. Returns null when
+    /// either file cannot be opened (caller decides the fallback).</summary>
+    private static bool? SameFile(string pathA, string pathB)
+    {
+        try
+        {
+            using var a = new FileStream(pathA, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var b = new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (!GetFileInformationByHandle(a.SafeFileHandle, out var ia)) return null;
+            if (!GetFileInformationByHandle(b.SafeFileHandle, out var ib)) return null;
+            return ia.VolumeSerialNumber == ib.VolumeSerialNumber
+                && ia.FileIndexHigh == ib.FileIndexHigh
+                && ia.FileIndexLow == ib.FileIndexLow;
+        }
+        catch { return null; }
     }
 
     private static bool PathsEqual(string a, string b)
@@ -137,17 +250,60 @@ internal static class PipePeer
     }
 
     /// <summary>Throws unless process pid runs this same installed exe in this same session.
+    /// rev18 (Instinct 2 HIGH): the comparison is by FILE IDENTITY (volume serial + file
+    /// index) whenever both image files can be opened - alias-proof by construction. The
+    /// legacy path-string compare survives only for the OpenProcess read path when a file
+    /// open fails (pre-rev17 semantics, no regression); the handle-free path requires
+    /// identity, because it exists for exactly the token that cannot afford a guess.
     /// Returns a short attribution string for the log (never the peer's data).</summary>
     private static string VerifyOwnImage(uint pid)
     {
         using var proc = Process.GetProcessById((int)pid); // throws if the peer already exited
-        var image = ImagePath(pid);
+        var image = ImagePath(pid, out var viaHandleFree, out var openWin32);
         var own = Environment.ProcessPath ?? throw new InvalidOperationException("own path unknown");
-        if (!PathsEqual(image, own))
-            throw new InvalidOperationException("peer image is not the installed helper");
+        var read = viaHandleFree ? "handlefree:win32=" + openWin32 : "openprocess";
+        var identity = SameFile(image, own);
+        string how;
+        if (identity == true)
+        {
+            how = "file-identity";
+        }
+        else if (identity == false)
+        {
+#if BROKER_TEST_HOOK
+            LastVerifyTrace = read + " file-identity:mismatch";
+#endif
+            throw new InvalidOperationException("peer image is not the installed helper (file identity differs; read " + read + ")");
+        }
+        else if (viaHandleFree)
+        {
+#if BROKER_TEST_HOOK
+            LastVerifyTrace = read + " file-identity:undeterminable";
+#endif
+            throw new InvalidOperationException("peer file identity undeterminable; the handle-free read requires it (read " + read + ")");
+        }
+        else
+        {
+            if (!PathsEqual(image, own))
+            {
+#if BROKER_TEST_HOOK
+                LastVerifyTrace = read + " path-compare:mismatch";
+#endif
+                throw new InvalidOperationException("peer image is not the installed helper");
+            }
+            how = "path-compare"; // identity unopenable on the OpenProcess path: pre-rev17 semantics
+        }
         if (proc.SessionId != Process.GetCurrentProcess().SessionId)
+        {
+#if BROKER_TEST_HOOK
+            LastVerifyTrace = read + " " + how + " session:mismatch";
+#endif
             throw new InvalidOperationException("peer is in another session");
-        return "pid=" + pid + " session=" + proc.SessionId;
+        }
+#if BROKER_TEST_HOOK
+        LastVerifyTrace = read + " " + how + " ok";
+#endif
+        return "pid=" + pid + " session=" + proc.SessionId + " (" + read + ", " + how + ")";
     }
 
     /// <summary>Broker side: the connected client must be the installed helper itself.</summary>
@@ -169,6 +325,11 @@ internal static class PipePeer
     }
 
 #if BROKER_TEST_HOOK
+    /// <summary>CI-only: run the real peer verification against an arbitrary pid (the
+    /// e2e's alias/denied-handle negative control: a same-named copy from a different
+    /// folder, running as SYSTEM, must be REJECTED under a filtered token).</summary>
+    internal static void TestHookVerifyPid(uint pid) => VerifyOwnImage(pid);
+
     /// <summary>CI negative control for the rev17 fix: what the PRE-rev17 handle-based
     /// server check saw from THIS token. Under a restricted (standard-like) token this
     /// must be ERROR_ACCESS_DENIED (5) against the SYSTEM broker, proving the CI token

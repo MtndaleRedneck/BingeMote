@@ -156,7 +156,11 @@ Start-Sleep -Seconds 2
 # --- Part 1: the one-time elevated setup, run as-is (CI runners are already admin) ---
 Write-Host "== install-firewall =="
 # The helper is a WinExe, so `&` returns immediately and $LASTEXITCODE stays empty.
-$fw = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+$fw = Start-Process $exe -ArgumentList '--install-firewall' -PassThru
+if (-not (Wait-Process -Id $fw.Id -Timeout 60 -ErrorAction SilentlyContinue)) {
+  Stop-Process -Id $fw.Id -Force -ErrorAction SilentlyContinue
+  throw "install-firewall did not exit within 60s (bounded wait, rev18)"
+}
 $fwExit = $fw.ExitCode
 Write-Host "install-firewall exit code: $fwExit"
 netsh advfirewall firewall show rule name="BingeMote"
@@ -179,6 +183,28 @@ try {
     }
     if (-not $up) { throw "helper did not start listening on 8488" }
     Write-Host "helper is listening"
+    # rev18 (Instinct 2, the unexplained 43689454762-cancelled 32efe77 hang): durable
+    # phase/process/task/pipe telemetry that survives a step-timeout kill. A child
+    # process writes a snapshot to THIS console every 60s for 26 minutes; on a hang
+    # the run log then shows the last live state instead of going dark (a job-level
+    # cancel keeps no logs; the 28-min step cap keeps them - this fills the console).
+    $heartbeatScript = Join-Path $env:TEMP 'bm-e2e-heartbeat.ps1'
+    @'
+$end = (Get-Date).AddMinutes(26)
+while ((Get-Date) -lt $end) {
+    Start-Sleep -Seconds 60
+    Write-Output ("== heartbeat " + (Get-Date).ToString("HH:mm:ss") + " ==")
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Output ("process: pid=" + $_.ProcessId + " session=" + $_.SessionId + " started=" + $_.CreationDate + " cmd=" + $_.CommandLine)
+    }
+    Get-ScheduledTask -TaskName 'BingeMote*' -ErrorAction SilentlyContinue | ForEach-Object {
+        $i = $_ | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+        Write-Output ("task: " + $_.TaskName + " state=" + $_.State + " last=" + $(if ($i) { $i.LastTaskResult } else { '?' }))
+    }
+    try { [IO.Directory]::GetFiles('\.\pipe') | Where-Object { $_ -match 'ingemote|ingeMote' } | ForEach-Object { Write-Output ("pipe: " + $_) } } catch {}
+}
+'@ | Set-Content $heartbeatScript
+    $heartbeat = Start-Process pwsh -ArgumentList '-NoProfile','-File',$heartbeatScript -PassThru -WindowStyle Hidden
     # On any failure from here on, dump the helper log and process state so CI
     # failures are diagnosable from the run log alone.
     trap {
@@ -192,7 +218,8 @@ try {
         powercfg /requests
         $sysLog = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
         if (Test-Path $sysLog) { Write-Host "== SYSTEM-profile helper.log =="; Get-Content $sysLog }
-        foreach ($tn in 'BingeMote Input Broker','BingeMote UIPI Blocker') {
+        try { if ($heartbeat -and -not $heartbeat.HasExited) { Stop-Process -Id $heartbeat.Id -Force } } catch { }
+        foreach ($tn in 'BingeMote Input Broker','BingeMote UIPI Blocker','BingeMote CI RestrictedOp','BingeMote CI RestrictedLaunch','BingeMote CI Squat','BingeMote CI VerifySquat','BingeMote CI LimitedProbe') {
             try { $ti = Get-ScheduledTaskInfo -TaskName $tn; Write-Host "task ${tn}: LastRunTime=$($ti.LastRunTime) LastTaskResult=$($ti.LastTaskResult)" } catch { Write-Host "task ${tn}: not registered" }
         }
         throw
@@ -340,7 +367,11 @@ try {
 
     # A second copy must exit quietly instead of failing to bind the port.
     Write-Host "== single instance =="
-    $second = Start-Process $exe -Wait -PassThru
+    $second = Start-Process $exe -PassThru
+    if (-not (Wait-Process -Id $second.Id -Timeout 60 -ErrorAction SilentlyContinue)) {
+        Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+        throw "second instance did not exit within 60s (bounded wait, rev18)"
+    }
     Assert ($second.ExitCode -eq 0) "second instance exits quietly (code $($second.ExitCode))"
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "first instance still serving"
@@ -841,18 +872,66 @@ public static class Probe {
     Write-Host "limited-task sentinel: $(if (Test-Path $sentinel) { 'ran' } else { 'NEVER RAN' }) (LastRunTime=$($sentInfo.LastRunTime) LastTaskResult=$($sentInfo.LastTaskResult))"
     Unregister-ScheduledTask -TaskName 'BingeMote CI LimitedProbe' -Confirm:$false
     $exeAbs = (Resolve-Path $exe).Path  # Task Scheduler resolves the action path itself; a relative path fails with 0x80070002 (run 43684647851)
-    $opAction = New-ScheduledTaskAction -Execute $exeAbs -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
-    Register-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Action $opAction -Principal $limited -Force | Out-Null
-    Start-ScheduledTask -TaskName 'BingeMote CI RestrictedOp'
-    $opDeadline = (Get-Date).AddSeconds(90)
-    while (-not (Test-Path $opOut) -and (Get-Date) -lt $opDeadline) { Start-Sleep -Milliseconds 500 }
-    $opInfo = Get-ScheduledTaskInfo -TaskName 'BingeMote CI RestrictedOp'
-    Write-Host "RestrictedOp: LastRunTime=$($opInfo.LastRunTime) LastTaskResult=$($opInfo.LastTaskResult)"
-    Unregister-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Confirm:$false
-    $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
-    Write-Host "restricted client: $opLine"
-    Assert ($opLine -match 'legacy_win32=5') "filtered token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
-    Assert ($opLine -match 'result=Played') "non-elevated client verified the SYSTEM broker (handle-free) and played an op"
+    function Run-LimitedTask($name, $arguments, $outFile, $timeoutSec) {
+        # Register, start, poll bounded, always report task state, always unregister.
+        Remove-Item $outFile -Force -ErrorAction SilentlyContinue
+        $action = New-ScheduledTaskAction -Execute $exeAbs -Argument $arguments
+        Register-ScheduledTask -TaskName $name -Action $action -Principal $limited -Force | Out-Null
+        Start-ScheduledTask -TaskName $name
+        $dl = (Get-Date).AddSeconds($timeoutSec)
+        while (-not (Test-Path $outFile) -and (Get-Date) -lt $dl) { Start-Sleep -Milliseconds 500 }
+        $info = Get-ScheduledTaskInfo -TaskName $name
+        Write-Host "$name: LastRunTime=$($info.LastRunTime) LastTaskResult=$($info.LastTaskResult)"
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        if (Test-Path $outFile) { return (Get-Content $outFile -Raw).Trim() }
+        return "(no result file)"
+    }
+    # rev18 (Instinct 2): repeated runs, measured effect, endpoint-bound trace, token dump.
+    foreach ($round in 1..3) {
+        $opLine = Run-LimitedTask 'BingeMote CI RestrictedOp' ('--broker-op "m 80 0" "{0}"' -f $opOut) $opOut 90
+        Write-Host "restricted client (round $round): $opLine"
+        Assert ($opLine -match 'legacy_win32=5') "round ${round}: filtered token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
+        Assert ($opLine -match 'result=Played') "round ${round}: non-elevated client verified the SYSTEM broker (handle-free) and played an op"
+        # Endpoint-bound fallback proof: the trace comes from the SAME connection TryRun used.
+        Assert ($opLine -match 'trace="handlefree:win32=5') "round ${round}: the fallback branch ran on TryRun's own connection (trace in result line)"
+        # Measured effect: result=Played must mean the pointer actually moved (m 80 0).
+        if ($opLine -match 'cursor=(-?\d+),(-?\d+)->(-?\d+),(-?\d+)') {
+            $dx = [int]$Matches[3] - [int]$Matches[1]
+            Assert ($dx -ge 40) "round ${round}: the played op visibly moved the cursor (dx=$dx of 80 requested)"
+        } else { Assert $false "round ${round}: result line carries cursor measurement" }
+        if ($round -eq 1) {
+            # Token equivalence with Ezzy's shape: whoami evidence from the probe itself.
+            $whoFile = $opOut + '.whoami.txt'
+            Assert (Test-Path $whoFile) "the probe dumped its token (whoami)"
+            $who = Get-Content $whoFile -Raw
+            Assert ($who -match 'BUILTIN\\Administrators\s+Alias\s+S-1-5-32-544[^\r\n]*[Dd]eny') "the probe token carries Administrators as DENY-ONLY (Ezzy's UAC-filtered shape)"
+        }
+    }
+    # rev18 (Instinct 2): alias/denied-handle squatter negative control. A copy of this
+    # same exe from a DIFFERENT folder runs idle as SYSTEM; a filtered client cannot
+    # open it and the handle-free identity check must REJECT it as a pipe peer.
+    Write-Host "== rev18 squatter negative control =="
+    $squatDir = Join-Path $env:TEMP 'bingemote-squat'
+    New-Item -ItemType Directory -Force $squatDir | Out-Null
+    Copy-Item $exeAbs (Join-Path $squatDir 'BingeMote.exe') -Force
+    $squatPidFile = Join-Path $env:TEMP 'bingemote-squat-pid.txt'
+    Remove-Item $squatPidFile -Force -ErrorAction SilentlyContinue
+    $sysPrincipal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $idleAction = New-ScheduledTaskAction -Execute (Join-Path $squatDir 'BingeMote.exe') -Argument ('--idle 60 "{0}"' -f $squatPidFile)
+    Register-ScheduledTask -TaskName 'BingeMote CI Squat' -Action $idleAction -Principal $sysPrincipal -Force | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote CI Squat'
+    $squatDeadline = (Get-Date).AddSeconds(30)
+    while (-not (Test-Path $squatPidFile) -and (Get-Date) -lt $squatDeadline) { Start-Sleep -Milliseconds 500 }
+    Assert (Test-Path $squatPidFile) "squatter copy is running as SYSTEM"
+    $squatPid = (Get-Content $squatPidFile -Raw).Trim()
+    Unregister-ScheduledTask -TaskName 'BingeMote CI Squat' -Confirm:$false
+    $verifyOut = Join-Path $env:TEMP 'bingemote-verify-pid.txt'
+    $verifyLine = Run-LimitedTask 'BingeMote CI VerifySquat' ('--verify-pid {0} "{1}"' -f $squatPid, $verifyOut) $verifyOut 90
+    Write-Host "squatter verification: $verifyLine"
+    Assert ($verifyLine -match 'outcome=rejected') "same-named copy from another folder, unreadable to the filtered client, is REJECTED as a pipe peer"
+    Assert ($verifyLine -match 'handlefree:win32=5') "the squatter rejection went through the handle-free path (OpenProcess was denied)"
+    Assert ($verifyLine -match 'file-identity') "the squatter rejection reason is file identity, not a path spelling"
+    Stop-Process -Id ([int]$squatPid) -Force -ErrorAction SilentlyContinue
 
     # --- rev17: a second launch must SHOW the running copy, not take it over, when the
     # same-named SYSTEM broker shadows RunningCopyPath for a non-elevated user. Ezzy:
@@ -869,6 +948,32 @@ public static class Probe {
         try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart for the second-launch shadow test" }
+    # Consumer-side evidence (Instinct 2): read the actual window state, not only the
+    # second instance's log line. The copy starts tucked in the tray: no visible
+    # BingeMote window BEFORE the second launch.
+    Add-Type -TypeDefinition @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class BmWinEnum {
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    private delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    public static string FindVisible(string needle) {
+        string found = null;
+        EnumWindows((h, l) => {
+            if (!IsWindowVisible(h)) return true;
+            var sb = new StringBuilder(512); GetWindowText(h, sb, sb.Capacity);
+            var t = sb.ToString();
+            if (t.Length > 0 && t.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0) { found = t; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+"@
+    $visBefore = [BmWinEnum]::FindVisible('BingeMote')
+    Write-Host "visible BingeMote window before second launch: $(if ($visBefore) { "'$visBefore'" } else { '(none)' })"
+    Assert (-not $visBefore) "control: no visible BingeMote window while tucked in the tray"
     $logPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     $logBefore = (Get-Item $logPath).Length
     # Same filtered-token shaping: a plain second launch from a non-elevated user.
@@ -888,6 +993,16 @@ public static class Probe {
     Assert ($newLog -notmatch 'Update launched while an older copy ran') "no bogus update-takeover of the running copy"
     Start-Sleep -Milliseconds 500
     Assert (-not $p.HasExited) "running UI copy survived the second launch"
+    # The signal CONSUMER: the running copy's own window must now be visible
+    # (deterministic branch evidence, not just the requester's log line).
+    $visAfter = $null
+    $visDeadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $visDeadline) {
+        $visAfter = [BmWinEnum]::FindVisible('BingeMote')
+        if ($visAfter) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert $visAfter "the running copy's window is VISIBLE after the filtered second launch's signal (consumer side: '$visAfter')"
 
     # --- rev12: broker hardening (Instinct 2 review blockers) ---
     Write-Host "== rev12 broker hardening =="
@@ -949,7 +1064,11 @@ public static class Probe {
     # helper's own connection is unaffected.
     $floodOut = Join-Path $env:TEMP 'broker-flood.txt'
     Remove-Item $floodOut -Force -ErrorAction SilentlyContinue
-    Start-Process $exe -ArgumentList '--broker-flood', '2000', $floodOut -Wait | Out-Null
+    $floodProc = Start-Process $exe -ArgumentList '--broker-flood', '2000', $floodOut -PassThru
+    if (-not (Wait-Process -Id $floodProc.Id -Timeout 120 -ErrorAction SilentlyContinue)) {
+        Stop-Process -Id $floodProc.Id -Force -ErrorAction SilentlyContinue
+        throw "broker-flood hook did not exit within 120s (bounded wait, rev18)"
+    }
     Assert (Test-Path $floodOut) "flood hook wrote its result file"
     $floodResult = Get-Content $floodOut -Raw
     Assert ($floodResult -match 'rate_limited') "a flooding client is rate-limited and dropped: $floodResult"

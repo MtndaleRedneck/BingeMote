@@ -89,7 +89,7 @@ jobs:
           $even = [Text.Encoding]::Unicode.GetString($bytes, 0, $bytes.Length - ($bytes.Length % 2))
           $odd  = [Text.Encoding]::Unicode.GetString($bytes, 1, $bytes.Length - 1 - (($bytes.Length - 1) % 2))
           $meta = [Text.Encoding]::UTF8.GetString($bytes)
-          $literals = @('--broker-hold', '--broker-flood', '--broker-flood2', '--broker-send', '--broker-holddown', '--broker-silent-server', '--broker-delayed-run', '--broker-op', '--window-shot', '--osd-shot', 'ci/hold')
+          $literals = @('--broker-hold', '--broker-flood', '--broker-flood2', '--broker-send', '--broker-holddown', '--broker-silent-server', '--broker-delayed-run', '--broker-op', '--verify-pid', '--idle', '--window-shot', '--osd-shot', 'ci/hold')
           # Compile-time constant names never appear in a binary, so only the hook
           # type's own metadata name is worth scanning for here.
           $symbols  = @('BrokerTestHook')
