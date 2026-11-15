@@ -152,10 +152,16 @@ internal static class PipePeer
             var status = NtQuerySystemInformation(SystemProcessIdInformationClass, ref info, Marshal.SizeOf<SystemProcessIdInformation>(), out _);
             if (status != 0)
                 throw new InvalidOperationException("image_query_nt:status=0x" + ((uint)status).ToString("x8"));
-            if (info.ImageName.Length == 0)
-                throw new InvalidOperationException("image_query_nt:empty");
+            // rev18 (Instinct 2): validate the native answer before trusting it - an
+            // even, in-bounds, non-empty length and the expected \Device\ root.
+            if (info.ImageName.Length == 0 || (info.ImageName.Length & 1) != 0
+                || info.ImageName.Length > info.ImageName.MaximumLength
+                || info.ImageName.MaximumLength > chars * 2)
+                throw new InvalidOperationException("image_query_nt:bad_length");
             var nt = Marshal.PtrToStringUni(info.ImageName.Buffer, info.ImageName.Length / 2)
                      ?? throw new InvalidOperationException("image_query_nt:empty");
+            if (!nt.StartsWith("\Device\", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("image_query_nt:unexpected_root");
             return NtPathToDos(nt);
         }
         finally { Marshal.FreeHGlobal(buf); }
@@ -243,12 +249,6 @@ internal static class PipePeer
         catch { return null; }
     }
 
-    private static bool PathsEqual(string a, string b)
-    {
-        try { return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase); }
-        catch { return string.Equals(a, b, StringComparison.OrdinalIgnoreCase); }
-    }
-
     /// <summary>Throws unless process pid runs this same installed exe in this same session.
     /// rev18 (Instinct 2 HIGH): the comparison is by FILE IDENTITY (volume serial + file
     /// index) whenever both image files can be opened - alias-proof by construction. The
@@ -262,48 +262,34 @@ internal static class PipePeer
         var image = ImagePath(pid, out var viaHandleFree, out var openWin32);
         var own = Environment.ProcessPath ?? throw new InvalidOperationException("own path unknown");
         var read = viaHandleFree ? "handlefree:win32=" + openWin32 : "openprocess";
+        // rev18 (Instinct 2): file identity is REQUIRED, never a path-spelling compare.
+        // Fail closed: an image file that cannot be opened (deleted post-launch by an
+        // update, locked) rejects the peer; the broker watchdog restores service. The
+        // rename/replace TOCTOU behind this is an ADMIN operation on the protected
+        // install dir (rev14 ACL proof), outside the same-user non-elevated model.
         var identity = SameFile(image, own);
-        string how;
-        if (identity == true)
-        {
-            how = "file-identity";
-        }
-        else if (identity == false)
+        if (identity != true)
         {
 #if BROKER_TEST_HOOK
-            LastVerifyTrace = read + " file-identity:mismatch";
+            LastVerifyTrace = read + (identity == false ? " file-identity:mismatch" : " file-identity:undeterminable");
 #endif
-            throw new InvalidOperationException("peer image is not the installed helper (file identity differs; read " + read + ")");
-        }
-        else if (viaHandleFree)
-        {
-#if BROKER_TEST_HOOK
-            LastVerifyTrace = read + " file-identity:undeterminable";
-#endif
-            throw new InvalidOperationException("peer file identity undeterminable; the handle-free read requires it (read " + read + ")");
-        }
-        else
-        {
-            if (!PathsEqual(image, own))
-            {
-#if BROKER_TEST_HOOK
-                LastVerifyTrace = read + " path-compare:mismatch";
-#endif
-                throw new InvalidOperationException("peer image is not the installed helper");
-            }
-            how = "path-compare"; // identity unopenable on the OpenProcess path: pre-rev17 semantics
+            throw new InvalidOperationException(identity == false
+                ? "peer image is not the installed helper (file identity differs; read " + read + ")"
+                : "peer image file identity undeterminable; failing closed (read " + read + ")");
         }
         if (proc.SessionId != Process.GetCurrentProcess().SessionId)
         {
 #if BROKER_TEST_HOOK
-            LastVerifyTrace = read + " " + how + " session:mismatch";
+            LastVerifyTrace = read + " file-identity session:mismatch";
 #endif
             throw new InvalidOperationException("peer is in another session");
         }
+        string started;
+        try { started = proc.StartTime.ToString("HH:mm:ss"); } catch { started = "?"; }
 #if BROKER_TEST_HOOK
-        LastVerifyTrace = read + " " + how + " ok";
+        LastVerifyTrace = read + " file-identity ok pid=" + pid + " started=" + started + " session=" + proc.SessionId;
 #endif
-        return "pid=" + pid + " session=" + proc.SessionId + " (" + read + ", " + how + ")";
+        return "pid=" + pid + " session=" + proc.SessionId + " started=" + started + " (" + read + ", file-identity)";
     }
 
     /// <summary>Broker side: the connected client must be the installed helper itself.</summary>
