@@ -1,0 +1,60 @@
+name: stress
+on:
+  push:
+    branches: [stress-untested]
+  workflow_dispatch:
+
+jobs:
+  # Gate: rev15 must pass its full existing runtime suite before the stress run means anything.
+  e2e-gate:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish TEST helper exe (CI hooks; never shipped)
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
+      - name: Install VLC (for the movies launch test)
+        run: choco install vlc --no-progress -y
+      - name: Build the installer from the test build (for the install/uninstall test)
+        run: |
+          choco install innosetup --no-progress -y
+          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: Helper runtime tests (install/uninstall, pairing, endpoints, broker, UIPI)
+        run: pwsh -File scripts/helper-e2e.ps1
+      - name: VLC control tests (real VLC, app request shapes)
+        run: pwsh -File scripts/vlc-e2e.ps1
+
+  stress:
+    needs: e2e-gate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish TEST helper exe (CI hooks; never shipped)
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
+      - name: Helper stress tests (streams, crash/recovery, churn, abuse, restarts, soak)
+        run: pwsh -File scripts/helper-stress.ps1
+      - name: Stage stress logs
+        if: always()
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\stress-logs"
+          New-Item -ItemType Directory $out -Force | Out-Null
+          Copy-Item "$env:LOCALAPPDATA\BingeMote\helper.log" "$out\helper-user.log" -ErrorAction SilentlyContinue
+          Copy-Item 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log' "$out\helper-system.log" -ErrorAction SilentlyContinue
+          Copy-Item helper\stress-summary.json $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem $out | Select-Object Name, Length
+      - name: Upload stress logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-logs
+          path: stress-logs
+          if-no-files-found: warn
