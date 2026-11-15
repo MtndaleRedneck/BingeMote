@@ -27,6 +27,9 @@ internal static class PipePeer
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr h);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string lpszShortPath, StringBuilder lpszLongPath, uint cchBuffer);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out ByHandleFileInformation info);
 
@@ -160,7 +163,7 @@ internal static class PipePeer
                 throw new InvalidOperationException("image_query_nt:bad_length");
             var nt = Marshal.PtrToStringUni(info.ImageName.Buffer, info.ImageName.Length / 2)
                      ?? throw new InvalidOperationException("image_query_nt:empty");
-            if (!nt.StartsWith("\Device\", StringComparison.OrdinalIgnoreCase))
+            if (!nt.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("image_query_nt:unexpected_root");
             return NtPathToDos(nt);
         }
@@ -234,7 +237,7 @@ internal static class PipePeer
     /// namespace games, reparse points, hardlinks, 8.3 names. A same-named copy of the
     /// exe from another folder is a different file and never matches. Returns null when
     /// either file cannot be opened (caller decides the fallback).</summary>
-    private static bool? SameFile(string pathA, string pathB)
+    internal static bool? SameFile(string pathA, string pathB)
     {
         try
         {
@@ -247,6 +250,28 @@ internal static class PipePeer
                 && ia.FileIndexLow == ib.FileIndexLow;
         }
         catch { return null; }
+    }
+    /// <summary>rev19 (Instinct 2): canonical path form for the namespace binding -
+    /// full path, 8.3 aliases expanded via GetLongPathName, trailing separators
+    /// trimmed. GetLongPathName failing (file gone between query and open) returns
+    /// the full-path form; the identity open after it fails closed on a vanished file.</summary>
+    internal static string NormalizePath(string path)
+    {
+        var full = Path.GetFullPath(path).TrimEnd('\\');
+        var sb = new StringBuilder(1024);
+        var n = GetLongPathName(full, sb, (uint)sb.Capacity);
+        if (n > 0 && n < sb.Capacity) return sb.ToString().TrimEnd('\\');
+        return full;
+    }
+
+    /// <summary>rev19 (Instinct 2): the peer's image path must resolve to THIS installed
+    /// file's canonical path - the protected admin-controlled install namespace - never
+    /// to a caller-local alias (SUBST, 8.3, reparse remap). Pure string binding after
+    /// canonicalization; the same-file open underneath it stays defense in depth.</summary>
+    internal static bool IsExpectedImagePath(string peerImagePath, string expectedPath)
+    {
+        return string.Equals(NormalizePath(peerImagePath), NormalizePath(expectedPath),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Throws unless process pid runs this same installed exe in this same session.
@@ -267,6 +292,23 @@ internal static class PipePeer
         // update, locked) rejects the peer; the broker watchdog restores service. The
         // rename/replace TOCTOU behind this is an ADMIN operation on the protected
         // install dir (rev14 ACL proof), outside the same-user non-elevated model.
+        // rev19 (Instinct 2): NAMESPACE BINDING FIRST - the peer's image path must
+        // resolve to this installed file's canonical path. A caller-local alias
+        // (SUBST letter, 8.3 spelling, reparse remap) rejects here even when it
+        // points at the same bytes: the namespace is the trust boundary, and the
+        // mapped path must live inside it, not merely reach it.
+        if (!IsExpectedImagePath(image, own))
+        {
+#if BROKER_TEST_HOOK
+            LastVerifyTrace = read + " namespace:mismatch";
+#endif
+            throw new InvalidOperationException("peer image path is outside the install namespace (read " + read + ")");
+        }
+        // Then compare the ACTUAL PEER FILE against the expected file by identity
+        // (volume serial + file index) - never expected-against-expected. With the
+        // namespace binding above, this open also proves the install file is still
+        // readable and unreplaced between the path query and now; a denied or failed
+        // open fails closed.
         var identity = SameFile(image, own);
         if (identity != true)
         {
@@ -322,10 +364,15 @@ internal static class PipePeer
     /// really matches Ezzy's condition, while the rev17 check still passes. Compiled
     /// into the e2e test build only.</summary>
     internal static (uint Pid, int Win32) TestHookLegacyProbe(NamedPipeClientStream pipe)
+        => TestHookLegacyProbe(pipe, PROCESS_QUERY_LIMITED_INFORMATION);
+
+    /// <summary>rev19 anomaly dissection: mask-parameterized variant so the e2e can
+    /// tell a mask effect (0x1000 vs 0x0400) from a time/order effect.</summary>
+    internal static (uint Pid, int Win32) TestHookLegacyProbe(NamedPipeClientStream pipe, uint access)
     {
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid))
             return (0, Marshal.GetLastWin32Error());
-        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        var h = OpenProcess(access, false, pid);
         var err = h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
         if (h != IntPtr.Zero) CloseHandle(h);
         return (pid, err);

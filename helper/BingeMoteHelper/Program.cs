@@ -255,7 +255,7 @@ internal static class Program
                 InputBroker.ReplyDelayMs = delayMs;
             return InputBroker.Run();
         }
-        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server") || args.Contains("--broker-op"))
+        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server") || args.Contains("--broker-op") || args.Contains("--try-open") || args.Contains("--verify-pid") || args.Contains("--idle"))
         {
             return BrokerTestHook.Run(args);
         }
@@ -331,6 +331,15 @@ internal static class Program
             var selfPath = Environment.ProcessPath;
             var sameExe = runningPath != null && selfPath != null &&
                 string.Equals(runningPath, selfPath, StringComparison.OrdinalIgnoreCase);
+            // rev19 (Instinct 2): the SAME PATH is not proof of the same file. If the
+            // running copy's file identity disagrees with ours (or cannot be read),
+            // fail closed: it is NOT the same exe, and the unknown is show-only below.
+            var samePathIdentityConflict = false;
+            if (sameExe)
+            {
+                var id = PipePeer.SameFile(runningPath!, selfPath!);
+                if (id != true) { sameExe = false; samePathIdentityConflict = true; }
+            }
             if (!sameExe && runningPath == null && copyShadowed)
             {
                 // rev17: the mutex holder could not be read, but an unreadable same-named
@@ -356,34 +365,38 @@ internal static class Program
             }
             // A different exe is an update only when this launch is the same or a newer
             // version; an older exe (e.g. left in Downloads) must not downgrade the running copy.
+            // rev19 (Instinct 2 state table): "update" means this LAUNCHING copy's
+            // version is equal-or-newer than the running copy's, both parsed. An older
+            // launching copy shows the running window and exits. A MISSING or
+            // UNPARSEABLE version is UNKNOWN, and unknown never authorizes a quit or
+            // a takeover - it is show-only, same as a downgrade.
             var isDowngrade = false;
-            if (!sameExe && runningPath != null && selfPath != null)
+            var versionUnknown = false;
+            if (!sameExe && !samePathIdentityConflict && runningPath != null && selfPath != null)
             {
                 try
                 {
                     var mine = FileVersionInfo.GetVersionInfo(selfPath).FileVersion;
                     var theirs = FileVersionInfo.GetVersionInfo(runningPath).FileVersion;
-                    if (mine != null && theirs != null &&
-                        new Version(mine).CompareTo(new Version(theirs)) < 0) isDowngrade = true;
+                    if (mine == null || theirs == null) versionUnknown = true;
+                    else if (new Version(mine).CompareTo(new Version(theirs)) < 0) isDowngrade = true;
                 }
-                catch { /* cannot tell versions - treat as an update, as before */ }
+                catch { versionUnknown = true; }
             }
-            if (sameExe || isDowngrade)
+            if (sameExe || isDowngrade || versionUnknown || samePathIdentityConflict)
             {
                 var showSignaled = false;
                 try { EventWaitHandle.OpenExisting(ShowEventName).Set(); showSignaled = true; } catch { }
-                if (!showSignaled)
-                {
-                    Log(isDowngrade
-                        ? "An older exe launched while a newer copy ran - could NOT signal its show event."
-                        : "Launched while already running - could NOT signal the running copy's show event.");
-                }
-                else
-                {
-                    Log(isDowngrade
-                        ? "An older exe launched while a newer copy ran - showed the running copy's window."
-                        : "Launched while already running - asked the running copy to show its window.");
-                }
+                var reason = samePathIdentityConflict
+                    ? "The running copy's file identity did not match this exe (failing closed)"
+                    : versionUnknown
+                        ? "Could not read both versions - treating the running copy as unknown"
+                        : isDowngrade
+                            ? "An older exe launched while a newer copy ran"
+                            : "Launched while already running";
+                Log(showSignaled
+                    ? reason + " - asked the running copy to show its window, not taking over."
+                    : reason + " - could NOT signal its show event, not taking over.");
                 return 0;
             }
             EventWaitHandle? oldQuit = null;
@@ -396,6 +409,13 @@ internal static class Program
                     "BingeMote", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return 0;
             }
+            // rev19 (Instinct 2 state table): this quit signal is COOPERATIVE, not
+            // sender-authenticated - any local same-session process can open and set
+            // the default-ACL named events, so a same-user nuisance could ask the
+            // running copy to quit or show. Accepted residual: it cannot inject input
+            // or replace the broker; the running copy quits gracefully, nothing more.
+            // There is no Process.Kill anywhere in this flow - takeover waits on the
+            // old copy's own exit and mutex release.
             Log("Update launched while an older copy ran - asked it to quit, taking over.");
             oldQuit.Set();
             // The old copy exits and releases the mutex; take it over (give it a few seconds).
