@@ -59,7 +59,7 @@ internal static class SessionLauncher
             var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>(), desktop = "winsta0\\default" };
             var cmd = "\"" + Environment.ProcessPath + "\" " + argLine;
             if (!CreateProcessAsUserW(dup, null, cmd, IntPtr.Zero, IntPtr.Zero, false,
-                    0x00000400 /* CREATE_NO_WINDOW */ | 0x04000000 /* CREATE_UNICODE_ENVIRONMENT */, env, null, ref si, out var pi))
+                    0x00000400 /* CREATE_UNICODE_ENVIRONMENT (env block passed) */ | 0x04000000 /* CREATE_DEFAULT_ERROR_MODE: do not inherit our error mode */, env, null, ref si, out var pi))
                 return Fail("CreateProcessAsUser", logTag);
             CloseHandle(pi.process);
             CloseHandle(pi.thread);

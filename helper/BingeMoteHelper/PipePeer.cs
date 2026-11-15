@@ -27,6 +27,9 @@ internal static class PipePeer
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr h);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string lpszShortPath, StringBuilder lpszLongPath, uint cchBuffer);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out ByHandleFileInformation info);
 
@@ -140,31 +143,45 @@ internal static class PipePeer
     /// \Device\... form; converted through the machine's drive mappings).</summary>
     private static string ImagePathHandleFree(uint pid)
     {
-        const int chars = 1024;
-        var buf = Marshal.AllocHGlobal(chars * 2);
-        try
+        // Instinct 2 (rev19 review): grow the buffer instead of silently truncating a
+        // long image path, and validate the ANSWER, not just the status: the returned
+        // buffer pointer must be the allocation we handed in, the length must be
+        // even/in-bounds/non-empty, and the content must not embed a NUL (a real path
+        // never contains one - an embedded NUL means the answer is not a plain path).
+        for (var chars = 1024; ; chars *= 4)
         {
-            var info = new SystemProcessIdInformation
+            var buf = Marshal.AllocHGlobal(chars * 2);
+            try
             {
-                ProcessId = (IntPtr)pid,
-                ImageName = new UnicodeString { Length = 0, MaximumLength = (ushort)(chars * 2), Buffer = buf }
-            };
-            var status = NtQuerySystemInformation(SystemProcessIdInformationClass, ref info, Marshal.SizeOf<SystemProcessIdInformation>(), out _);
-            if (status != 0)
-                throw new InvalidOperationException("image_query_nt:status=0x" + ((uint)status).ToString("x8"));
-            // rev18 (Instinct 2): validate the native answer before trusting it - an
-            // even, in-bounds, non-empty length and the expected \Device\ root.
-            if (info.ImageName.Length == 0 || (info.ImageName.Length & 1) != 0
-                || info.ImageName.Length > info.ImageName.MaximumLength
-                || info.ImageName.MaximumLength > chars * 2)
-                throw new InvalidOperationException("image_query_nt:bad_length");
-            var nt = Marshal.PtrToStringUni(info.ImageName.Buffer, info.ImageName.Length / 2)
-                     ?? throw new InvalidOperationException("image_query_nt:empty");
-            if (!nt.StartsWith("\Device\", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("image_query_nt:unexpected_root");
-            return NtPathToDos(nt);
+                var info = new SystemProcessIdInformation
+                {
+                    ProcessId = (IntPtr)pid,
+                    ImageName = new UnicodeString { Length = 0, MaximumLength = (ushort)Math.Min(chars * 2, ushort.MaxValue - 1), Buffer = buf }
+                };
+                var status = NtQuerySystemInformation(SystemProcessIdInformationClass, ref info, Marshal.SizeOf<SystemProcessIdInformation>(), out _);
+                if ((status == unchecked((int)0x80000005) /* STATUS_BUFFER_OVERFLOW */
+                        || status == unchecked((int)0xC0000004) /* STATUS_INFO_LENGTH_MISMATCH */
+                        || status == unchecked((int)0xC0000023) /* STATUS_BUFFER_TOO_SMALL */)
+                    && chars < 65536)
+                    continue; // grow and retry
+                if (status != 0)
+                    throw new InvalidOperationException("image_query_nt:status=0x" + ((uint)status).ToString("x8"));
+                if (info.ImageName.Buffer != buf)
+                    throw new InvalidOperationException("image_query_nt:buffer_moved");
+                if (info.ImageName.Length == 0 || (info.ImageName.Length & 1) != 0
+                    || info.ImageName.Length > info.ImageName.MaximumLength
+                    || info.ImageName.MaximumLength > chars * 2)
+                    throw new InvalidOperationException("image_query_nt:bad_length");
+                var nt = Marshal.PtrToStringUni(info.ImageName.Buffer, info.ImageName.Length / 2)
+                         ?? throw new InvalidOperationException("image_query_nt:empty");
+                if (nt.IndexOf('\0') >= 0)
+                    throw new InvalidOperationException("image_query_nt:embedded_nul");
+                if (!nt.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("image_query_nt:unexpected_root");
+                return NtPathToDos(nt);
+            }
+            finally { Marshal.FreeHGlobal(buf); }
         }
-        finally { Marshal.FreeHGlobal(buf); }
     }
 
     /// <summary>rev18 (Instinct 2 HIGH): strict \Device\... to DOS mapping. The old
@@ -234,7 +251,7 @@ internal static class PipePeer
     /// namespace games, reparse points, hardlinks, 8.3 names. A same-named copy of the
     /// exe from another folder is a different file and never matches. Returns null when
     /// either file cannot be opened (caller decides the fallback).</summary>
-    private static bool? SameFile(string pathA, string pathB)
+    internal static bool? SameFile(string pathA, string pathB)
     {
         try
         {
@@ -248,13 +265,37 @@ internal static class PipePeer
         }
         catch { return null; }
     }
+    /// <summary>rev19 (Instinct 2): canonical path form for the namespace binding -
+    /// full path, 8.3 aliases expanded via GetLongPathName, trailing separators
+    /// trimmed. GetLongPathName failing (file gone between query and open) returns
+    /// the full-path form; the identity open after it fails closed on a vanished file.</summary>
+    internal static string NormalizePath(string path)
+    {
+        var full = Path.GetFullPath(path).TrimEnd('\\');
+        var sb = new StringBuilder(1024);
+        var n = GetLongPathName(full, sb, (uint)sb.Capacity);
+        if (n > 0 && n < sb.Capacity) return sb.ToString().TrimEnd('\\');
+        return full;
+    }
+
+    /// <summary>rev19 (Instinct 2): the peer's image path must resolve to THIS installed
+    /// file's canonical path - the protected admin-controlled install namespace - never
+    /// to a caller-local alias (SUBST, 8.3, reparse remap). Pure string binding after
+    /// canonicalization; the same-file open underneath it stays defense in depth.</summary>
+    internal static bool IsExpectedImagePath(string peerImagePath, string expectedPath)
+    {
+        return string.Equals(NormalizePath(peerImagePath), NormalizePath(expectedPath),
+            StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Throws unless process pid runs this same installed exe in this same session.
     /// rev18 (Instinct 2 HIGH): the comparison is by FILE IDENTITY (volume serial + file
-    /// index) whenever both image files can be opened - alias-proof by construction. The
-    /// legacy path-string compare survives only for the OpenProcess read path when a file
-    /// open fails (pre-rev17 semantics, no regression); the handle-free path requires
-    /// identity, because it exists for exactly the token that cannot afford a guess.
+    /// index) whenever both image files can be opened. Aliases the path check cannot
+    /// see are still rejected, but by the namespace binding above - identity alone
+    /// compares files, it does not authenticate which image the peer process LOADED.
+    /// No path-string compare survives anywhere: BOTH read paths require file
+    /// identity, because a guessed path is exactly what the handle-free token cannot
+    /// afford - and the openprocess route gets no weaker check either.
     /// Returns a short attribution string for the log (never the peer's data).</summary>
     private static string VerifyOwnImage(uint pid)
     {
@@ -267,6 +308,24 @@ internal static class PipePeer
         // update, locked) rejects the peer; the broker watchdog restores service. The
         // rename/replace TOCTOU behind this is an ADMIN operation on the protected
         // install dir (rev14 ACL proof), outside the same-user non-elevated model.
+        // rev19 (Instinct 2): NAMESPACE BINDING FIRST - the peer's image path must
+        // resolve to this installed file's canonical path. A caller-local alias
+        // (SUBST letter, 8.3 spelling, reparse remap) rejects here even when it
+        // points at the same bytes: the namespace is the trust boundary, and the
+        // mapped path must live inside it, not merely reach it.
+        if (!IsExpectedImagePath(image, own))
+        {
+#if BROKER_TEST_HOOK
+            LastVerifyTrace = read + " namespace:mismatch";
+#endif
+            throw new InvalidOperationException("peer image path is outside the install namespace (read " + read + ")");
+        }
+        // Then compare the ACTUAL PEER FILE against the expected file by identity
+        // (volume serial + file index) - never expected-against-expected. A denied
+        // or failed open fails closed. NOTE (Instinct 2 rev19 review): this does NOT
+        // prove the install file was never replaced - identity is a point-in-time
+        // comparison of the peer's current image file against ours, not a binding to
+        // the bytes the peer process loaded at launch.
         var identity = SameFile(image, own);
         if (identity != true)
         {
@@ -322,10 +381,15 @@ internal static class PipePeer
     /// really matches Ezzy's condition, while the rev17 check still passes. Compiled
     /// into the e2e test build only.</summary>
     internal static (uint Pid, int Win32) TestHookLegacyProbe(NamedPipeClientStream pipe)
+        => TestHookLegacyProbe(pipe, PROCESS_QUERY_LIMITED_INFORMATION);
+
+    /// <summary>rev19 anomaly dissection: mask-parameterized variant so the e2e can
+    /// tell a mask effect (0x1000 vs 0x0400) from a time/order effect.</summary>
+    internal static (uint Pid, int Win32) TestHookLegacyProbe(NamedPipeClientStream pipe, uint access)
     {
         if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid))
             return (0, Marshal.GetLastWin32Error());
-        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        var h = OpenProcess(access, false, pid);
         var err = h == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
         if (h != IntPtr.Zero) CloseHandle(h);
         return (pid, err);

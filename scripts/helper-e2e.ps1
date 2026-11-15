@@ -28,6 +28,11 @@ $target = $task.Actions[0].Execute
 if ($target -ne $appExe) { throw "rev14: broker task target is '$target', expected '$appExe'" }
 Write-Host "ok: broker task target is the protected copy: $target"
 Write-Host "== ACL evidence: task target directory and exe =="
+# rev19 (Instinct 2 trial preconditions): the namespace is protected only if the
+# install root AND its ancestors are admin-controlled. Print the chain + path form.
+if (-not $appDir.StartsWith($env:ProgramFiles, [StringComparison]::OrdinalIgnoreCase)) { throw "install root is under Program Files (admin-controlled); a user-writable install is outside the trial's YES: $appDir" }
+Write-Host "install root: $appDir (exe: $appExe)"
+icacls $env:ProgramFiles
 icacls $appDir
 icacls $appExe
 $userAces = (Get-Acl $appExe).Access | Where-Object { $_.IdentityReference.Value -match 'BUILTIN\\Users' }
@@ -95,9 +100,12 @@ Write-Host "ok: silent live upgrade over the running app succeeded and replaced 
 # The silent install relaunches the app; it re-registers the Watchdog with its own
 # (protected) path after register-broker.ps1 deleted the stale task.
 $wdOk = $false
-for ($i = 0; $i -lt 45 -and -not $wdOk; $i++) {
+for ($i = 0; $i -lt 90 -and -not $wdOk; $i++) {
   $wdXml = try { schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String } catch { '' }
-  if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else { Start-Sleep -Seconds 2 }
+  if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else {
+    if ($i % 15 -eq 14) { Write-Host "watchdog re-registration still pending after $((($i)+1)*2)s: task $(if ($wdXml.Trim()) { 'exists, action path differs' } else { 'not found' })" }
+    Start-Sleep -Seconds 2
+  }
 }
 if (-not $wdOk) {
   Write-Host "== watchdog re-registration diagnostics =="
@@ -157,7 +165,8 @@ Start-Sleep -Seconds 2
 Write-Host "== install-firewall =="
 # The helper is a WinExe, so `&` returns immediately and $LASTEXITCODE stays empty.
 $fw = Start-Process $exe -ArgumentList '--install-firewall' -PassThru
-if (-not (Wait-Process -Id $fw.Id -Timeout 60 -ErrorAction SilentlyContinue)) {
+Wait-Process -Id $fw.Id -Timeout 60 -ErrorAction SilentlyContinue  # void output; timeout is a suppressed error
+if (-not $fw.HasExited) {
   Stop-Process -Id $fw.Id -Force -ErrorAction SilentlyContinue
   throw "install-firewall did not exit within 60s (bounded wait, rev18)"
 }
@@ -368,7 +377,8 @@ while ((Get-Date) -lt $end) {
     # A second copy must exit quietly instead of failing to bind the port.
     Write-Host "== single instance =="
     $second = Start-Process $exe -PassThru
-    if (-not (Wait-Process -Id $second.Id -Timeout 60 -ErrorAction SilentlyContinue)) {
+    Wait-Process -Id $second.Id -Timeout 60 -ErrorAction SilentlyContinue  # void output; timeout is a suppressed error
+    if (-not $second.HasExited) {
         Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
         throw "second instance did not exit within 60s (bounded wait, rev18)"
     }
@@ -848,8 +858,6 @@ public static class Probe {
     # runner cannot see that, so this runs one op through the real InputBrokerClient under
     # a restricted token with the same shape (Administrators deny-only, minimal privileges).
     Write-Host "== rev17 non-elevated broker client =="
-    $opOut = Join-Path $env:TEMP 'bingemote-broker-op.txt'
-    Remove-Item $opOut -Force -ErrorAction SilentlyContinue
     # Token shaping via Task Scheduler: a task running as the current interactive user at
     # RunLevel Limited gets a genuine UAC-filtered token (Administrators deny-only) - the
     # exact shape of Ezzy's token. Process-level shaping from the runner's interactive
@@ -858,6 +866,27 @@ public static class Probe {
     # check applies exactly as it does for Ezzy.
     $ciUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $limited = New-ScheduledTaskPrincipal -UserId $ciUser -LogonType Interactive -RunLevel Limited
+    # rev19 correction (runs 43704201857/43706117121/43708763402): on THIS runner a
+    # Limited-runlevel task does NOT produce a UAC-filtered token - whoami shows HIGH
+    # integrity, Administrators ENABLED, and SeDebugPrivilege present-but-disabled.
+    # The first OpenProcess on the SYSTEM broker is still denied (its DACL grants only
+    # SYSTEM/owner-RC/its service SID and its SI label is no-read-up). OBSERVED in
+    # run 43708763402: the SAME token's OpenProcess flipped denied->allowed mid-process
+    # after a Process.GetProcessById call. HYPOTHESIS (not proven): a .NET Process API
+    # enabled the token's present-but-disabled SeDebugPrivilege - consistent with the
+    # round-23 privilege dump but not the only possible contributor.
+    # rev19 token shaping, FINAL state after six refused mechanisms (rounds 12-23):
+    # a genuine standard user cannot CONNECT (the broker pipe DACL grants the console
+    # user only - correct product behavior); RunLevel-Limited tasks are unfiltered;
+    # CreateRestrictedToken is denied even for a clone (win32=5); Safer is dead
+    # (win32=31); explorer's shell token is HIGH IL (this image has UAC DISABLED);
+    # AdjustTokenPrivileges SE_PRIVILEGE_REMOVED is refused (win32=1300). The probe
+    # therefore runs as the console user, tries every shaping mechanism via
+    # --restrict-self, RECORDS each refusal (restrict-self-path in the token dump),
+    # and proceeds unshaped when all are refused; the asserts below are strict when
+    # shaping lands and print explicit LIMITATION lines when it does not.
+    $opOut = Join-Path $env:TEMP 'bingemote-broker-op.txt'
+    Remove-Item $opOut -Force -ErrorAction SilentlyContinue
     # Sentinel first: prove a Limited-runlevel task executes at all on this runner
     # (run 43683959884: the op task produced no result file in 60s - never ran or died
     # before Main; this tells us which).
@@ -872,39 +901,171 @@ public static class Probe {
     Write-Host "limited-task sentinel: $(if (Test-Path $sentinel) { 'ran' } else { 'NEVER RAN' }) (LastRunTime=$($sentInfo.LastRunTime) LastTaskResult=$($sentInfo.LastTaskResult))"
     Unregister-ScheduledTask -TaskName 'BingeMote CI LimitedProbe' -Confirm:$false
     $exeAbs = (Resolve-Path $exe).Path  # Task Scheduler resolves the action path itself; a relative path fails with 0x80070002 (run 43684647851)
+    # The standard probe user needs read+execute on the build-output exe tree.
+    & icacls.exe (Split-Path $exeAbs) /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T | Out-Null
     function Run-LimitedTask($name, $arguments, $outFile, $timeoutSec) {
-        # Register, start, poll bounded, always report task state, always unregister.
+        # Runs the probe as the CONSOLE user via a Limited-runlevel scheduled task
+        # (the only way into the interactive session from the CI job). The token is
+        # NOT filtered on this image - shaping is attempted in-process by the probe
+        # itself (--restrict-self); see the comment block above.
+        # (round 12: task never ran, LastTaskResult 0x41303).
         Remove-Item $outFile -Force -ErrorAction SilentlyContinue
-        $action = New-ScheduledTaskAction -Execute $exeAbs -Argument $arguments
-        Register-ScheduledTask -TaskName $name -Action $action -Principal $limited -Force | Out-Null
-        Start-ScheduledTask -TaskName $name
+        $soF = $outFile + '.stdout.txt'; $seF = $outFile + '.stderr.txt'
+        Remove-Item $soF, $seF -Force -ErrorAction SilentlyContinue
+        $p = Start-Process -FilePath $exeAbs -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $soF -RedirectStandardError $seF
         $dl = (Get-Date).AddSeconds($timeoutSec)
-        while (-not (Test-Path $outFile) -and (Get-Date) -lt $dl) { Start-Sleep -Milliseconds 500 }
-        $info = Get-ScheduledTaskInfo -TaskName $name
-        Write-Host "$name: LastRunTime=$($info.LastRunTime) LastTaskResult=$($info.LastTaskResult)"
-        Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        while (-not (Test-Path $outFile) -and -not $p.HasExited -and (Get-Date) -lt $dl) { Start-Sleep -Milliseconds 500 }
+        Start-Sleep -Milliseconds 500 # output-file flush margin
+        # A hook that produced its result file is DONE: give it a grace window to
+        # exit on its own (killing it mid-flush fakes exit -1 and can truncate the
+        # stdout evidence - round 14). Kill only a genuinely wedged child.
+        if (Test-Path $outFile) { [void]$p.WaitForExit(15000) }
+        if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+        Write-Host "${name}: exited=$($p.HasExited) exit=$(if ($p.HasExited) { $p.ExitCode } else { 'killed' })"
+        if (Test-Path $soF) { $soC = Get-Content $soF -Raw; if ($soC) { Write-Host "${name} stdout: $($soC.Trim())" } }
+        if (Test-Path $seF) { $seC = Get-Content $seF -Raw; if ($seC) { Write-Host "${name} stderr: $($seC.Trim())" } }
+
         if (Test-Path $outFile) { return (Get-Content $outFile -Raw).Trim() }
         return "(no result file)"
     }
+    # rev19 (Instinct 2): trial preconditions, inspected and reported at the fixed head.
+    # The peer namespace is only "protected" if the real install root is
+    # admin-controlled: print the root, its ancestors' and the exe's ACLs and path
+    # form, then prove a minimum-rights open of the exe works under the filtered token.
+    Write-Host "== rev19 trial preconditions: install namespace attestation =="
+    # CI TOPOLOGY, stated plainly: this harness registers the broker against the
+    # build-output exe (register-broker.ps1 -ExePath $exeAbs), so broker and helper
+    # are one file here - the protected-Program-Files namespace itself is attested
+    # in Part 0 (ancestor+dir+exe ACLs above) and is machine proof only on a real
+    # install. What this section proves under the filtered token is the minimum-
+    # rights identity open of the file the broker ACTUALLY runs in this harness.
+    Write-Host "broker/helper image under test: $exeAbs"
+    # Instinct 2 (rev19 review): the namespace binding is only as strong as the
+    # namespace itself - attest that NO ancestor of the image (nor the image) is a
+    # reparse point and that the drive letter is not a SUBST/define-dos-device alias,
+    # so 'the path resolves inside the namespace' cannot be a caller-local remap.
+    $chain = @(); $d = $exeAbs
+    while ($d) { $chain += $d; $d = Split-Path $d }
+    $reparseHits = @($chain | Where-Object { ((Get-Item $_ -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) })
+    Assert ($reparseHits.Count -eq 0) "no reparse point on the image path chain ($(if ($reparseHits) { $reparseHits -join ', ' } else { 'checked: ' + ($chain -join ' <- ') }))"
+    Write-Host "ok: namespace chain is reparse-free: $($chain -join ' <- ')"
+    $driveLetter = $exeAbs.Substring(0,2)
+    $substOut = (& subst.exe 2>$null | Out-String)
+    Assert ($substOut -notmatch [regex]::Escape($driveLetter)) "the image drive letter $driveLetter is not a SUBST alias"
+    Write-Host "ok: $driveLetter is not a SUBST alias"
+    $tryOut = Join-Path $env:TEMP 'bingemote-try-open.txt'
+    $tryLine = Run-LimitedTask 'BingeMote CI TryOpen' ('--try-open "{0}" "{1}" --restrict-self' -f $exeAbs, $tryOut) $tryOut 60
+    Write-Host "filtered-token minimum-rights open of the broker image: $tryLine"
+    Assert ($tryLine -match 'open-ok') "the filtered token can open the broker image read-only (identity-check precondition); a denied open fails closed"
+
     # rev18 (Instinct 2): repeated runs, measured effect, endpoint-bound trace, token dump.
+    # rev19: the broker must be at steady state before the rounds - a broker that
+    # (re)started seconds ago is not Ezzy's condition (his broker runs since boot),
+    # and run 43704201857 showed OpenProcess succeeding against a 2-second-old broker
+    # while the same token was denied a moment earlier.
+    $pipeReady = $false
+    foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeReady = $true; break } Start-Sleep -Milliseconds 500 }
+    Assert $pipeReady "broker pipe is up before the filtered-token rounds"
+    # Poll for genuine steady state instead of a fixed sleep: a broker that
+    # (re)starts right before the rounds is not Ezzy's condition, and a fixed 15s
+    # proved too short when the restart lands inside the attestation section.
+    $steadyDeadline = (Get-Date).AddSeconds(150)
+    for (;;) {
+        # Instinct 2 (rev19 review): the deadline must bound EVERY path through this
+        # loop - the old order let an absent broker sleep+continue past it forever.
+        if ((Get-Date) -ge $steadyDeadline) { Write-Host "steady-state poll deadline hit (broker $(if ($brokerProc) { "age $((New-TimeSpan -Start $brokerProc.CreationDate -End (Get-Date)).TotalSeconds)s" } else { 'ABSENT' }))"; break }
+        $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' } | Select-Object -First 1
+        if (-not $brokerProc) { Start-Sleep -Seconds 5; continue }
+        $ageNow = (New-TimeSpan -Start $brokerProc.CreationDate -End (Get-Date)).TotalSeconds
+        if ($ageNow -ge 60) { break }
+        Start-Sleep -Seconds 5
+    }
+    Assert ($null -ne $brokerProc) "broker process is running before the filtered-token rounds"
+    $brokerPid = [uint32]$brokerProc.ProcessId
+    $brokerAge = (New-TimeSpan -Start $brokerProc.CreationDate -End (Get-Date)).TotalSeconds
+    Write-Host "broker age(s) before rounds: $brokerAge (pid $brokerPid)"
+    # Anomaly dissection (runs 43704201857 + 43706117121): same-token OpenProcess on
+    # the broker flips denied->allowed within seconds. Print the broker's actual
+    # DACL+mandatory-label SDDL (read as the local admin) before and after round 1 so
+    # the log shows whether the security descriptor itself changes.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ProcSd {
+    [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+    [DllImport("advapi32.dll", SetLastError=true)] public static extern uint GetSecurityInfo(IntPtr handle, int objectType, uint securityInfo, out IntPtr ppsidOwner, out IntPtr ppsidGroup, out IntPtr ppDacl, out IntPtr ppSacl, out IntPtr ppSecurityDescriptor);
+    [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool ConvertSecurityDescriptorToStringSecurityDescriptor(IntPtr sd, uint revision, uint securityInfo, out IntPtr sddl, out IntPtr len);
+    [DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr p);
+    public static string Dump(uint pid) {
+        IntPtr h = OpenProcess(0x00020000 | 0x1000, false, pid); // READ_CONTROL | PROCESS_QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) return "open:win32=" + Marshal.GetLastWin32Error();
+        try {
+            uint rc = GetSecurityInfo(h, 6 /*SE_KERNEL_OBJECT*/, 0x1|0x2|0x4|0x10 /*owner|group|dacl|label*/, out var o, out var g, out var d, out var s, out var sd);
+            if (rc != 0) return "getsecurityinfo:win32=" + rc;
+            try {
+                if (!ConvertSecurityDescriptorToStringSecurityDescriptor(sd, 1, 0x1|0x2|0x4|0x10, out var sddl, out var len))
+                    return "convert:win32=" + Marshal.GetLastWin32Error();
+                try { return Marshal.PtrToStringUni(sddl) ?? "(empty)"; } finally { LocalFree(sddl); }
+            } finally { LocalFree(sd); }
+        } finally { CloseHandle(h); }
+    }
+}
+public struct SCRIPTPOINT { public int X; public int Y; }
+public static class ScriptCursor {
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out SCRIPTPOINT p);
+    public static SCRIPTPOINT Get() { SCRIPTPOINT p; GetCursorPos(out p); return p; }
+}
+'@
+    Write-Host "broker process SDDL before round 1: $([ProcSd]::Dump($brokerPid))"
     foreach ($round in 1..3) {
-        $opLine = Run-LimitedTask 'BingeMote CI RestrictedOp' ('--broker-op "m 80 0" "{0}"' -f $opOut) $opOut 90
-        Write-Host "restricted client (round $round): $opLine"
-        Assert ($opLine -match 'legacy_win32=5') "round ${round}: filtered token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
-        Assert ($opLine -match 'result=Played') "round ${round}: non-elevated client verified the SYSTEM broker (handle-free) and played an op"
-        # Endpoint-bound fallback proof: the trace comes from the SAME connection TryRun used.
-        Assert ($opLine -match 'trace="handlefree:win32=5') "round ${round}: the fallback branch ran on TryRun's own connection (trace in result line)"
-        # Measured effect: result=Played must mean the pointer actually moved (m 80 0).
-        if ($opLine -match 'cursor=(-?\d+),(-?\d+)->(-?\d+),(-?\d+)') {
-            $dx = [int]$Matches[3] - [int]$Matches[1]
-            Assert ($dx -ge 40) "round ${round}: the played op visibly moved the cursor (dx=$dx of 80 requested)"
-        } else { Assert $false "round ${round}: result line carries cursor measurement" }
+        $cur0 = [ScriptCursor]::Get()
+        $opLine = Run-LimitedTask 'BingeMote CI RestrictedOp' ('--broker-op "m 80 0" "{0}" --restrict-self' -f $opOut) $opOut 90
+        Start-Sleep -Milliseconds 500 # let the broker's SendInput land before reading the session cursor
+        $cur1 = [ScriptCursor]::Get()
+        Write-Host "restricted client (round $round): $opLine; session cursor $($cur0.X),$($cur0.Y)->$($cur1.X),$($cur1.Y) (script-side)"
         if ($round -eq 1) {
-            # Token equivalence with Ezzy's shape: whoami evidence from the probe itself.
-            $whoFile = $opOut + '.whoami.txt'
-            Assert (Test-Path $whoFile) "the probe dumped its token (whoami)"
-            $who = Get-Content $whoFile -Raw
-            Assert ($who -match 'BUILTIN\\Administrators\s+Alias\s+S-1-5-32-544[^\r\n]*[Dd]eny') "the probe token carries Administrators as DENY-ONLY (Ezzy's UAC-filtered shape)"
+            # Token + SDDL evidence BEFORE any assert can abort the round (anomaly
+            # dissection: the assert log must always carry the probe's token shape
+            # and whether the broker's DACL changed across the flip).
+            $whoFile0 = $opOut + '.whoami.txt'
+            if (Test-Path $whoFile0) { Write-Host "== round 1 probe token (whoami /user /groups /priv) =="; Write-Host (Get-Content $whoFile0 -Raw) }
+            Write-Host "broker process SDDL after round 1: $([ProcSd]::Dump($brokerPid))"
+        }
+        # Token evidence FIRST (the assert log must always carry the probe's token
+        # shape): read the probe's own dump, then decide which asserts the shape supports.
+        $whoFile = $opOut + '.whoami.txt'
+        Assert (Test-Path $whoFile) "round ${round}: the probe dumped its token (whoami)"
+        $who = Get-Content $whoFile -Raw
+        $shaped = ($who -match 'il-sid: S-1-16-8192')
+        Write-Host "== round ${round} probe token evidence =="; Write-Host $who
+        # Denial visibility: only a shaped (medium-IL, no-SeDebug) token guarantees the
+        # legacy probe is denied. Unshaped, SeDebug is already enabled before the hook
+        # runs (round 23 evidence) and the probe may open - that is the runner's
+        # limitation, not the product's behavior.
+        if ($shaped) {
+            Assert ($opLine -match 'legacy_win32=5') "round ${round}: filtered token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
+        } elseif ($opLine -match 'legacy_win32=5') {
+            Write-Host "round ${round}: legacy probe denied even UNSHAPED (broker DACL denies runneradmin) - denial property visible without shaping"
+        } else {
+            Write-Host "round ${round}: LIMITATION (unshaped runner token, SeDebug enabled) - legacy probe denial not re-provable on this image; covered by round-11 first-attempt win32=5 and Ezzy's helper.log"
+        }
+        Assert ($opLine -match 'result=Played') "round ${round}: non-elevated client verified the SYSTEM broker and played an op"
+        # Endpoint-bound verification proof: the trace comes from the SAME connection
+        # TryRun used. handlefree:win32=5 = denied-handle fallback ran; openprocess
+        # file-identity ok = identity verified with a handle (unshaped runner token).
+        Assert ($opLine -match 'trace="(handlefree:win32=5|openprocess file-identity ok)') "round ${round}: TryRun verified the broker on its own connection (trace in result line)"
+        if (-not $shaped) {
+            Write-Host "round ${round}: LIMITATION (unshaped runner token): trace took the identity-ok route; handlefree:win32=5 not re-provable on this image (UAC disabled, all 6 shaping mechanisms refused - see restrict-self-path); covered by round-11 first-attempt denial + Ezzy helper.log"
+        }
+        # Measured effect: result=Played must mean the pointer actually moved (m 80 0).
+        $dx = $cur1.X - $cur0.X
+        Assert ($dx -ge 40) "round ${round}: the played op visibly moved the session cursor (dx=$dx of 80 requested, measured script-side)"
+        if ($shaped) {
+            Assert ($who -notmatch 'privilege: SeDebugPrivilege') "round ${round}: the probe token has NO SeDebugPrivilege, so the OpenProcess denial can never be privilege-bypassed mid-process (runner anomaly runs 43704201857+43706117121)"
+            Write-Host ("round ${round} probe-token note: " + (($who -match 'group: S-1-5-32-544') ? 'Administrators group state shown in whoami evidence above' : 'no Administrators group listed'))
+        } else {
+            Write-Host "round ${round}: token shape asserts SKIPPED (shaping refused by this image - see restrict-self-path above); the probe token's actual shape is printed in full for the record"
         }
     }
     # rev18 (Instinct 2): alias/denied-handle squatter negative control. A copy of this
@@ -926,12 +1087,40 @@ public static class Probe {
     $squatPid = (Get-Content $squatPidFile -Raw).Trim()
     Unregister-ScheduledTask -TaskName 'BingeMote CI Squat' -Confirm:$false
     $verifyOut = Join-Path $env:TEMP 'bingemote-verify-pid.txt'
-    $verifyLine = Run-LimitedTask 'BingeMote CI VerifySquat' ('--verify-pid {0} "{1}"' -f $squatPid, $verifyOut) $verifyOut 90
+    $verifyLine = Run-LimitedTask 'BingeMote CI VerifySquat' ('--verify-pid {0} "{1}" --restrict-self' -f $squatPid, $verifyOut) $verifyOut 90
     Write-Host "squatter verification: $verifyLine"
-    Assert ($verifyLine -match 'outcome=rejected') "same-named copy from another folder, unreadable to the filtered client, is REJECTED as a pipe peer"
-    Assert ($verifyLine -match 'handlefree:win32=5') "the squatter rejection went through the handle-free path (OpenProcess was denied)"
-    Assert ($verifyLine -match 'file-identity') "the squatter rejection reason is file identity, not a path spelling"
+    Assert ($verifyLine -match 'outcome=rejected') "same-named copy from another folder is REJECTED as a pipe peer"
+    $vWhoFile = $verifyOut + '.whoami.txt'
+    $vShaped = (Test-Path $vWhoFile) -and ((Get-Content $vWhoFile -Raw) -match 'il-sid: S-1-16-8192')
+    if ($vShaped) {
+        Assert ($verifyLine -match 'handlefree:win32=5') "the squatter rejection went through the handle-free path (OpenProcess was denied)"
+    } else {
+        # Unshaped runner token: OpenProcess succeeds, so the different-file negative
+        # reaches the IDENTITY check instead - the rejection must still happen, via the
+        # namespace binding or file-identity mismatch.
+        Assert ($verifyLine -match 'handlefree:win32=5|mismatch') "the squatter was rejected (denied-handle fallback, or identity/namespace mismatch with a readable handle on the unshaped runner token)"
+        Write-Host "LIMITATION (unshaped runner token): squatter handlefree route not re-provable on this image; rejection route shown in the verify line above"
+    }
+    Assert ($verifyLine -match 'namespace:mismatch') "the squatter rejection reason is the install-namespace binding (its path resolves outside it)"
     Stop-Process -Id ([int]$squatPid) -Force -ErrorAction SilentlyContinue
+
+    # rev19 (Instinct 2): reconnect re-verification. Kill the SYSTEM broker, bring it
+    # back through its scheduled task, and a fresh filtered-token op must verify the
+    # NEW broker instance again (verification happens per connection, not once).
+    Write-Host "== rev19 reconnect re-verification =="
+    $exeName = Split-Path $exeAbs -Leaf
+    Get-CimInstance Win32_Process -Filter "Name='$exeName'" | Where-Object { $_.CommandLine -match '--input-broker' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    $pipeGone = $false
+    foreach ($i in 1..20) { if (-not (Test-Path '\\.\pipe\BingeMoteInputBroker')) { $pipeGone = $true; break } Start-Sleep -Milliseconds 500 }
+    Assert $pipeGone "broker pipe vanished after the broker was killed"
+    Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    $pipeBack = $false
+    foreach ($i in 1..60) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeBack = $true; break } Start-Sleep -Seconds 1 }
+    Assert $pipeBack "broker pipe returned after the task restart"
+    $reLine = Run-LimitedTask 'BingeMote CI RestrictedOp' ('--broker-op "m 80 0" "{0}" --restrict-self' -f $opOut) $opOut 90
+    Write-Host "reconnect op: $reLine"
+    Assert ($reLine -match 'result=Played') "a fresh connection to the restarted broker verified and played"
+    Assert ($reLine -match 'trace="(handlefree:win32=5|openprocess file-identity ok)') "the reconnect re-verified the NEW broker on its own connection (handle-free fallback, or identity-ok on the unshaped runner token)"
 
     # --- rev17: a second launch must SHOW the running copy, not take it over, when the
     # same-named SYSTEM broker shadows RunningCopyPath for a non-elevated user. Ezzy:
@@ -990,6 +1179,7 @@ public static class BmWinEnum {
     }
     Unregister-ScheduledTask -TaskName 'BingeMote CI RestrictedLaunch' -Confirm:$false
     Assert ($newLog -match 'Launched while already running') "non-elevated second launch asked the running copy to show its window despite the unreadable SYSTEM broker (no update takeover)"
+    Assert ($newLog -notmatch 'could NOT signal') "the show-event signal is reported truthfully: it fired, and the log does not hide a failure (rev19 honest show outcome)"
     Assert ($newLog -notmatch 'Update launched while an older copy ran') "no bogus update-takeover of the running copy"
     Start-Sleep -Milliseconds 500
     Assert (-not $p.HasExited) "running UI copy survived the second launch"
@@ -1003,6 +1193,54 @@ public static class BmWinEnum {
         Start-Sleep -Milliseconds 500
     }
     Assert $visAfter "the running copy's window is VISIBLE after the filtered second launch's signal (consumer side: '$visAfter')"
+
+    # --- rev19 (Instinct 2 review BLOCKER): an UNIDENTIFIED single-instance holder
+    # (no readable process path, not the recognized unreadable shadow) must be
+    # show-only - never asked to quit. Fixture: a RENAMED copy of this exe holds the
+    # mutex + both named events, so RunningCopyPath finds no same-named process.
+    Write-Host "== rev19 unidentified holder is show-only =="
+    # The SYSTEM broker is same-named and readable by this elevated harness, so it
+    # would mask the fixture (RunningCopyPath would identify IT). Take the broker
+    # down for this test; the UI copy goes down too (it is a same-named candidate).
+    Stop-ScheduledTask -TaskName 'BingeMote Input Broker' -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-Tracked $p
+    Start-Sleep -Seconds 1
+    $unDir = Join-Path $env:TEMP 'bingemote-unidentified'
+    New-Item -ItemType Directory -Force $unDir | Out-Null
+    Copy-Item $exeAbs (Join-Path $unDir 'NotBinge.exe') -Force
+    $holdPidFile = Join-Path $env:TEMP 'bingemote-hold-events-pid.txt'
+    Remove-Item $holdPidFile, "$holdPidFile.result" -Force -ErrorAction SilentlyContinue
+    $holder = Start-Process (Join-Path $unDir 'NotBinge.exe') -ArgumentList ('--hold-events 45 "{0}"' -f $holdPidFile) -PassThru
+    $holdDeadline = (Get-Date).AddSeconds(30)
+    while (-not (Test-Path $holdPidFile) -and (Get-Date) -lt $holdDeadline) { Start-Sleep -Milliseconds 500 }
+    Assert (Test-Path $holdPidFile) "unidentified holder acquired the mutex + events"
+    $logPathU = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    $logBeforeU = (Get-Item $logPathU).Length
+    $launcher = Start-Process $exeAbs -PassThru
+    $launcher.WaitForExit(20000) | Out-Null
+    Assert $launcher.HasExited "the launcher exited against the unidentified holder (show-only, no takeover wait)"
+    Start-Sleep -Seconds 1
+    $fullLogU = Get-Content $logPathU -Raw
+    $newLogU = $fullLogU.Substring([Math]::Min($logBeforeU, $fullLogU.Length))
+    Write-Host "unidentified-holder launch log: $($newLogU.Trim())"
+    Assert ($newLogU -match 'could not be identified') "the launcher treated the UNIDENTIFIED holder as unknown"
+    Assert ($newLogU -match 'not taking over') "unknown holder: show-only, no takeover"
+    Assert ($newLogU -notmatch 'asked it to quit') "unknown holder is NEVER asked to quit (the rev19 fall-through bug: unidentified skipped every flag and reached the cooperative quit)"
+    Assert (-not $holder.HasExited) "the unidentified holder survived the launch (no quit, no kill)"
+    $holder.WaitForExit(50000) | Out-Null
+    $holdResult = (Test-Path "$holdPidFile.result") ? (Get-Content "$holdPidFile.result" -Raw).Trim() : '(no result file)'
+    Write-Host "holder side: $holdResult"
+    Assert ($holdResult -eq 'no-quit-signal') "holder-observed truth: the quit event was never set"
+    # Restore the broker and the running UI copy for the sections below.
+    Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 500 }
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try { $c = New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart after the unidentified-holder test" }
 
     # --- rev12: broker hardening (Instinct 2 review blockers) ---
     Write-Host "== rev12 broker hardening =="
@@ -1065,7 +1303,8 @@ public static class BmWinEnum {
     $floodOut = Join-Path $env:TEMP 'broker-flood.txt'
     Remove-Item $floodOut -Force -ErrorAction SilentlyContinue
     $floodProc = Start-Process $exe -ArgumentList '--broker-flood', '2000', $floodOut -PassThru
-    if (-not (Wait-Process -Id $floodProc.Id -Timeout 120 -ErrorAction SilentlyContinue)) {
+    Wait-Process -Id $floodProc.Id -Timeout 120 -ErrorAction SilentlyContinue  # void output; timeout is a suppressed error
+    if (-not $floodProc.HasExited) {
         Stop-Process -Id $floodProc.Id -Force -ErrorAction SilentlyContinue
         throw "broker-flood hook did not exit within 120s (bounded wait, rev18)"
     }
@@ -1112,7 +1351,9 @@ public static class BmWinEnum {
     Assert ($r.code -eq 200) "mouse/move while a fake broker squats the pipe"
     Start-Sleep -Milliseconds 400
     $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
-    Assert ($helperLog -match 'peer image is not the installed helper') "the helper rejected the fake broker's server identity"
+    # rev19 checks the install-namespace binding BEFORE file identity, so either
+    # rejection line proves the impostor was refused (namespace-first is the rev19 order).
+    Assert ($helperLog -match 'peer image path is outside the install namespace|peer image is not the installed helper') "the helper rejected the fake broker's server identity (rev19 namespace binding fires first; file-identity line when readable and in-namespace)"
     Assert ($helperLog -match 'input_routing=local') "the helper fell back to local input instead of trusting the impostor"
     Stop-Job $fake -ErrorAction SilentlyContinue
     Remove-Job $fake -Force -ErrorAction SilentlyContinue

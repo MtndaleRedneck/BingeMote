@@ -67,4 +67,45 @@ public class PipePeerMapTests
         Assert.True(PipePeer.TryMapNtPath(@"\device\harddiskvolume1\BingeMote.exe", Map, out var dos));
         Assert.Equal(@"C:\BingeMote.exe", dos);
     }
+    [Fact]
+    public void Namespace_binding_accepts_the_same_file_in_another_casing()
+    {
+        var f = Path.Combine(Path.GetTempPath(), "PipePeerNsTest-" + Guid.NewGuid().ToString("N") + ".exe");
+        File.WriteAllBytes(f, new byte[] { 1 });
+        try
+        {
+            var upper = f.ToUpperInvariant();
+            Assert.True(PipePeer.IsExpectedImagePath(upper, f));
+        }
+        finally { File.Delete(f); }
+    }
+
+    [Fact]
+    public void Namespace_binding_rejects_a_different_file_even_with_a_similar_name()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "PipePeerNsTest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var a = Path.Combine(dir, "BingeMote.exe");
+        var b = Path.Combine(dir, "BingeMote-copy.exe");
+        File.WriteAllBytes(a, new byte[] { 1 });
+        File.WriteAllBytes(b, new byte[] { 1 });
+        try
+        {
+            Assert.False(PipePeer.IsExpectedImagePath(b, a));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Namespace_binding_normalizes_dot_segments()
+    {
+        var f = Path.Combine(Path.GetTempPath(), "PipePeerNsTest-" + Guid.NewGuid().ToString("N") + ".exe");
+        File.WriteAllBytes(f, new byte[] { 1 });
+        try
+        {
+            var dotted = Path.GetDirectoryName(f) + Path.DirectorySeparatorChar + "sub" + Path.DirectorySeparatorChar + ".." + Path.DirectorySeparatorChar + Path.GetFileName(f);
+            Assert.True(PipePeer.IsExpectedImagePath(dotted, f));
+        }
+        finally { File.Delete(f); }
+    }
 }
