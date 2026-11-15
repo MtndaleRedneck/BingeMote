@@ -27,6 +27,9 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
       - name: Helper runtime tests (install/uninstall, pairing, endpoints, broker, UIPI)
+        # Below the 35-min job cap so a hang FAILS the step and keeps the log;
+        # a job-level timeout cancels the job and GitHub keeps no logs (run 43686017173).
+        timeout-minutes: 28
         run: pwsh -File scripts/helper-e2e.ps1
       - name: VLC control tests (real VLC, app request shapes)
         run: pwsh -File scripts/vlc-e2e.ps1
