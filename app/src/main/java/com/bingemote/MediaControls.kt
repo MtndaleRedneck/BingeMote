@@ -50,6 +50,8 @@ private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
 private const val ACTION_MEDIA_VOL_DOWN = "com.bingemote.action.VOL_DOWN"
 private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
+private const val ACTION_DEMO_ROW = "com.bingemote.action.DEMO_ROW" // debug builds only
+private const val NOTIF_ROW_ID = 102
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -160,6 +162,7 @@ class MediaControlsService : Service() {
             }
             ACTION_MEDIA_VOL_DOWN -> { volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
             ACTION_MEDIA_VOL_UP -> { volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_DEMO_ROW -> { if (BuildConfig.DEBUG) postDemoRow(); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
@@ -314,6 +317,52 @@ class MediaControlsService : Service() {
         } else {
             startForeground(NOTIF_ID, n)
         }
+    }
+
+    // CI experiment (debug builds only): the SAME compact bar posted as a plain
+    // custom-view notification with NO media-session token, under a second id.
+    // Instinct 2's question: does the stock shade render the custom row, and does it
+    // stay enqueued without the POST_NOTIFICATIONS grant? Production keeps the token
+    // (the exemption may need it); this only measures what stock Android does without it.
+    private fun postDemoRow() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW),
+            )
+        }
+        val store = Store(this)
+        val skipSec = store.skipMainSec
+        val dm = resources.displayMetrics.density
+        fun px(dp: Int) = (dp * dm + 0.5f).toInt()
+        fun intentFor(action: String) = android.app.PendingIntent.getService(
+            this, action.hashCode(), Intent(this, MediaControlsService::class.java).setAction(action),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val views = android.widget.RemoteViews(packageName, R.layout.notification_controls)
+        views.setImageViewBitmap(R.id.btn_rewind, NotificationArt.skip(px(34), forward = false, label = skipSec.toString()))
+        views.setImageViewBitmap(R.id.btn_vol_down, NotificationArt.volumeDown(px(24)))
+        views.setImageViewBitmap(R.id.btn_play_pause, NotificationArt.pause(px(36)))
+        views.setImageViewBitmap(R.id.btn_vol_up, NotificationArt.volumeUp(px(24)))
+        views.setImageViewBitmap(R.id.btn_forward, NotificationArt.skip(px(34), forward = true, label = skipSec.toString()))
+        views.setOnClickPendingIntent(R.id.btn_rewind, intentFor(ACTION_MEDIA_REWIND))
+        views.setOnClickPendingIntent(R.id.btn_vol_down, intentFor(ACTION_MEDIA_VOL_DOWN))
+        views.setOnClickPendingIntent(R.id.btn_play_pause, intentFor(ACTION_MEDIA_PLAY_PAUSE))
+        views.setOnClickPendingIntent(R.id.btn_vol_up, intentFor(ACTION_MEDIA_VOL_UP))
+        views.setOnClickPendingIntent(R.id.btn_forward, intentFor(ACTION_MEDIA_FAST_FORWARD))
+        views.setContentDescription(R.id.btn_rewind, "Back $skipSec seconds")
+        views.setContentDescription(R.id.btn_vol_down, "Volume down")
+        views.setContentDescription(R.id.btn_play_pause, "Pause")
+        views.setContentDescription(R.id.btn_vol_up, "Volume up")
+        views.setContentDescription(R.id.btn_forward, "Forward $skipSec seconds")
+        val n = Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle("demo.mkv")
+            .setContentText("34:12 of 1:50:24")
+            .setCustomContentView(views)
+            .setStyle(Notification.DecoratedCustomViewStyle())
+            .build()
+        nm.notify(NOTIF_ROW_ID, n)
     }
 
     override fun onDestroy() {
