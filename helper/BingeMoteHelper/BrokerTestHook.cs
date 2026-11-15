@@ -171,35 +171,42 @@ internal static class BrokerTestHook
     /// <summary>Serve the broker pipe name but never reply to anything. Records every
     /// line received with a timestamp. The helper's lost-reply retry reconnects and
     /// resends, so the recording shows both the resend and whether the resent op carries
-    /// a frame the broker could have deduped.</summary>
+    /// a frame the broker could have deduped. Several instances listen at once (like
+    /// the real broker's outstanding accepts): a client that abandons a connection on
+    /// a read timeout reconnects to a fresh instance instead of waiting for the server
+    /// to notice the drop.</summary>
     private static int SilentServer(string[] args)
     {
         var secs = Math.Max(ArgInt(args, "--broker-silent-server", 20), 5);
         var outFile = ArgStr(args, "--broker-silent-server", 2, "broker-silent.txt");
         var lines = new ConcurrentQueue<string>();
         var end = DateTime.UtcNow.AddSeconds(secs);
-        while (DateTime.UtcNow < end)
+        var workers = Enumerable.Range(0, 3).Select(_ => Task.Run(() =>
         {
-            var remaining = end - DateTime.UtcNow;
-            if (remaining <= TimeSpan.Zero) break;
-            try
+            while (DateTime.UtcNow < end)
             {
-                using var server = new NamedPipeServerStream(InputBroker.PipeName, PipeDirection.InOut, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                server.WaitForConnectionAsync().WaitAsync(remaining).GetAwaiter().GetResult();
-                using var reader = new StreamReader(server, Encoding.UTF8, false, 4096, leaveOpen: true);
-                while (DateTime.UtcNow < end)
+                var remaining = end - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero) break;
+                try
                 {
-                    remaining = end - DateTime.UtcNow;
-                    if (remaining <= TimeSpan.Zero) break;
-                    var line = reader.ReadLineAsync().WaitAsync(remaining).GetAwaiter().GetResult();
-                    if (line == null) break; // client closed: go accept the reconnect
-                    lines.Enqueue(DateTime.UtcNow.ToString("HH:mm:ss.fff") + " " + line);
+                    using var server = new NamedPipeServerStream(InputBroker.PipeName, PipeDirection.InOut, 8, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    server.WaitForConnectionAsync().WaitAsync(remaining).GetAwaiter().GetResult();
+                    using var reader = new StreamReader(server, Encoding.UTF8, false, 4096, leaveOpen: true);
+                    while (DateTime.UtcNow < end)
+                    {
+                        remaining = end - DateTime.UtcNow;
+                        if (remaining <= TimeSpan.Zero) break;
+                        var line = reader.ReadLineAsync().WaitAsync(remaining).GetAwaiter().GetResult();
+                        if (line == null) break; // client closed: go accept the reconnect
+                        lines.Enqueue(DateTime.UtcNow.ToString("HH:mm:ss.fff") + " " + line);
+                    }
                 }
+                catch (TimeoutException) { }
+                catch (IOException) { }
+                catch (ArgumentOutOfRangeException) { }
             }
-            catch (TimeoutException) { }
-            catch (IOException) { }
-            catch (ArgumentOutOfRangeException) { }
-        }
+        })).ToArray();
+        Task.WaitAll(workers);
         File.WriteAllLines(outFile, lines);
         return 0;
     }
