@@ -821,9 +821,16 @@ public static class Probe {
     Remove-Item $opOut -Force -ErrorAction SilentlyContinue
     # Start-Process -Wait: the call operator does NOT reliably wait for a WinExe
     # (CI run 43682006798: $LASTEXITCODE read 0 while the hook was still running).
-    $opProc = Start-Process $exe -ArgumentList @('--broker-op-restricted', 'm 1 0', $opOut) -PassThru
-    if (-not $opProc.WaitForExit(60000)) { try { $opProc.Kill() } catch { }; throw "--broker-op-restricted hook did not exit in 60s" }
+    # The restriction happens in the --run-restricted parent (CreateProcessAsUser child);
+    # --broker-op itself is token-neutral so its result line reflects whatever token ran it.
+    $opErr = Join-Path $env:TEMP 'bingemote-broker-op-err.txt'
+    $opStd = Join-Path $env:TEMP 'bingemote-broker-op-out.txt'
+    Remove-Item $opErr, $opStd -Force -ErrorAction SilentlyContinue
+    $opProc = Start-Process $exe -ArgumentList @('--run-restricted', '--broker-op', 'm 1 0', $opOut) -PassThru -RedirectStandardError $opErr -RedirectStandardOutput $opStd
+    if (-not $opProc.WaitForExit(60000)) { try { $opProc.Kill() } catch { }; throw "--run-restricted --broker-op hook did not exit in 60s" }
     $opRc = $opProc.ExitCode
+    if (Test-Path $opErr) { Get-Content $opErr | ForEach-Object { Write-Host "hook stderr: $_" } }
+    if (Test-Path $opStd) { Get-Content $opStd | ForEach-Object { Write-Host "hook stdout: $_" } }
     $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
     Write-Host "restricted client: rc=$opRc $opLine"
     Assert ($opLine -match 'legacy_win32=5') "restricted token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"

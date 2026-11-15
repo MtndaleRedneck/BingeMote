@@ -39,7 +39,7 @@ internal static class BrokerTestHook
         try
         {
             if (args.Contains("--run-restricted")) return RunRestricted(args);
-            if (args.Contains("--broker-op-restricted")) return BrokerOpRestricted(args);
+            if (args.Contains("--broker-op")) return BrokerOp(args);
             if (args.Contains("--broker-silent-server")) return SilentServer(args);
             if (args.Contains("--broker-holddown")) return HoldDown(args);
             if (args.Contains("--broker-send")) return SendOnce(args);
@@ -231,8 +231,6 @@ internal static class BrokerTestHook
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr h, uint access, out IntPtr token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool ConvertStringSidToSid(string sid, out IntPtr pSid);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount, IntPtr sidsToDisable, uint privDeleteCount, IntPtr privsToDelete, uint groupCount, IntPtr groupsToRestrict, out IntPtr newToken);
-    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool ImpersonateLoggedOnUser(IntPtr token);
-    [DllImport("advapi32.dll")] private static extern bool RevertToSelf();
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcessAsUser(IntPtr token, string? app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string? dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool LookupPrivilegeValue(string? system, string name, out long luid);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState, uint len, IntPtr prev, IntPtr retLen);
@@ -276,42 +274,31 @@ internal static class BrokerTestHook
         AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
     }
 
-    /// <summary>--broker-op-restricted "&lt;line&gt;" &lt;outfile&gt;: run one op through the REAL
-    /// InputBrokerClient (connect, server verification, framing, retry) under a thread
-    /// token shaped like Ezzy's UAC-filtered admin (= a standard user for this check), in
-    /// this same session, against the live SYSTEM broker. Writes one line: the broker pid,
-    /// what the PRE-rev17 handle-based peer check would have seen from this token (must be
-    /// win32=5 - the negative control proving the token really is standard-like), and the
-    /// BrokerResult (must be Played - the rev17 handle-free check passes where the old one
-    /// was denied).</summary>
-    private static int BrokerOpRestricted(string[] args)
+    /// <summary>--broker-op "&lt;line&gt;" &lt;outfile&gt;: run one op through the REAL
+    /// InputBrokerClient (connect, server verification, framing, retry) and write one
+    /// result line: the broker pid, what the PRE-rev17 handle-based peer check sees from
+    /// THIS token, and the BrokerResult. Run it as a --run-restricted child to test the
+    /// standard-user case: there the legacy probe must read win32=5 (negative control -
+    /// the token really matches Ezzy's UAC-filtered condition) while the op must still be
+    /// Played (the rev17 handle-free check passes where the old one was denied).</summary>
+    private static int BrokerOp(string[] args)
     {
-        var oi = Array.IndexOf(args, "--broker-op-restricted");
+        var oi = Array.IndexOf(args, "--broker-op");
         var op = oi + 1 < args.Length ? args[oi + 1] : null;
         var outfile = oi + 2 < args.Length ? args[oi + 2] : null;
-        if (op == null || outfile == null) { Console.Error.WriteLine("--broker-op-restricted needs <line> <outfile>"); return 1; }
-        var restricted = NewStandardLikeToken();
+        if (op == null || outfile == null) { Console.Error.WriteLine("--broker-op needs <line> <outfile>"); return 1; }
+        string pidNote = "nopipe"; var legacy = -1;
         try
         {
-            // ImpersonateLoggedOnUser accepts the PRIMARY restricted token (SetThreadToken
-            // does not - CI run 43681243000: win32=5) and needs no SeImpersonatePrivilege
-            // for a token from our own logon session.
-            if (!ImpersonateLoggedOnUser(restricted))
-                throw new InvalidOperationException("ImpersonateLoggedOnUser:win32=" + Marshal.GetLastWin32Error());
-            string pidNote = "nopipe"; var legacy = -1;
-            try
-            {
-                using var raw = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                raw.Connect(5000);
-                var probe = PipePeer.TestHookLegacyProbe(raw);
-                legacy = probe.Win32; pidNote = probe.Pid.ToString();
-            }
-            catch (Exception ex) { pidNote = "probe:" + ex.GetType().Name; }
-            var result = InputBrokerClient.TryRun(op);
-            File.WriteAllText(outfile, $"broker_pid={pidNote} legacy_win32={legacy} result={result}");
-            return result == InputBrokerClient.BrokerResult.Played ? 0 : 1;
+            using var raw = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            raw.Connect(5000);
+            var probe = PipePeer.TestHookLegacyProbe(raw);
+            legacy = probe.Win32; pidNote = probe.Pid.ToString();
         }
-        finally { RevertToSelf(); CloseHandle(restricted); }
+        catch (Exception ex) { pidNote = "probe:" + ex.GetType().Name; }
+        var result = InputBrokerClient.TryRun(op);
+        File.WriteAllText(outfile, $"broker_pid={pidNote} legacy_win32={legacy} result={result}");
+        return result == InputBrokerClient.BrokerResult.Played ? 0 : 1;
     }
 
     /// <summary>--run-restricted [--] [args]: relaunch this exe with the given args (none =
