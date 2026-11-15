@@ -106,6 +106,14 @@ adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || t
 if [ "$PIN_OK" = "1" ]; then adb shell locksettings clear --old 1234 || true; fi
 adb shell input keyevent 82
 sleep 1
+# rev19: the compact control bar lives in the app's own notification, which only
+# renders its custom layout in the UNLOCKED shade (the lockscreen shows the system
+# media card instead). Capture the unlocked shade so the bar is visually verified.
+adb shell cmd statusbar expand-notifications
+sleep 3
+adb exec-out screencap -p > "screenshots/unlocked-controls-shade.png"
+adb shell input keyevent 4
+sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.
 adb shell input keyevent 4
 sleep 1
