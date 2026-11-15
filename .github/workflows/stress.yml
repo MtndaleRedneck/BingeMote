@@ -1,7 +1,7 @@
 name: stress
 on:
   push:
-    branches: [stress-untested]
+    branches: [stress-untested, i1/rev16]
   workflow_dispatch:
 
 jobs:
@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - name: Helper unit tests
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
       - name: Publish TEST helper exe (CI hooks; never shipped)
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
       - name: Install VLC (for the movies launch test)
@@ -28,6 +30,37 @@ jobs:
         run: pwsh -File scripts/helper-e2e.ps1
       - name: VLC control tests (real VLC, app request shapes)
         run: pwsh -File scripts/vlc-e2e.ps1
+
+  # Fault-confirmation suite: Instinct 2's static review findings as runtime assertions.
+  broker-faults:
+    needs: e2e-gate
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish TEST helper exe (CI hooks; never shipped)
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
+      - name: Broker fault tests (dedup, held buttons, breaker, restart, poison)
+        run: pwsh -File scripts/broker-faults.ps1
+      - name: Stage fault logs
+        if: always()
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\fault-logs"
+          New-Item -ItemType Directory $out -Force | Out-Null
+          Copy-Item "$env:LOCALAPPDATA\BingeMote\helper.log" "$out\helper-user.log" -ErrorAction SilentlyContinue
+          Copy-Item 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log' "$out\helper-system.log" -ErrorAction SilentlyContinue
+          Copy-Item "$env:TEMP\bf-*.txt" $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem $out | Select-Object Name, Length
+      - name: Upload fault logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fault-logs
+          path: fault-logs
+          if-no-files-found: warn
 
   stress:
     needs: e2e-gate

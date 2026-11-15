@@ -186,7 +186,7 @@ internal static class Program
         // CI-only broker pipe client behaviors (wedged client, flooding client) for the
         // broker security e2e tests. Compiled only into the CI test build; the release
         // exe carries no trace of it.
-        if (args.Contains("--broker-hold") || args.Contains("--broker-flood"))
+        if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server"))
         {
             return BrokerTestHook.Run(args);
         }
