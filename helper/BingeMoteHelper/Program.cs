@@ -180,26 +180,43 @@ internal static class Program
                         // just serve. Same code path the hop lands in.
                         return InputBroker.Run();
                     }
-                    if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker", out var brokerPid))
+                    if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker", out _))
                     {
-                        // rev16 (F10): keep this task instance alive for the console
-                        // broker's whole lifetime and exit with its status. Before this,
-                        // the launcher exited 0 at once, so Task Scheduler's
-                        // restart-on-failure watched a process that was already gone and
-                        // a killed broker stayed dead until the next logon.
-                        try
+                        // rev16 (F10): supervise the console broker for the life of this
+                        // task instance and re-hop it whenever its pipe goes quiet.
+                        // Pid-handle watching proved unreliable (ExitCode on a
+                        // GetProcessById child threw InvalidOperationException right as
+                        // the broker died) and Task Scheduler's restart-on-failure did
+                        // not refire within minutes, so the launcher itself re-hops.
+                        // The broker's Global mutex turns a relaunch against a live
+                        // broker into a harmless no-op, and File.Exists on the pipe
+                        // path reports a held pipe name without consuming an instance.
+                        var misses = 0;
+                        var failures = 0;
+                        while (true)
                         {
-                            using var child = Process.GetProcessById(brokerPid);
-                            child.WaitForExit();
-                            Log("input_broker console copy exited code=" + child.ExitCode + " pid=" + brokerPid);
-                            return child.ExitCode == 0 ? 0 : 1;
-                        }
-                        catch (Exception ex)
-                        {
-                            // The child vanished before we could watch it (immediate
-                            // crash): nonzero so the task restarts the chain.
-                            Log("input_broker watch failed " + ex.GetType().Name + ": " + ex.Message);
-                            return 1;
+                            Thread.Sleep(2000);
+                            if (File.Exists(@"\\.\pipe\" + InputBroker.PipeName))
+                            {
+                                misses = 0;
+                                failures = 0;
+                                continue;
+                            }
+                            // Confirm a real absence: fault-injection phases briefly
+                            // swap the pipe to a silent server, so only relaunch after
+                            // ~6s with no server holding the name at all.
+                            if (++misses < 3) continue;
+                            misses = 0;
+                            if (failures >= 3)
+                            {
+                                Log("input_broker relaunch failed 3 times; exiting so the task restarts the chain");
+                                return 1;
+                            }
+                            Log("input_broker pipe quiet ~6s; relaunching the console broker");
+                            if (!SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker", out _))
+                                Log("input_broker relaunch into console session failed; retrying");
+                            failures++;
+                            Thread.Sleep(3000); // boot grace before the next probe
                         }
                     }
                     Log("input_broker FAIL-CLOSED: could not relaunch into console session " + console + " from session " + current + "; no broker will serve from here");

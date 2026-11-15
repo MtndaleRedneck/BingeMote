@@ -115,7 +115,8 @@ Write-Host "== T-xml: broker task restart settings (F10) =="
 $taskDef = Get-ScheduledTask -TaskName 'BingeMote Input Broker'
 Write-Host "task settings: RestartCount=$($taskDef.Settings.RestartCount) RestartInterval=$($taskDef.Settings.RestartInterval)"
 Check ($taskDef.Settings.RestartCount -eq 3) "task restarts the broker 3x on failure"
-Check ($taskDef.Settings.RestartInterval.TotalMinutes -eq 1) "task restart interval is one minute"
+$riMinutes = ([System.Xml.XmlConvert]::ToTimeSpan([string]$taskDef.Settings.RestartInterval)).TotalMinutes
+Check ($riMinutes -eq 1) "task restart interval is one minute"
 $xml = Export-ScheduledTask -TaskName 'BingeMote Input Broker'
 Check ($xml -match '--broker-launcher') "task action runs the launcher (which hops and watches the serving broker)"
 
@@ -243,7 +244,7 @@ foreach ($i in 1..30) {
     $bp = Wait-BrokerInSession $harnessSession 1
     if ($bp -and (Test-Path '\\.\pipe\BingeMoteInputBroker')) { $back = $true; $backAfter = [int]((Get-Date) - $t6start).TotalSeconds; break }
 }
-Write-Host "broker back after ${backAfter}s"
+if ($back) { Write-Host "broker back after ${backAfter}s" } else { Write-Host "broker NOT back within 150s" }
 Check ($back -and $backAfter -le 90) "a killed broker is back serving within 90s"
 if (-not $back) {
     $ti = Get-ScheduledTaskInfo -TaskName 'BingeMote Input Broker'
