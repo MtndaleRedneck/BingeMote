@@ -218,7 +218,7 @@ Check (-not [Probe]::LeftDown()) "an unknown button name pressed nothing"
 $r = Invoke-Helper '/key' '{"key":"f13"}' $token
 Check ($r.code -eq 400) "unknown key name is a 400 (got $($r.code))"
 $longText = 'x' * 3000
-$r = Invoke-Helper '/type' ("{\"text\":\"" + $longText + "\"}") $token
+$r = Invoke-Helper '/type' ('{"text":"' + $longText + '"}' ) $token
 Check ($r.code -eq 200) "over-cap /type is accepted and truncated to 2000 chars, not an error (got $($r.code))"
 
 # --- T6: killed broker auto-restarts (F10, runtime half) ---
