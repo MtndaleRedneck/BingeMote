@@ -5,3 +5,7 @@ app/build/
 *.keystore
 *.jks
 keystore.properties
+
+# build outputs (rev16: were checked in; never trust or ship them)
+bin/
+obj/
