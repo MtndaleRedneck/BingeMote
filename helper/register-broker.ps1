@@ -46,3 +46,13 @@ $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive 
 # console-session broker dies, so these settings actually fire.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName 'BingeMote Input Broker' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+# rev17: start the broker NOW. Through rev16 the only trigger was AtLogOn and nothing
+# started the task at install time, while PrepareToInstall ends the running broker
+# before an upgrade - so the installing session had no broker until the next sign-in
+# and the tray app fell back to local SendInput, losing to elevated/secure desktops
+# (Ezzy's midnight rev16 install, Nov 15 2026: input_routing=local, SetCursorPos
+# failures until sign-out/in). AtLogOn stays as the across-reboot backstop.
+# try/catch: a start failure must not fail the install; the launcher supervision and
+# the AtLogOn trigger still bring the broker up.
+try { Start-ScheduledTask -TaskName 'BingeMote Input Broker' }
+catch { Write-Host "warning: broker task registered but immediate start failed: $($_.Exception.Message)" }

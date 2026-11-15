@@ -108,6 +108,23 @@ if (-not $wdOk) {
   throw "rev15: watchdog task not re-registered at the protected copy"
 }
 Write-Host "ok: watchdog task re-registered at the protected copy"
+
+# rev17: install/upgrade must leave the broker UP in the same session - no sign-out,
+# and the harness must not start the task itself here. Until rev16 the broker only
+# started at the next logon (register-broker.ps1 registered AtLogOn but never ran
+# Start-ScheduledTask), which is the exact hole behind Ezzy's midnight rev16 mouse
+# failure. Poll the pipe: the broker task must come up on its own after the upgrade.
+$pipeUp = $false
+for ($i = 0; $i -lt 30 -and -not $pipeUp; $i++) {
+  if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true } else { Start-Sleep -Seconds 2 }
+}
+if (-not $pipeUp) {
+  Write-Host "== same-session broker diagnostics =="
+  try { Get-ScheduledTask -TaskName 'BingeMote Input Broker' | Format-List TaskName,State | Out-String | Write-Host } catch { Write-Host "(no broker task)" }
+  Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | ForEach-Object { Write-Host "process: pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
+  throw "rev17: broker pipe never came up after install+live-upgrade in the same session (no sign-out, no manual task start)"
+}
+Write-Host "ok: broker pipe is up in the installing session (no sign-out, no manual task start)"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 if (-not (Test-Path $appExe)) { throw "rev14: upgrade removed the protected copy" }
@@ -188,6 +205,18 @@ try {
         return @{ code = [int]$r.StatusCode; body = $r.Content }
     }
     function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+    function Stop-Tracked($proc) {
+        # rev17: an --ensure-running second copy can win the single-instance race and
+        # the tracked process then exits on its own; Stop-Process on that dead pid
+        # threw and failed runs whose product behavior was correct (watchdog race).
+        if ($null -eq $proc) { return }
+        $alive = $false
+        try { $alive = -not $proc.HasExited } catch { $alive = $false }
+        if ($alive) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop }
+            catch { Write-Host "note: tracked pid $($proc.Id) already gone" }
+        }
+    }
     function Invoke-HelperGet($path, $token) {
         $headers = @{}
         if ($token) { $headers['X-BingeMote-Token'] = $token }
@@ -318,7 +347,7 @@ try {
 
     # After pairing, a fresh launch shows no live code: re-pairing must fail.
     Write-Host "== no silent re-pair =="
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
     $p = Start-Process $exe -PassThru
@@ -371,7 +400,7 @@ public static class WinEnum {
 
     # A second phone pairs with a fresh code and both phones stay connected.
     Write-Host "== multi-phone pairing =="
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $env:BINGEMOTE_PAIR_CODE = '123456'
     $p = Start-Process $exe -PassThru
@@ -403,7 +432,7 @@ public static class WinEnum {
     $cfgText = Get-Content $cfg -Raw
     Assert ($cfgText -match '"adoptRequestId":"req-pre-restart"') "the served marker is persisted at serve time"
     Assert (-not ($cfgText -match $preRestart)) "the password value is never written to config.json"
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $p = Start-Process $exe -PassThru
     $up = $false
@@ -426,7 +455,7 @@ public static class WinEnum {
 
     # A 1.0/1.1 config stored one token; that phone must stay paired after upgrading.
     Write-Host "== old config migration =="
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
     $cfg = Join-Path $env:LOCALAPPDATA 'BingeMote/config.json'
@@ -455,7 +484,7 @@ public static class WinEnum {
     Start-Sleep -Seconds 2
     Assert (-not $fakeVlc.HasExited) "the simulated VLC process is running"
     try {
-        Stop-Process -Id $p.Id -Force
+        Stop-Tracked $p
         Start-Sleep -Seconds 1
         $env:BINGEMOTE_PAIR_CODE = '555555'
         $p = Start-Process $exe -PassThru
@@ -478,7 +507,7 @@ public static class WinEnum {
         Assert ($pendingPw.Length -ge 16) "pair hands over the pending password"
         $cfgText = Get-Content $cfg -Raw
         Assert ($cfgText -match '"pendingVlcPassword"') "the pending write is persisted in config.json"
-        Stop-Process -Id $p.Id -Force
+        Stop-Tracked $p
         Start-Sleep -Seconds 1
         Stop-Process -Id $fakeVlc.Id -Force
         Start-Sleep -Seconds 1
@@ -510,7 +539,7 @@ public static class WinEnum {
         $fakeVlc2 = Start-Process (Join-Path $env:TEMP 'vlc.exe') -ArgumentList '-NoProfile','-Command','Start-Sleep -Seconds 600' -PassThru
         Start-Sleep -Seconds 2
         Assert (-not $fakeVlc2.HasExited) "the simulated VLC is running for the re-pair test"
-        Stop-Process -Id $p.Id -Force
+        Stop-Tracked $p
         Start-Sleep -Seconds 1
         $env:BINGEMOTE_PAIR_CODE = '777777'
         $p = Start-Process $exe -PassThru
@@ -610,7 +639,7 @@ public static class WinEnum {
         $onDisk = Get-Content $store -Raw
         Assert ($onDisk -match ('"Position":' + $pos + '[^0-9]')) "resume entry survives the no-VLC poll (cycle $cycle)"
         Assert ($onDisk -match 'clip\.mkv') "resume entry still names its file (cycle $cycle)"
-        Stop-Process -Id $p.Id -Force
+        Stop-Tracked $p
         Start-Sleep -Seconds 1
         $p = Start-Process $exe -PassThru
         $up = $false
@@ -691,7 +720,7 @@ public static class WinEnum {
     # verifies the broker the same way. The takeover test above left a TEMP COPY of the
     # exe running as the helper, which (correctly) fails that check - restart the helper
     # from the original path, like a real install where broker and helper are one exe.
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $p = Start-Process $exe -PassThru
     $up = $false
@@ -869,7 +898,7 @@ public static class Probe {
     }
     foreach ($i in 1..20) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 250 }
     # Fresh helper so its client has no cached connection or backoff state.
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     Remove-Item Env:BINGEMOTE_PAIR_CODE -ErrorAction SilentlyContinue
     $p = Start-Process $exe -PassThru
@@ -903,7 +932,7 @@ public static class Probe {
         Start-Sleep -Milliseconds 500
     }
     Assert ($null -ne $brokerProc) "real broker is back in the console session"
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $p = Start-Process $exe -PassThru
     $up = $false
@@ -940,7 +969,7 @@ public static class Probe {
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
     Assert $pipeUp "delayed-ack broker is listening"
     # Fresh helper: no cached connection or backoff state.
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $p = Start-Process $exe -PassThru
     $up = $false
@@ -998,7 +1027,7 @@ public static class Probe {
         Start-Sleep -Milliseconds 500
     }
     Assert ($null -ne $brokerProc) "real broker is back after the delayed-ack test"
-    Stop-Process -Id $p.Id -Force
+    Stop-Tracked $p
     Start-Sleep -Seconds 1
     $p = Start-Process $exe -PassThru
     $up = $false
@@ -1055,7 +1084,7 @@ public static class Probe {
 
     Write-Host "HELPER E2E PASSED"
 } finally {
-    if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    if ($p -and -not $p.HasExited) { Stop-Tracked $p }
     Get-Job -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
     Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
     Get-Process UipiBlocker -ErrorAction SilentlyContinue | Stop-Process -Force
