@@ -50,8 +50,9 @@ class RemoteState(
     var connecting by mutableStateOf(false)
         private set
 
-    /** Local mute: VLC has no mute command, so we send volume 0 and remember where we were. */
-    var muted by mutableStateOf(false)
+    /** Local mute: VLC has no mute command, so we send volume 0 and remember where we were.
+     * Persisted in Store so the notification bar shares the exact same state (LOW2). */
+    var muted by mutableStateOf(store.appMuted)
         private set
 
     /** Windows system volume 0-100 from the helper; null when the helper is unreachable, and VLC volume is used instead. */
@@ -72,7 +73,11 @@ class RemoteState(
     private var helperDownAt = 0L
     // The pairing token the notice state above belongs to (see pollOnce).
     private var noticeToken: String? = null
-    private var preMuteRaw = 0
+    private var preMuteRaw = store.preMuteRaw
+
+    /** Every mute transition goes through here so the bar sees the same state. */
+    private fun shareMute(v: Boolean) { muted = v; store.appMuted = v }
+    private fun sharePreMute(raw: Int) { preMuteRaw = raw; store.preMuteRaw = raw }
 
     /** Last subtitle track picked in the app, per media title. VLC's status doesn't report the current track on all versions. */
     var pickedSubtitle by mutableStateOf<Int?>(null)
@@ -178,7 +183,7 @@ class RemoteState(
             val vm = try { volDeferred.await() } catch (e: HelperClient.BadToken) { unpaired = true; null }
             if (vm != null) {
                 helperFailures = 0
-                muted = vm.second
+                shareMute(vm.second)
                 helperDown = false
                 helperDownAt = 0L
                 helperNotice = false
@@ -342,7 +347,7 @@ class RemoteState(
             // Windows system volume via the helper (recommended pick; Ezzy left it to us and did not object).
             val base = win
             val wasMuted = muted
-            if (wasMuted) muted = false
+            if (wasMuted) shareMute(false)
             val next = (base + if (up) 5 else -5).coerceIn(0, 100)
             winVolume = next
             localVolumeAt = System.currentTimeMillis()
@@ -357,7 +362,7 @@ class RemoteState(
         if (muted) {
             // Restore-then-step: unmute to where we were, then one step from there.
             val base = preMuteRaw
-            muted = false
+            shareMute(false)
             val next = (base + if (up) Vlc.VOLUME_STEP else -Vlc.VOLUME_STEP).coerceIn(0, Vlc.VOLUME_100)
             status?.let { status = it.copy(volumeRaw = next) }
             fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next) }
@@ -374,18 +379,18 @@ class RemoteState(
     fun toggleMute() {
         if (winVolume != null) {
             val next = !muted
-            muted = next
+            shareMute(next)
             localVolumeAt = System.currentTimeMillis()
             fire("volume") { HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, next) }
             return
         }
         if (muted) {
-            muted = false
+            shareMute(false)
             val back = preMuteRaw.coerceIn(1, Vlc.VOLUME_100)
             fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, back) }
         } else {
-            preMuteRaw = (status?.volumeRaw ?: Vlc.VOLUME_100 / 2).coerceIn(1, Vlc.VOLUME_100 * 2)
-            muted = true
+            sharePreMute((status?.volumeRaw ?: Vlc.VOLUME_100 / 2).coerceIn(1, Vlc.VOLUME_100 * 2))
+            shareMute(true)
             fire("volume") { Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, 0) }
         }
     }

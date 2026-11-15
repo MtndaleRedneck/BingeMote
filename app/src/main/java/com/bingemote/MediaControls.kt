@@ -97,12 +97,31 @@ class MediaControlsService : Service() {
         scope.launch { try { block(); refreshNow() } catch (_: Exception) {} }
     }
 
-    /** One volume button step (5%) off the live volume. */
+    /** One volume button step (5%). Same contract as the in-app volume row
+     * (RemoteState.volumeStep): when the helper answers, drive WINDOWS volume (and
+     * unmute only if it was muted); otherwise drive VLC volume with the shared mute
+     * restore, clamped at 100% like the row (LOW1/LOW2 - the bar used to bypass both
+     * and could push VLC to 200%). */
     private fun volumeBy(store: Store, delta: Int) {
         scope.launch {
             try {
-                val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
-                Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, st.volumeRaw + delta)
+                val helper = if (store.helperToken.isNotBlank())
+                    try { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } catch (_: Exception) { null }
+                else null
+                if (helper != null) {
+                    val (win, winMuted) = helper
+                    val next = (win + if (delta > 0) 5 else -5).coerceIn(0, 100)
+                    HelperClient.volumeSet(store.host, store.helperPort, store.helperToken, next)
+                    if (winMuted) HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, false)
+                } else if (store.appMuted) {
+                    // Restore-then-step, same as the row: unmute to where we were, one step from there.
+                    store.appMuted = false
+                    val next = (store.preMuteRaw + delta).coerceIn(0, Vlc.VOLUME_100)
+                    Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next)
+                } else {
+                    val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+                    Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, (st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100))
+                }
                 refreshNow()
             } catch (_: Exception) {}
         }
