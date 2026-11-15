@@ -12,8 +12,21 @@ function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ;
 function Invoke-Helper($path, $body, $token) {
     $headers = @{}
     if ($token) { $headers['X-BingeMote-Token'] = $token }
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 15 -SkipHttpErrorCheck
-    return @{ code = [int]$r.StatusCode; body = $r.Content }
+    # Thousands of short-lived requests in this suite pile up TIME_WAIT sockets on the
+    # runner; a fresh connection can then fail to bind (10048 "Only one usage...").
+    # That is client-side port pressure, not a helper fault - retry past it.
+    foreach ($attempt in 1..6) {
+        try {
+            $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 15 -SkipHttpErrorCheck
+            return @{ code = [int]$r.StatusCode; body = $r.Content }
+        } catch {
+            if ($_.Exception.Message -match 'Only one usage of each socket address' -and $attempt -lt 6) {
+                Start-Sleep -Seconds 2
+                continue
+            }
+            throw
+        }
+    }
 }
 function Wait-HelperUp($seconds) {
     foreach ($i in 1..($seconds * 2)) {
