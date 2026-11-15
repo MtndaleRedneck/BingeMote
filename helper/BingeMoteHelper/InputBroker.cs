@@ -239,15 +239,16 @@ internal static class InputBroker
                 var (sess, frameId, opLine) = SplitFrame(line);
                 if (sess != null)
                 {
-                    lock (DedupGate)
+                    var duplicate = false;
+                    lock (DedupGate) // no awaits in here: flag inside, write outside
                     {
-                        if (sess == _lastSess && frameId <= _lastFrameId)
-                        {
-                            await writer.WriteLineAsync("ok"); // already applied: ack the resend
-                            continue;
-                        }
-                        _lastSess = sess;
-                        _lastFrameId = frameId;
+                        if (sess == _lastSess && frameId <= _lastFrameId) duplicate = true;
+                        else { _lastSess = sess; _lastFrameId = frameId; }
+                    }
+                    if (duplicate)
+                    {
+                        await writer.WriteLineAsync("ok"); // already applied: ack the resend
+                        continue;
                     }
                 }
                 try
