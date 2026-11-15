@@ -33,7 +33,10 @@ internal static class Movies
             // passed the prefix check.
             var fullRoot = ResolveReparse(Path.GetFullPath(root)).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var full = Path.GetFullPath(Path.Combine(fullRoot, rel.Replace('/', Path.DirectorySeparatorChar)));
-            if (!ResolveReparse(full).StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return null;
+            // Trailing-separator both sides: ResolveReparse returns no trailing slash, so
+            // the folder root itself must compare equal to fullRoot, not fall short of it.
+            var resolved = ResolveReparse(full).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!resolved.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return null;
             return full; // the unresolved path opens the same target; the check above is what gates
         }
         catch { return null; }
