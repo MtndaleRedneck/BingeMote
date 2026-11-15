@@ -345,8 +345,13 @@ internal static class Program
                 // blind: an unidentified copy is "unknown", and unknown is never killed,
                 // never replaced. The old rev17 code pretended sameExe=true here, which
                 // would also have passed an unidentified copy into the downgrade path.
-                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
-                Log("Launched while already running (the running copy could not be read) - asked it to show its window, not taking over.");
+                // rev18 (Instinct 2): log the signal outcome honestly - a swallowed
+                // Set() failure must not read as a successful request in the log.
+                var shadowSignaled = false;
+                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); shadowSignaled = true; } catch { }
+                Log(shadowSignaled
+                    ? "Launched while already running (the running copy could not be read) - asked it to show its window, not taking over."
+                    : "Launched while already running (the running copy could not be read) - could NOT signal its show event, not taking over.");
                 return 0;
             }
             // A different exe is an update only when this launch is the same or a newer
@@ -365,10 +370,20 @@ internal static class Program
             }
             if (sameExe || isDowngrade)
             {
-                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
-                Log(isDowngrade
-                    ? "An older exe launched while a newer copy ran - showed the running copy's window."
-                    : "Launched while already running - asked the running copy to show its window.");
+                var showSignaled = false;
+                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); showSignaled = true; } catch { }
+                if (!showSignaled)
+                {
+                    Log(isDowngrade
+                        ? "An older exe launched while a newer copy ran - could NOT signal its show event."
+                        : "Launched while already running - could NOT signal the running copy's show event.");
+                }
+                else
+                {
+                    Log(isDowngrade
+                        ? "An older exe launched while a newer copy ran - showed the running copy's window."
+                        : "Launched while already running - asked the running copy to show its window.");
+                }
                 return 0;
             }
             EventWaitHandle? oldQuit = null;

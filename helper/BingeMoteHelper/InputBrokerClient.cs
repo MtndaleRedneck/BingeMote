@@ -156,8 +156,18 @@ internal static class InputBrokerClient
         if (_pipe is { IsConnected: true }) return;
         Cleanup();
         var pipe = new NamedPipeClientStream(".", InputBroker.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous); // async handle: real overlapped IO, cancelled on dispose
-        pipe.Connect(1000);
-        PipePeer.VerifyServer(pipe); // never send input to an endpoint that is not our own broker
+        try
+        {
+            pipe.Connect(1000);
+            PipePeer.VerifyServer(pipe); // never send input to an endpoint that is not our own broker
+        }
+        catch
+        {
+            // rev18 (Instinct 2 MEDIUM): the local owns the handle until verification
+            // passes - a rejected endpoint must not leak a pipe handle per attempt.
+            pipe.Dispose();
+            throw;
+        }
         _pipe = pipe;
         _writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
         _reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
