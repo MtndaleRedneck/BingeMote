@@ -113,7 +113,11 @@ sleep 1
 adb shell cmd statusbar expand-settings
 sleep 3
 adb exec-out screencap -p > "screenshots/media-card-collapsed.png"
-BTN=$(adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml | tr '<' '\n' | grep 'Volume down' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ')
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+adb shell cat /sdcard/ui.xml > screenshots/shade-ui.xml 2>/dev/null || true
+# grep no-match must not kill the script under set -e/pipefail: || true inside the substitution.
+BTN=$(grep 'Volume down' screenshots/shade-ui.xml | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
+echo "shade 'Volume down' bounds: '${BTN:-none}' (shade-ui.xml saved)"
 if [ -n "$BTN" ]; then
   BX=$(echo $BTN | awk '{printf "%d", ($1+$3)/2}')
   BY=$(echo $BTN | awk '{printf "%d", ($2+$4)/2}')
