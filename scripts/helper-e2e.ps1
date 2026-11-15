@@ -83,11 +83,18 @@ if ($LASTEXITCODE -ne 0) { throw "silent upgrade reinstall failed with exit $LAS
 # The silent install relaunches the app; it re-registers the Watchdog with its own
 # (protected) path after register-broker.ps1 deleted the stale task.
 $wdOk = $false
-for ($i = 0; $i -lt 10 -and -not $wdOk; $i++) {
+for ($i = 0; $i -lt 45 -and -not $wdOk; $i++) {
   $wdXml = try { schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String } catch { '' }
   if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else { Start-Sleep -Seconds 2 }
 }
-if (-not $wdOk) { throw "rev15: watchdog task not re-registered at the protected copy" }
+if (-not $wdOk) {
+  Write-Host "== watchdog re-registration diagnostics =="
+  Write-Host "last task XML query: $wdXml"
+  Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | ForEach-Object { Write-Host "process: pid=$($_.ProcessId) session=$($_.SessionId) cmd=$($_.CommandLine)" }
+  $diagLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+  if (Test-Path $diagLog) { Write-Host "== helper.log =="; Get-Content $diagLog } else { Write-Host "(no helper.log)" }
+  throw "rev15: watchdog task not re-registered at the protected copy"
+}
 Write-Host "ok: watchdog task re-registered at the protected copy"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
