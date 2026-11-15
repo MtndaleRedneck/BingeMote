@@ -695,12 +695,17 @@ public static class WinEnum {
     $probeSrc = @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class Probe {
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint n, INPUT[] i, int cb);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, StringBuilder l);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public MI mi; }
     [StructLayout(LayoutKind.Sequential)] struct MI { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
@@ -710,6 +715,15 @@ public static class Probe {
     }
     public static POINT Pos() { POINT p; GetCursorPos(out p); return p; }
     public static uint ForegroundPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }
+    public static IntPtr NotepadWindow() { return FindWindow("Notepad", null); }
+    public static bool FocusNotepad() { var w = NotepadWindow(); return w != IntPtr.Zero && SetForegroundWindow(w); }
+    public static string NotepadText() {
+        var w = NotepadWindow(); if (w == IntPtr.Zero) return null;
+        var e = FindWindowEx(w, IntPtr.Zero, "Edit", null); if (e == IntPtr.Zero) return null;
+        var sb = new StringBuilder(8192);
+        SendMessage(e, 0x000D, (IntPtr)sb.Capacity, sb); // WM_GETTEXT
+        return sb.ToString();
+    }
 }
 "@
     Add-Type -TypeDefinition $probeSrc
@@ -899,6 +913,91 @@ public static class Probe {
     $helperLog = Get-Content (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') -Raw
     Assert ($helperLog -match 'input_routing=broker') "fresh helper confirms broker routing after restore"
 
+    # P2 (review): a delayed broker ack must not double-apply an op. On rev15 the same
+    # 3s ack delay applied every op three times - broker, retry, local fallback - so
+    # HELLO typed 15 keydowns, Enter 3, and dx=100 moved 300. rev16 runs the REAL
+    # broker (dedup, validator, rate limits) under the same fault via a CI hook; the
+    # helper's wider ack window consumes the late "ok", so each op lands exactly once
+    # and the local fallback never fires.
+    Write-Host "== P2 delayed-ack dedup =="
+    Disable-ScheduledTask -TaskName 'BingeMote Input Broker' | Out-Null
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    Start-Sleep -Seconds 2
+    $delayed = Start-Process $exe -ArgumentList '--broker-delayed-run', '3000' -PassThru
+    $pipeUp = $false
+    foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { $pipeUp = $true; break }; Start-Sleep -Milliseconds 500 }
+    Assert $pipeUp "delayed-ack broker is listening"
+    # Fresh helper: no cached connection or backoff state.
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart for the delayed-ack test" }
+    # Keys land in notepad so every applied keydown is countable.
+    $notepad = Start-Process notepad.exe -PassThru
+    $npUp = $false
+    foreach ($i in 1..40) {
+        if ([Probe]::NotepadWindow() -ne [IntPtr]::Zero) { $npUp = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert $npUp "notepad is up for keystroke counting"
+    $focused = $false
+    foreach ($i in 1..20) {
+        [Probe]::FocusNotepad() | Out-Null
+        if ([Probe]::ForegroundPid() -eq $notepad.Id) { $focused = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert $focused "notepad holds the foreground"
+    $r = Invoke-Helper '/type' '{"text":"HELLO"}' $token
+    Assert ($r.code -eq 200) "type HELLO through the delayed-ack broker"
+    Start-Sleep -Seconds 1
+    $typed = [Probe]::NotepadText()
+    Assert ($typed -eq 'HELLO') "HELLO applied exactly once through a 3s ack delay (got '$typed')"
+    $r = Invoke-Helper '/key' '{"key":"enter"}' $token
+    Assert ($r.code -eq 200) "Enter through the delayed-ack broker"
+    Start-Sleep -Seconds 1
+    $typed = [Probe]::NotepadText()
+    Assert ($typed -eq "HELLO`r`n") "Enter applied exactly once (text is $($typed.Length) chars)"
+    [Probe]::SetCursorPos(500, 400) | Out-Null
+    Start-Sleep -Milliseconds 300
+    $bD = [Probe]::Pos()
+    $r = Invoke-Helper '/mouse/move' '{"dx":100,"dy":0}' $token
+    Assert ($r.code -eq 200) "move through the delayed-ack broker"
+    Start-Sleep -Seconds 1
+    $aD = [Probe]::Pos()
+    $dD = $aD.X - $bD.X
+    Assert ($dD -ge 60 -and $dD -le 140) "dx=100 applied exactly once through a 3s ack delay (moved ${dD}px)"
+    Stop-Process -Id $notepad.Id -Force -ErrorAction SilentlyContinue
+    Stop-Process -Id $delayed.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    # Restore the real broker and a fresh helper for the UIPI section.
+    Enable-ScheduledTask -TaskName 'BingeMote Input Broker' | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote Input Broker'
+    $brokerProc = $null
+    foreach ($i in 1..40) {
+        $brokerProc = Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker' -and $_.SessionId -eq $harnessSession } | Select-Object -First 1
+        if ($brokerProc) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert ($null -ne $brokerProc) "real broker is back after the delayed-ack test"
+    Stop-Process -Id $p.Id -Force
+    Start-Sleep -Seconds 1
+    $p = Start-Process $exe -PassThru
+    $up = $false
+    foreach ($i in 1..40) {
+        try {
+            $c = New-Object Net.Sockets.TcpClient
+            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $up) { throw "helper did not restart after the delayed-ack test" }
+
     # Recreate the SwUSB condition: a SYSTEM-integrity window holds the foreground.
     Write-Host "== rev11 UIPI replication =="
     dotnet publish scripts/UipiBlocker -c Release -o "$env:TEMP\uipiblocker" | Out-Host
@@ -948,7 +1047,8 @@ public static class Probe {
     Get-Job -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
     Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
     Get-Process UipiBlocker -ErrorAction SilentlyContinue | Stop-Process -Force
-    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-Process notepad -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher|--broker-delayed-run' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Unregister-ScheduledTask -TaskName 'BingeMote UIPI Blocker' -Confirm:$false -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName 'BingeMote Input Broker' -Confirm:$false -ErrorAction SilentlyContinue
     netsh advfirewall firewall delete rule name="BingeMote" | Out-Null

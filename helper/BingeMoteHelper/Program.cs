@@ -226,6 +226,18 @@ internal static class Program
         // CI-only broker pipe client behaviors (wedged client, flooding client) for the
         // broker security e2e tests. Compiled only into the CI test build; the release
         // exe carries no trace of it.
+        // --broker-delayed-run <ms>: review-P2 fault injection. Runs the REAL broker
+        // (dedup, validator, rate limits) as this user in this session, with every ack
+        // delayed by ms after the apply, so the e2e proves a delayed reply can no
+        // longer double-apply an op. Bypasses the --input-broker SYSTEM gate on purpose:
+        // PipePeer still pins the harness to this same exe image and session.
+        if (args.Contains("--broker-delayed-run"))
+        {
+            var di = Array.IndexOf(args, "--broker-delayed-run");
+            if (di + 1 < args.Length && int.TryParse(args[di + 1], out var delayMs))
+                InputBroker.ReplyDelayMs = delayMs;
+            return InputBroker.Run();
+        }
         if (args.Contains("--broker-hold") || args.Contains("--broker-flood") || args.Contains("--broker-flood2") || args.Contains("--broker-send") || args.Contains("--broker-holddown") || args.Contains("--broker-silent-server"))
         {
             return BrokerTestHook.Run(args);

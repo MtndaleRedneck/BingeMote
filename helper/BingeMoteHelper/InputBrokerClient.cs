@@ -138,7 +138,13 @@ internal static class InputBrokerClient
         // async modes (CI run 43532556389), so bound the round-trip with WaitAsync instead;
         // on timeout the abandoned overlapped op is cancelled when the pipe is disposed.
         _writer!.WriteLineAsync(framedLine).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
-        var reply = _reader!.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        // 5s ack window (review P2): a local broker answers in milliseconds or it is
+        // wedged. A shorter window turns a slow-but-LIVE broker into a double apply -
+        // the broker played the op, its late "ok" went unread, and the local fallback
+        // played it again (rev15: HELLO typed 3x, dx100 moved 300). The window absorbs
+        // a delayed ack so it is consumed; a truly wedged broker still fails here, and
+        // the circuit breaker bounds what repeated wedges cost.
+        var reply = _reader!.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
         if (reply == "ok") return;
         if (reply != null && reply.StartsWith("err", StringComparison.Ordinal))
             throw new BrokerRejectedException(reply);

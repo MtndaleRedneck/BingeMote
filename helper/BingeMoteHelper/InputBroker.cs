@@ -50,6 +50,14 @@ internal static class InputBroker
     private const int OpsPerSecondPerClient = 600;
     private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(15); // idle clients are dropped
 
+#if BROKER_TEST_HOOK
+    /// <summary>CI-only fault injection (review P2): when positive, every "ok" ack is
+    /// written this many ms AFTER the op was applied, so the e2e runs the real broker
+    /// (dedup, validator, rate limits) under a delayed-ack fault. Set only by the
+    /// --broker-delayed-run hook; the release build carries no trace of it.</summary>
+    internal static int ReplyDelayMs;
+#endif
+
     [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int infoClass, out IntPtr buffer, out uint bytes);
     [DllImport("wtsapi32.dll")]
@@ -247,6 +255,9 @@ internal static class InputBroker
                     }
                     if (duplicate)
                     {
+#if BROKER_TEST_HOOK
+                        if (ReplyDelayMs > 0) await Task.Delay(ReplyDelayMs); // P2 delayed-ack fault
+#endif
                         await writer.WriteLineAsync("ok"); // already applied: ack the resend
                         continue;
                     }
@@ -259,6 +270,9 @@ internal static class InputBroker
                     {
                         if (op.Y != 0) heldButtons.Add(op.Arg); else heldButtons.Remove(op.Arg);
                     }
+#if BROKER_TEST_HOOK
+                    if (ReplyDelayMs > 0) await Task.Delay(ReplyDelayMs); // P2 delayed-ack fault
+#endif
                     await writer.WriteLineAsync("ok");
                 }
                 catch (ArgumentException ex)
