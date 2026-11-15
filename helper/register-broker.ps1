@@ -40,5 +40,8 @@ try { & schtasks.exe /Delete /TN "BingeMote Watchdog" /F 2>$null | Out-Null } ca
 $action = New-ScheduledTaskAction -Execute $exe -Argument '--input-broker'
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType Interactive -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+# rev16 (F10): restart a failed broker 3x at one-minute intervals. This pairs with the
+# launcher's new lifetime watch in Program.cs: the task instance now ends nonzero when
+# the console-session broker dies, so these settings actually fire.
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName 'BingeMote Input Broker' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null

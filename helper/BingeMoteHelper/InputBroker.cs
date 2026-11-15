@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
@@ -76,7 +77,10 @@ internal static class InputBroker
         catch (Exception ex)
         {
             DiagnosticLog.Write($"input_broker=FAILED {ex.GetType().Name}: {ex.Message}");
-            return 0; // helper falls back to local input
+            // rev16 (F10): nonzero, so Task Scheduler's restart-on-failure (configured in
+            // register-broker.ps1) brings the broker back; the helper falls back to local
+            // input in the meantime. stand_down above stays 0: that path is normal.
+            return 1;
         }
     }
 
@@ -201,43 +205,102 @@ internal static class InputBroker
         DiagnosticLog.Write($"input_broker client connected ({client})");
 
         var limiter = new OpRateLimiter(OpsPerSecondPerClient);
+        // rev16 (F9): buttons THIS connection pressed. Whatever it still holds when it
+        // ends - clean close, crash, idle drop - gets released in the finally below, so
+        // a client that dies mid-drag cannot leave the user's mouse button down.
+        var heldButtons = new HashSet<string>(StringComparer.Ordinal);
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
         using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
-        while (true)
+        try
         {
-            string? line;
-            try
+            while (true)
             {
-                line = await ReadLineBoundedAsync(reader, MaxLineLength).WaitAsync(ReadTimeout);
-            }
-            catch (TimeoutException)
-            {
-                DiagnosticLog.Write($"input_broker client idle timeout ({client})");
-                break;
-            }
-            if (line == null) break;      // client closed
-            if (line.Length == 0) continue;
-            if (!limiter.Allow())
-            {
-                await writer.WriteLineAsync("err rate_limited");
-                DiagnosticLog.Write($"input_broker rate_limited ({client})");
-                break;
-            }
-            try
-            {
-                Apply(line);
-                System.Threading.Interlocked.Increment(ref _ops);
-                await writer.WriteLineAsync("ok");
-            }
-            catch (ArgumentException ex)
-            {
-                await writer.WriteLineAsync("err rejected:" + ex.Message);
-            }
-            catch (Exception ex)
-            {
-                await writer.WriteLineAsync("err " + ex.GetType().Name);
+                string? line;
+                try
+                {
+                    line = await ReadLineBoundedAsync(reader, MaxLineLength).WaitAsync(ReadTimeout);
+                }
+                catch (TimeoutException)
+                {
+                    DiagnosticLog.Write($"input_broker client idle timeout ({client})");
+                    break;
+                }
+                if (line == null) break;      // client closed
+                if (line.Length == 0) continue;
+                if (!limiter.Allow())
+                {
+                    await writer.WriteLineAsync("err rate_limited");
+                    DiagnosticLog.Write($"input_broker rate_limited ({client})");
+                    break;
+                }
+                // rev16 (F2): strip the "#<session>.<id>" resend frame. An id this session
+                // already accepted (its reply was lost, so the client resent) is acked
+                // WITHOUT replaying the op. Unframed lines always apply (test hooks).
+                var (sess, frameId, opLine) = SplitFrame(line);
+                if (sess != null)
+                {
+                    lock (DedupGate)
+                    {
+                        if (sess == _lastSess && frameId <= _lastFrameId)
+                        {
+                            await writer.WriteLineAsync("ok"); // already applied: ack the resend
+                            continue;
+                        }
+                        _lastSess = sess;
+                        _lastFrameId = frameId;
+                    }
+                }
+                try
+                {
+                    var op = Apply(opLine);
+                    System.Threading.Interlocked.Increment(ref _ops);
+                    if (op.Verb == "b")
+                    {
+                        if (op.Y != 0) heldButtons.Add(op.Arg); else heldButtons.Remove(op.Arg);
+                    }
+                    await writer.WriteLineAsync("ok");
+                }
+                catch (ArgumentException ex)
+                {
+                    await writer.WriteLineAsync("err rejected:" + ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    await writer.WriteLineAsync("err " + ex.GetType().Name);
+                }
             }
         }
+        finally
+        {
+            foreach (var button in heldButtons)
+            {
+                try { InputSender.Button(button, false); } catch { }
+            }
+            if (heldButtons.Count > 0)
+                DiagnosticLog.Write($"input_broker released {heldButtons.Count} held button(s) for a gone client ({client})");
+        }
+    }
+
+    // rev16 (F2): resend dedup state. Only the latest (session, id) is tracked: the real
+    // client is the one helper process, whose ids only increase; a new session (helper
+    // restart) resets the window, and out-of-order older sessions are simply applied.
+    private static readonly object DedupGate = new();
+    private static string? _lastSess;
+    private static long _lastFrameId = -1;
+
+    /// <summary>Splits an optional "#<session>.<id> " resend frame off an op line. Lines
+    /// without a well-formed frame pass through unchanged (sess null) and always apply.</summary>
+    private static (string? Sess, long Id, string OpLine) SplitFrame(string line)
+    {
+        if (!line.StartsWith('#')) return (null, -1, line);
+        var sp = line.IndexOf(' ');
+        if (sp < 0) return (null, -1, line); // malformed frame: the validator rejects the verb
+        var head = line[1..sp];
+        var dot = head.IndexOf('.');
+        if (dot <= 0 || dot == head.Length - 1) return (null, -1, line);
+        if (!long.TryParse(head[(dot + 1)..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var id))
+            return (null, -1, line);
+        return (head[..dot], id, line[(sp + 1)..]);
     }
 
     private static long _ops;
@@ -263,8 +326,9 @@ internal static class InputBroker
         }
     }
 
-    /// <summary>Validates (OpValidator) and plays one op. Shared protocol with InputBrokerClient; keep both in sync.</summary>
-    internal static void Apply(string line)
+    /// <summary>Validates (OpValidator) and plays one op, returning the validated op.
+    /// Shared protocol with InputBrokerClient; keep both in sync.</summary>
+    internal static OpValidator.Op Apply(string line)
     {
         var op = OpValidator.Parse(line);
         switch (op.Verb)
@@ -276,5 +340,6 @@ internal static class InputBroker
             case "t": InputSender.TypeText(op.Arg); break;
             case "k": InputSender.NamedKey(op.Arg); break;
         }
+        return op;
     }
 }

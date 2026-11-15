@@ -174,7 +174,17 @@ internal sealed class HttpServer : IDisposable
                 default:
                     var commandPhone = FindPhone(req);
                     if (commandPhone == null) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
-                    RouteCommand(path, ReadBody(req), res, commandPhone.HttpButtons);
+                    try
+                    {
+                        RouteCommand(path, ReadBody(req), res, commandPhone.HttpButtons);
+                    }
+                    catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or KeyNotFoundException or ArgumentException or InvalidDataException)
+                    {
+                        // rev16: a malformed command body (bad JSON, missing fields, wrong
+                        // types, oversize) is a client error: 400, not a generic 500.
+                        Program.Log($"bad command request {path}: {ex.GetType().Name}");
+                        Reply(res, 400, "{\"error\":\"bad request\"}");
+                    }
                     return;
             }
         }
@@ -337,7 +347,9 @@ internal sealed class HttpServer : IDisposable
         {
             using var buttonDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
             var buttonRoot = buttonDoc.RootElement;
-            var applied = buttons.Apply(buttonRoot.GetProperty("button").GetString() ?? "left",
+            var buttonName = buttonRoot.GetProperty("button").GetString() ?? "left";
+            if (!OpValidator.Buttons.Contains(buttonName)) { Reply(res, 400, "{\"error\":\"bad button\"}"); return; }
+            var applied = buttons.Apply(buttonName,
                 buttonRoot.GetProperty("down").GetBoolean(), PowerWake.ShouldSwallowDiscrete, InputSender.Button);
             Reply(res, 200, applied ? "{\"ok\":true}" : "{\"ok\":true,\"woke\":true}");
             return;
@@ -361,17 +373,30 @@ internal sealed class HttpServer : IDisposable
         {
             case "/mouse/move":
             {
+                var dx = (float)r.GetProperty("dx").GetDouble();
+                var dy = (float)r.GetProperty("dy").GetDouble();
+                // rev16 (F1): reject non-finite deltas at the API (1e999 parses as
+                // Infinity) instead of letting them poison the input path.
+                if (!float.IsFinite(dx) || !float.IsFinite(dy)) { Reply(res, 400, "{\"error\":\"non-finite\"}"); return; }
                 var b0 = CursorProbe.Pos();
-                InputSender.Move((float)r.GetProperty("dx").GetDouble(), (float)r.GetProperty("dy").GetDouble());
+                InputSender.Move(dx, dy);
                 MoveDiag.AfterInput(b0, false, "http");
                 break;
             }
             case "/mouse/scroll":
-                InputSender.Scroll((float)r.GetProperty("dy").GetDouble());
+            {
+                var dy = (float)r.GetProperty("dy").GetDouble();
+                if (!float.IsFinite(dy)) { Reply(res, 400, "{\"error\":\"non-finite\"}"); return; }
+                InputSender.Scroll(dy);
                 break;
+            }
             case "/mouse/zoom":
-                InputSender.Zoom((float)r.GetProperty("delta").GetDouble());
+            {
+                var delta = (float)r.GetProperty("delta").GetDouble();
+                if (!float.IsFinite(delta)) { Reply(res, 400, "{\"error\":\"non-finite\"}"); return; }
+                InputSender.Zoom(delta);
                 break;
+            }
             case "/volume/get":
             {
                 try
@@ -404,8 +429,12 @@ internal sealed class HttpServer : IDisposable
                 catch (VolumeControl.NoAudioDeviceException ex) { NoAudio(res, ex); return; }
                 break;
             case "/key":
-                InputSender.NamedKey(r.GetProperty("key").GetString() ?? "");
+            {
+                var keyName = r.GetProperty("key").GetString() ?? "";
+                if (!OpValidator.Keys.Contains(keyName)) { Reply(res, 400, "{\"error\":\"bad key\"}"); return; }
+                InputSender.NamedKey(keyName);
                 break;
+            }
             case "/type":
                 InputSender.TypeText(r.GetProperty("text").GetString() ?? "");
                 break;

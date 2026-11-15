@@ -169,7 +169,28 @@ internal static class Program
                         Log("input_broker FAIL-CLOSED: active console session unknown; exiting so the helper falls back to local input");
                         return 44;
                     }
-                    if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker")) return 0;
+                    if (SessionLauncher.RelaunchIntoActiveConsoleSession("--input-broker", "input_broker", out var brokerPid))
+                    {
+                        // rev16 (F10): keep this task instance alive for the console
+                        // broker's whole lifetime and exit with its status. Before this,
+                        // the launcher exited 0 at once, so Task Scheduler's
+                        // restart-on-failure watched a process that was already gone and
+                        // a killed broker stayed dead until the next logon.
+                        try
+                        {
+                            using var child = Process.GetProcessById(brokerPid);
+                            child.WaitForExit();
+                            Log("input_broker console copy exited code=" + child.ExitCode + " pid=" + brokerPid);
+                            return child.ExitCode == 0 ? 0 : 1;
+                        }
+                        catch (Exception ex)
+                        {
+                            // The child vanished before we could watch it (immediate
+                            // crash): nonzero so the task restarts the chain.
+                            Log("input_broker watch failed " + ex.GetType().Name + ": " + ex.Message);
+                            return 1;
+                        }
+                    }
                     Log("input_broker FAIL-CLOSED: could not relaunch into console session " + console + " from session " + current + "; no broker will serve from here");
                     return 43;
                 }

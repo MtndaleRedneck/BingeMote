@@ -175,7 +175,7 @@ public static class Probe {
     $streamJob = Start-Job -ArgumentList $token, $streamOut -ScriptBlock {
         param($tok, $out)
         $fails = 0
-        foreach ($i in 1..800) {
+        foreach ($i in 1..6000) {
             try {
                 $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8488/mouse/move' -Method Post -Body '{"dx":1,"dy":0}' -Headers @{ 'X-BingeMote-Token' = $tok } -UseBasicParsing -TimeoutSec 15 -SkipHttpErrorCheck
                 if ([int]$r.StatusCode -ne 200) { $fails++ }
@@ -190,8 +190,17 @@ public static class Probe {
     $streamResult = if (Test-Path $streamOut) { Get-Content $streamOut -Raw } else { '(stream job wrote nothing)' }
     Remove-Job $streamJob -Force -ErrorAction SilentlyContinue
     Assert ($streamResult -match 'fails=0') "the in-flight stream survived the broker crash with 0 failed requests ($streamResult)"
-    $helperLog = Get-Content $userLog -Raw
-    Assert ($helperLog -match 'input_routing=local') "helper fell back to local input when the broker died"
+    # Probe ops that MUST cross the dead broker, then give DiagnosticLog's batched
+    # flush a few seconds to land the fallback line (run 43665456190 raced both:
+    # the stream ended before the kill, and the log check beat the flush).
+    foreach ($i in 1..3) { Invoke-Helper '/mouse/move' '{"dx":1,"dy":0}' $token | Out-Null; Start-Sleep -Milliseconds 500 }
+    $fellBack = $false
+    foreach ($i in 1..20) {
+        $helperLog = Get-Content $userLog -Raw
+        if ($helperLog -match 'input_routing=local') { $fellBack = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert $fellBack "helper fell back to local input when the broker died"
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "helper still serving after the broker crash"
     # Recovery: restart the broker, restart the helper (fresh routing state), and prove

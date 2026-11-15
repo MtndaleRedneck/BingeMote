@@ -106,7 +106,18 @@ internal static class InputSender
     // highlights) only appear when real input arrives from another device.
     public static void Move(float dx, float dy)
     {
-        if (InputBrokerClient.TryRun("m " + F(dx) + " " + F(dy))) return;
+        // rev16 (F1): a non-finite delta must die HERE, at the entry. rev15 let it fall
+        // through to the local path (the broker rejected it and the op was replayed
+        // locally), where _fracX went Infinity and every later move was garbage.
+        if (!float.IsFinite(dx) || !float.IsFinite(dy))
+        {
+            DiagnosticLog.Write($"input move dropped: non-finite delta dx={dx} dy={dy}");
+            return;
+        }
+        // rev16: Played or Rejected both end the op - an explicit broker refusal is
+        // authoritative and is never replayed on the local path. Only Unavailable
+        // (no broker answer at all) falls through to local input.
+        if (InputBrokerClient.TryRun("m " + F(dx) + " " + F(dy)) != InputBrokerClient.BrokerResult.Unavailable) return;
         lock (Gate)
         {
             _fracX += dx; _fracY += dy;
@@ -165,7 +176,11 @@ internal static class InputSender
 
     public static bool Button(string button, bool down)
     {
-        if (InputBrokerClient.TryRun("b " + button + (down ? " down" : " up"))) return true;
+        switch (InputBrokerClient.TryRun("b " + button + (down ? " down" : " up")))
+        {
+            case InputBrokerClient.BrokerResult.Played: return true;
+            case InputBrokerClient.BrokerResult.Rejected: return false; // never replay a refused op locally
+        }
         var flags = button == "right"
             ? (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP)
             : (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP);
@@ -178,7 +193,12 @@ internal static class InputSender
 
     public static void Scroll(float dy)
     {
-        if (InputBrokerClient.TryRun("s " + F(dy))) return;
+        if (!float.IsFinite(dy))
+        {
+            DiagnosticLog.Write($"input scroll dropped: non-finite delta dy={dy}");
+            return;
+        }
+        if (InputBrokerClient.TryRun("s " + F(dy)) != InputBrokerClient.BrokerResult.Unavailable) return;
         // Windows wheel units: 120 per notch. Positive = up.
         lock (Gate)
         {
@@ -191,7 +211,12 @@ internal static class InputSender
 
     public static void Zoom(float delta)
     {
-        if (InputBrokerClient.TryRun("z " + F(delta))) return;
+        if (!float.IsFinite(delta))
+        {
+            DiagnosticLog.Write($"input zoom dropped: non-finite delta={delta}");
+            return;
+        }
+        if (InputBrokerClient.TryRun("z " + F(delta)) != InputBrokerClient.BrokerResult.Unavailable) return;
         // Ctrl+wheel is what most apps treat as zoom.
         lock (Gate)
         {
@@ -208,7 +233,7 @@ internal static class InputSender
     public static void TypeText(string text)
     {
         if (text.Length > 2000) text = text[..2000];
-        if (InputBrokerClient.TryRun("t " + Uri.EscapeDataString(text))) return;
+        if (InputBrokerClient.TryRun("t " + Uri.EscapeDataString(text)) != InputBrokerClient.BrokerResult.Unavailable) return;
         lock (Gate)
         {
             foreach (var c in text)
@@ -223,7 +248,7 @@ internal static class InputSender
 
     public static void NamedKey(string key)
     {
-        if (InputBrokerClient.TryRun("k " + key)) return;
+        if (InputBrokerClient.TryRun("k " + key) != InputBrokerClient.BrokerResult.Unavailable) return;
         var vk = key switch
         {
             "enter" => (ushort)0x0D,

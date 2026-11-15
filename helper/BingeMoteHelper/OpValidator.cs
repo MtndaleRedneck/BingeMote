@@ -19,8 +19,8 @@ internal static class OpValidator
 
     internal sealed record Op(string Verb, float X, float Y, string Arg);
 
-    private static readonly HashSet<string> Buttons = new(StringComparer.Ordinal) { "left", "right" };
-    private static readonly HashSet<string> Keys = new(StringComparer.Ordinal)
+    internal static readonly HashSet<string> Buttons = new(StringComparer.Ordinal) { "left", "right" };
+    internal static readonly HashSet<string> Keys = new(StringComparer.Ordinal)
         { "enter", "backspace", "escape", "space", "tab", "up", "down", "left", "right" };
 
     private static float Number(string s, float clamp)

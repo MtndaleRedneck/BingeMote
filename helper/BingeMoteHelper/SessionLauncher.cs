@@ -35,8 +35,12 @@ internal static class SessionLauncher
     [StructLayout(LayoutKind.Sequential)]
     private struct PROCESS_INFORMATION { public IntPtr process, thread; public int pid, tid; }
 
-    internal static bool RelaunchIntoActiveConsoleSession(string argLine, string logTag)
+    internal static bool RelaunchIntoActiveConsoleSession(string argLine, string logTag) =>
+        RelaunchIntoActiveConsoleSession(argLine, logTag, out _);
+
+    internal static bool RelaunchIntoActiveConsoleSession(string argLine, string logTag, out int childPid)
     {
+        childPid = 0;
         var current = (uint)Process.GetCurrentProcess().SessionId;
         var target = WTSGetActiveConsoleSessionId();
         if (target == 0xFFFFFFFF || target == current) return false;
@@ -59,6 +63,7 @@ internal static class SessionLauncher
                 return Fail("CreateProcessAsUser", logTag);
             CloseHandle(pi.process);
             CloseHandle(pi.thread);
+            childPid = (int)pi.pid;
             DiagnosticLog.Write($"{logTag}=relaunched session={current} console={target} pid={pi.pid}");
             return true;
         }
