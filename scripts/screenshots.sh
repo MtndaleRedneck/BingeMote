@@ -128,6 +128,27 @@ else
 fi
 adb shell am start -n com.bingemote/.MainActivity --ei skipmain 10 >/dev/null
 sleep 1
+# Permission-grant evidence (Instinct 2): the exemption claim needs the grant to be ABSENT.
+adb shell dumpsys package com.bingemote > screenshots/package-perms.txt 2>/dev/null || true
+if grep -q 'POST_NOTIFICATIONS: granted=true' screenshots/package-perms.txt; then
+  echo "::error::POST_NOTIFICATIONS unexpectedly granted - no-grant evidence invalid"; exit 1
+fi
+grep -m1 'POST_NOTIFICATIONS' screenshots/package-perms.txt || true
+echo "ok: POST_NOTIFICATIONS is NOT granted on this emulator"
+# Instinct 2: with the media-session token attached, stock Android promotes the
+# notification into the media carousel and never renders the custom row. Post the
+# SAME bar token-free (debug only) and record what stock Android does with it.
+adb shell am start -n com.bingemote/.MainActivity --es demorow true >/dev/null
+sleep 2
+adb shell dumpsys notification --noredact > screenshots/notification-dump-row.txt 2>/dev/null || true
+if grep -q '|com.bingemote|102|' screenshots/notification-dump-row.txt; then
+  echo "ok: token-free custom bar STAYS POSTED without the grant (id 102 enqueued)"
+else
+  echo "RESULT: token-free row NOT enqueued - the no-grant exemption needs the media-session token"
+fi
+adb shell cmd statusbar expand-notifications
+sleep 3
+adb exec-out screencap -p > "screenshots/compact-bar-row.png"
 adb shell input keyevent 4
 sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.

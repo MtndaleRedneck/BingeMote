@@ -90,6 +90,10 @@ class MainActivity : ComponentActivity() {
             store.demoControls = true
             MediaControls.sync(this, store)
         }
+        // CI experiment: post the same bar as a token-free plain row (see postDemoRow).
+        if (BuildConfig.DEBUG && intent.hasExtra("demorow")) {
+            startService(Intent(this, MediaControlsService::class.java).setAction("com.bingemote.action.DEMO_ROW"))
+        }
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
             ManualUpdate.offer = UpdateInfo(
