@@ -48,6 +48,8 @@ private const val CHANNEL_ID = "playback"
 private const val ACTION_MEDIA_REWIND = "com.bingemote.action.REWIND"
 private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD"
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
+private const val ACTION_MEDIA_VOL_DOWN = "com.bingemote.action.VOL_DOWN"
+private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -63,8 +65,12 @@ class MediaControlsService : Service() {
         val store = Store(this)
         val s = MediaSession(this, "BingeMote")
         val cb = object : MediaSession.Callback() {
-            override fun onPlay() { run { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) } }
-            override fun onPause() { run { Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword) } }
+            // State-driven, not a blind toggle: each surface asks for the state it
+            // means (play or pause), and the command is idempotent, so a stale cached
+            // state or a double tap can never flip playback the wrong way (Ezzy's
+            // dead/inverting pause button was the old toggle guessing wrong).
+            override fun onPlay() { run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
+            override fun onPause() { run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
             override fun onRewind() { jump(store, -store.skipSecondarySec) }
             override fun onFastForward() { jump(store, store.skipMainSec) }
             // The system media surface renders its two extra slots from these actions;
@@ -91,6 +97,17 @@ class MediaControlsService : Service() {
         scope.launch { try { block(); refreshNow() } catch (_: Exception) {} }
     }
 
+    /** One volume button step (5%) off the live volume. */
+    private fun volumeBy(store: Store, delta: Int) {
+        scope.launch {
+            try {
+                val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+                Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, st.volumeRaw + delta)
+                refreshNow()
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun jump(store: Store, deltaSec: Int) {
         scope.launch {
             try {
@@ -105,13 +122,25 @@ class MediaControlsService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // CI screenshot state (debug builds only): seeded controls without a PC.
         when (intent?.action) {
-            ACTION_MEDIA_REWIND -> { callback?.onRewind(); return START_STICKY }
-            ACTION_MEDIA_FAST_FORWARD -> { callback?.onFastForward(); return START_STICKY }
+            // The compact bar's skips both use his primary interval (Ezzy's design);
+            // the system media card keeps its own secondary-back / main-forward pair.
+            ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
+            ACTION_MEDIA_FAST_FORWARD -> { jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
-                // Main thread: no network here; the poll keeps lastPlaying fresh.
-                if (lastPlaying) callback?.onPause() else callback?.onPlay()
+                // Read the live state at tap time and send the opposite. Never trust
+                // the cached lastPlaying: a stale cache is what made the old toggle
+                // feel dead or inverted.
+                scope.launch {
+                    try {
+                        val st = Vlc.status(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword)
+                        Vlc.setPaused(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword, st.playing)
+                        refreshNow()
+                    } catch (_: Exception) {}
+                }
                 return START_STICKY
             }
+            ACTION_MEDIA_VOL_DOWN -> { volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_MEDIA_VOL_UP -> { volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
@@ -200,10 +229,12 @@ class MediaControlsService : Service() {
         postMediaNotification(true, (34 * 60 + 12).toLong(), (110 * 60 + 24).toLong(), "demo.mkv")
     }
 
-    // The system media surface (quick settings / lock screen) is sourced from this
-    // media-session notification: it renders as the media card, not a normal shade
-    // row, and media-session notifications are exempt from the Android 13
-    // notification permission, so it never prompts.
+    // Ezzy's compact bar replaces the old MediaStyle card: one row, five buttons
+    // (rewind / vol down / play-pause / vol up / forward), his icon artwork, both
+    // skips on his primary interval. The view is custom, but the style keeps the
+    // media session attached, so the notification is still a media notification:
+    // the system media surface keeps working and the Android 13 notification
+    // permission exemption still applies (no prompt, same as before).
     private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -212,30 +243,42 @@ class MediaControlsService : Service() {
             )
         }
         val s = session ?: return
+        val store = Store(this)
         val openApp = android.app.PendingIntent.getActivity(
             this, 1, Intent(this, MainActivity::class.java),
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
-        fun actionIntent(action: String) = android.app.PendingIntent.getService(
+        fun serviceIntent(action: String) = android.app.PendingIntent.getService(
             this, action.hashCode(), Intent(this, MediaControlsService::class.java).setAction(action),
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
-        fun icon(res: Int) = android.graphics.drawable.Icon.createWithResource(this, res)
+        val dm = resources.displayMetrics.density
+        fun px(dp: Int) = (dp * dm + 0.5f).toInt()
+        val skipSec = store.skipMainSec
+        val views = android.widget.RemoteViews(packageName, R.layout.notification_controls)
+        views.setImageViewBitmap(R.id.btn_rewind, NotificationArt.skip(px(34), forward = false, label = skipSec.toString()))
+        views.setImageViewBitmap(R.id.btn_vol_down, NotificationArt.volumeDown(px(24)))
+        views.setImageViewBitmap(R.id.btn_play_pause, if (playing) NotificationArt.pause(px(36)) else NotificationArt.play(px(36)))
+        views.setImageViewBitmap(R.id.btn_vol_up, NotificationArt.volumeUp(px(24)))
+        views.setImageViewBitmap(R.id.btn_forward, NotificationArt.skip(px(34), forward = true, label = skipSec.toString()))
+        views.setOnClickPendingIntent(R.id.btn_rewind, serviceIntent(ACTION_MEDIA_REWIND))
+        views.setOnClickPendingIntent(R.id.btn_vol_down, serviceIntent(ACTION_MEDIA_VOL_DOWN))
+        views.setOnClickPendingIntent(R.id.btn_play_pause, serviceIntent(ACTION_MEDIA_PLAY_PAUSE))
+        views.setOnClickPendingIntent(R.id.btn_vol_up, serviceIntent(ACTION_MEDIA_VOL_UP))
+        views.setOnClickPendingIntent(R.id.btn_forward, serviceIntent(ACTION_MEDIA_FAST_FORWARD))
+        views.setContentDescription(R.id.btn_rewind, "Back $skipSec seconds")
+        views.setContentDescription(R.id.btn_vol_down, "Volume down")
+        views.setContentDescription(R.id.btn_play_pause, if (playing) "Pause" else "Play")
+        views.setContentDescription(R.id.btn_vol_up, "Volume up")
+        views.setContentDescription(R.id.btn_forward, "Forward $skipSec seconds")
         val n = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(title?.ifBlank { null } ?: "Playing")
             .setContentText("${fmtClockSec(timeSec)} of ${fmtClockSec(lengthSec)}")
             .setContentIntent(openApp)
             .setOngoing(playing)
-            .addAction(Notification.Action.Builder(icon(android.R.drawable.ic_media_rew), "Back 30s", actionIntent(ACTION_MEDIA_REWIND)).build())
-            .addAction(
-                if (playing)
-                    Notification.Action.Builder(icon(android.R.drawable.ic_media_pause), "Pause", actionIntent(ACTION_MEDIA_PLAY_PAUSE)).build()
-                else
-                    Notification.Action.Builder(icon(android.R.drawable.ic_media_play), "Play", actionIntent(ACTION_MEDIA_PLAY_PAUSE)).build(),
-            )
-            .addAction(Notification.Action.Builder(icon(android.R.drawable.ic_media_ff), "Forward 30s", actionIntent(ACTION_MEDIA_FAST_FORWARD)).build())
-            .setStyle(Notification.MediaStyle().setMediaSession(s.sessionToken).setShowActionsInCompactView(0, 1, 2))
+            .setCustomContentView(views)
+            .setStyle(Notification.DecoratedMediaCustomViewStyle().setMediaSession(s.sessionToken))
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)

@@ -102,6 +102,16 @@ object Vlc {
     }
 
     fun togglePause(host: String, port: Int, pw: String) = command(host, port, pw, "command=pl_pause")
+
+    /**
+     * Explicit pause/resume, state-driven: the caller reads the live status first and
+     * sends the opposite of what VLC is actually doing. A blind pl_pause toggle can
+     * invert when the cached state is stale (Ezzy's dead pause button: tap, nothing,
+     * tap again, it pauses and instantly resumes). pl_forcepause/pl_forceresume are
+     * idempotent, so a repeated tap can never flip the wrong way.
+     */
+    fun setPaused(host: String, port: Int, pw: String, paused: Boolean) =
+        command(host, port, pw, if (paused) "command=pl_forcepause" else "command=pl_forceresume")
     fun toggleFullscreen(host: String, port: Int, pw: String) = command(host, port, pw, "command=fullscreen")
 
     /** Relative skip in seconds, negative to go back. */
