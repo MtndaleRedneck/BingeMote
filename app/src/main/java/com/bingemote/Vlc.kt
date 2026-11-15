@@ -40,7 +40,9 @@ data class BrowseItem(
  * requests README and lua source (3.0.x branch).
  */
 object Vlc {
-    /** VLC's volume scale: 256 = 100%. We cap the remote at 100%. */
+    /** VLC's volume scale: 256 = 100%. Every UI path (the app's volume row AND the
+     * notification bar) caps at 100%; setVolume's own bound stays at 512 (200%) only
+     * so a mute restore can hand back a level VLC already had above 100%. */
     const val VOLUME_100 = 256
     /** One volume button step: 5% in VLC units. */
     const val VOLUME_STEP = 13
@@ -122,7 +124,8 @@ object Vlc {
     fun seekTo(host: String, port: Int, pw: String, seconds: Long) =
         command(host, port, pw, "command=seek&val=${seconds.coerceAtLeast(0)}")
 
-    /** Set VLC's volume in raw units (256 = 100%). */
+    /** Set VLC's volume in raw units (256 = 100%). Callers from the UI clamp at
+     * VOLUME_100 themselves; the wider bound here exists for mute restore only. */
     fun setVolume(host: String, port: Int, pw: String, raw: Int) =
         command(host, port, pw, "command=volume&val=${raw.coerceIn(0, VOLUME_100 * 2)}")
 

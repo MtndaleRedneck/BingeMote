@@ -61,6 +61,19 @@ class Store(context: Context) {
         get() = prefs.getInt("skipSecondarySec", 30).takeIf { it in SECONDARY_SKIP_OPTIONS } ?: 30
         set(v) = prefs.edit().putInt("skipSecondarySec", v).apply()
 
+    /** App-local mute, shared by the remote UI and the notification bar so the two
+     * can never diverge (VLC has no mute command: we send volume 0 and remember the
+     * level to restore). Only meaningful on the VLC volume path; when the Windows
+     * volume coupling is active, the mute source of truth is Windows itself. */
+    var appMuted: Boolean
+        get() = prefs.getBoolean("appMuted", false)
+        set(v) = prefs.edit().putBoolean("appMuted", v).apply()
+
+    /** The VLC raw volume to restore on unmute (see appMuted). */
+    var preMuteRaw: Int
+        get() = prefs.getInt("preMuteRaw", Vlc.VOLUME_100 / 2)
+        set(v) = prefs.edit().putInt("preMuteRaw", v).apply()
+
     var haptics: Boolean
         get() = prefs.getBoolean("haptics", true)
         set(v) = prefs.edit().putBoolean("haptics", v).apply()

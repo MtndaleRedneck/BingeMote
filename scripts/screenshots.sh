@@ -116,6 +116,18 @@ adb exec-out screencap -p > "screenshots/unlocked-controls-shade.png"
 # Android 13+ emulator with no notification-permission grant, still carrying the
 # session token (MediaStyle lineage) and the five actions.
 adb shell dumpsys notification --noredact > screenshots/notification-dump.txt 2>/dev/null || true
+# Non-default skip interval proof (Instinct 2): re-seed the bar with a 5s primary
+# skip; the labels and content descriptions must follow the setting.
+adb shell am start -n com.bingemote/.MainActivity --ei skipmain 5 >/dev/null
+sleep 2
+adb shell dumpsys notification --noredact > screenshots/notification-dump-skip5.txt 2>/dev/null || true
+if grep -q 'Back 5 seconds' screenshots/notification-dump-skip5.txt && grep -q 'Forward 5 seconds' screenshots/notification-dump-skip5.txt && ! grep -q 'Back 10 seconds' screenshots/notification-dump-skip5.txt; then
+  echo "ok: compact bar skip labels follow the 5s setting"
+else
+  echo "::error::compact bar did NOT follow the 5s skip setting"; exit 1
+fi
+adb shell am start -n com.bingemote/.MainActivity --ei skipmain 10 >/dev/null
+sleep 1
 adb shell input keyevent 4
 sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.

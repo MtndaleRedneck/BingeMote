@@ -83,6 +83,13 @@ class MainActivity : ComponentActivity() {
             store.demoControls = true
             MediaControls.sync(this, store)
         }
+        // CI proof that the bar's skip labels follow the SETTING, not a constant:
+        // re-seed the demo bar with a chosen primary interval.
+        if (BuildConfig.DEBUG && intent.hasExtra("skipmain")) {
+            store.skipMainSec = intent.getIntExtra("skipmain", 10)
+            store.demoControls = true
+            MediaControls.sync(this, store)
+        }
         // CI screenshot state: force the update offer dialog with mock release notes.
         if (BuildConfig.DEBUG && intent.getStringExtra("screen") == "update") {
             ManualUpdate.offer = UpdateInfo(
