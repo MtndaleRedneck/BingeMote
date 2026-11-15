@@ -285,6 +285,15 @@ adb shell am instrument -w -e class com.bingemote.MouseCadenceTest \
 adb logcat -d -s BMMouse:I > screenshots/mouse-cadence.txt
 cat screenshots/mouse-cadence.txt
 grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSERT FAIL: mouse cadence test failed (see mouse-cadence-instrument.txt)'; SEEK_FAIL=1; }
+# End-to-end notification buttons (Ezzy: "buttons do nothing" on 1.12.2): a stub VLC
+# on localhost must receive every tap's command, the card must follow stub state, and
+# poll failures must be loud in BMBar.
+adb logcat -c
+adb shell am instrument -w -e class com.bingemote.BarActionsTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/bar-actions-instrument.txt
+adb logcat -d -s BMBar:I BMBar:W > screenshots/bar-actions-log.txt
+cat screenshots/bar-actions-log.txt
+grep -q '^OK (2 tests)' screenshots/bar-actions-instrument.txt || { echo 'ASSERT FAIL: notification action end-to-end test failed (see bar-actions-instrument.txt)'; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \

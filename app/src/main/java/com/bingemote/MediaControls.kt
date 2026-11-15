@@ -53,6 +53,7 @@ private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
 private const val ACTION_MEDIA_VOL_DOWN = "com.bingemote.action.VOL_DOWN"
 private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
+private const val TAG = "BMBar"
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -72,10 +73,10 @@ class MediaControlsService : Service() {
             // means (play or pause), and the command is idempotent, so a stale cached
             // state or a double tap can never flip playback the wrong way (Ezzy's
             // dead/inverting pause button was the old toggle guessing wrong).
-            override fun onPlay() { run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
-            override fun onPause() { run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
-            override fun onRewind() { jump(store, -store.skipSecondarySec) }
-            override fun onFastForward() { jump(store, store.skipMainSec) }
+            override fun onPlay() { android.util.Log.i(TAG, "session onPlay"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
+            override fun onPause() { android.util.Log.i(TAG, "session onPause"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
+            override fun onRewind() { android.util.Log.i(TAG, "session onRewind"); jump(store, -store.skipSecondarySec) }
+            override fun onFastForward() { android.util.Log.i(TAG, "session onFastForward"); jump(store, store.skipMainSec) }
             // The system media surface renders its two extra slots from these actions;
             // they fire his two chosen skip intervals (main forward, secondary back).
             override fun onSkipToPrevious() { jump(store, -store.skipSecondarySec) }
@@ -124,9 +125,10 @@ class MediaControlsService : Service() {
                 } else {
                     val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
                     Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, (st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100))
+                    android.util.Log.i(TAG, "volume via vlc ${st.volumeRaw} -> ${(st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100)}")
                 }
                 refreshNow()
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w(TAG, "volume FAILED: $e") }
         }
     }
 
@@ -136,8 +138,9 @@ class MediaControlsService : Service() {
                 val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
                 Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword,
                     (st.timeSec + deltaSec).coerceIn(0, st.lengthSec))
+                android.util.Log.i(TAG, "seek ${st.timeSec} -> ${(st.timeSec + deltaSec).coerceIn(0, st.lengthSec)}")
                 refreshNow()
-            } catch (_: Exception) {}
+            } catch (e: Exception) { android.util.Log.w(TAG, "seek FAILED: $e") }
         }
     }
 
@@ -146,23 +149,25 @@ class MediaControlsService : Service() {
         when (intent?.action) {
             // The compact bar's skips both use his primary interval (Ezzy's design);
             // the system media card keeps its own secondary-back / main-forward pair.
-            ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
-            ACTION_MEDIA_FAST_FORWARD -> { jump(Store(this), Store(this).skipMainSec); return START_STICKY }
+            ACTION_MEDIA_REWIND -> { android.util.Log.i(TAG, "tap rewind"); jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
+            ACTION_MEDIA_FAST_FORWARD -> { android.util.Log.i(TAG, "tap forward"); jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
                 // Read the live state at tap time and send the opposite. Never trust
                 // the cached lastPlaying: a stale cache is what made the old toggle
                 // feel dead or inverted.
+                android.util.Log.i(TAG, "tap play/pause")
                 scope.launch {
                     try {
                         val st = Vlc.status(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword)
                         Vlc.setPaused(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword, st.playing)
+                        android.util.Log.i(TAG, "play/pause sent (was playing=${st.playing})")
                         refreshNow()
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) { android.util.Log.w(TAG, "play/pause FAILED: $e") }
                 }
                 return START_STICKY
             }
-            ACTION_MEDIA_VOL_DOWN -> { volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
-            ACTION_MEDIA_VOL_UP -> { volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_MEDIA_VOL_DOWN -> { android.util.Log.i(TAG, "tap volume down"); volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_MEDIA_VOL_UP -> { android.util.Log.i(TAG, "tap volume up"); volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
@@ -190,12 +195,14 @@ class MediaControlsService : Service() {
             // The one automatic heal: adopt the PC's current password once; never push ours.
             if (VlcAuthRepair.tryHealOnce(store)) return // the next poll uses it
             failures++
-            if (failures >= 5) session?.isActive = false
+            android.util.Log.w(TAG, "poll auth FAILED ($failures)")
+            if (failures >= 5) { session?.isActive = false; android.util.Log.w(TAG, "poll: session deactivated after $failures failures") }
             return
         } catch (e: Exception) {
             failures++
+            android.util.Log.w(TAG, "poll FAILED ($failures): $e")
             // VLC gone for good: drop the controls rather than pose over a dead player.
-            if (failures >= 5) session?.isActive = false
+            if (failures >= 5) { session?.isActive = false; android.util.Log.w(TAG, "poll: session deactivated after $failures failures") }
             return
         }
         failures = 0
