@@ -204,6 +204,23 @@ Write-Host "== T1a: non-finite move rejected at the API (F1) =="
 $r = Invoke-Helper '/mouse/move' '{"dx":1e999,"dy":0}' $token
 Check ($r.code -eq 400) "non-finite move gets HTTP 400 (got $($r.code))"
 
+# --- T-http: command API hygiene (rev16: 400s instead of 500s / silent wrong-input) ---
+Write-Host "== T-http: command API hygiene =="
+$r = Invoke-Helper '/mouse/move' '{"dx":' $token
+Check ($r.code -eq 400) "malformed JSON body is a 400 (got $($r.code))"
+$r = Invoke-Helper '/mouse/move' '{"dy":1}' $token
+Check ($r.code -eq 400) "missing field is a 400 (got $($r.code))"
+$r = Invoke-Helper '/mouse/move' '{"dx":"fast","dy":0}' $token
+Check ($r.code -eq 400) "wrong-typed field is a 400 (got $($r.code))"
+$r = Invoke-Helper '/mouse/button' '{"button":"middle","down":true}' $token
+Check ($r.code -eq 400) "unknown button name is a 400 (got $($r.code))"
+Check (-not [Probe]::LeftDown()) "an unknown button name pressed nothing"
+$r = Invoke-Helper '/key' '{"key":"f13"}' $token
+Check ($r.code -eq 400) "unknown key name is a 400 (got $($r.code))"
+$longText = 'x' * 3000
+$r = Invoke-Helper '/type' ("{\"text\":\"" + $longText + "\"}") $token
+Check ($r.code -eq 200) "over-cap /type is accepted and truncated to 2000 chars, not an error (got $($r.code))"
+
 # --- T6: killed broker auto-restarts (F10, runtime half) ---
 Write-Host "== T6: killed broker auto-restarts (F10) =="
 Stop-AllBrokers
