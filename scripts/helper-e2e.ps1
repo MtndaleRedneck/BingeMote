@@ -826,12 +826,27 @@ public static class Probe {
     # needs no password and lands in this session, so the broker's same-session peer
     # check applies exactly as it does for Ezzy.
     $ciUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $opAction = New-ScheduledTaskAction -Execute $exe -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
     $limited = New-ScheduledTaskPrincipal -UserId $ciUser -LogonType Interactive -RunLevel Limited
+    # Sentinel first: prove a Limited-runlevel task executes at all on this runner
+    # (run 43683959884: the op task produced no result file in 60s - never ran or died
+    # before Main; this tells us which).
+    $sentinel = Join-Path $env:TEMP 'bingemote-limited-probe.txt'
+    Remove-Item $sentinel -Force -ErrorAction SilentlyContinue
+    $probeAction = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/c echo ran> "{0}"' -f $sentinel)
+    Register-ScheduledTask -TaskName 'BingeMote CI LimitedProbe' -Action $probeAction -Principal $limited -Force | Out-Null
+    Start-ScheduledTask -TaskName 'BingeMote CI LimitedProbe'
+    $sentDeadline = (Get-Date).AddSeconds(30)
+    while (-not (Test-Path $sentinel) -and (Get-Date) -lt $sentDeadline) { Start-Sleep -Milliseconds 500 }
+    $sentInfo = Get-ScheduledTaskInfo -TaskName 'BingeMote CI LimitedProbe'
+    Write-Host "limited-task sentinel: $(if (Test-Path $sentinel) { 'ran' } else { 'NEVER RAN' }) (LastRunTime=$($sentInfo.LastRunTime) LastTaskResult=$($sentInfo.LastTaskResult))"
+    Unregister-ScheduledTask -TaskName 'BingeMote CI LimitedProbe' -Confirm:$false
+    $opAction = New-ScheduledTaskAction -Execute $exe -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
     Register-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Action $opAction -Principal $limited -Force | Out-Null
     Start-ScheduledTask -TaskName 'BingeMote CI RestrictedOp'
-    $opDeadline = (Get-Date).AddSeconds(60)
+    $opDeadline = (Get-Date).AddSeconds(90)
     while (-not (Test-Path $opOut) -and (Get-Date) -lt $opDeadline) { Start-Sleep -Milliseconds 500 }
+    $opInfo = Get-ScheduledTaskInfo -TaskName 'BingeMote CI RestrictedOp'
+    Write-Host "RestrictedOp: LastRunTime=$($opInfo.LastRunTime) LastTaskResult=$($opInfo.LastTaskResult)"
     Unregister-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Confirm:$false
     $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
     Write-Host "restricted client: $opLine"
