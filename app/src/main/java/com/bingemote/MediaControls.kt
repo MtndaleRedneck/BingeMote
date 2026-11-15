@@ -31,11 +31,14 @@ object MediaControls {
 
 /**
  * Lock-screen media controls (off by default, Phone 8): while the setting is on and a
- * movie plays, the system media surface shows play/pause, his two skip intervals and the
- * position bar. A plain MediaSession - the system media controls are exempt from the
- * Android 13 notification permission, so no permission prompt and no notification of ours.
- * The service polls VLC itself (the app's own poll stops when the screen is off); every
- * two seconds on the home Wi-Fi, only while the setting is on.
+ * movie plays, the system media surface shows his five controls (skip back, volume
+ * down, play/pause, volume up, skip forward - the Unified Remote pill look). No
+ * position or duration is published on purpose: a media notification with a seek
+ * position renders as Samsung's big "Live notification" card with the system's own
+ * prev/pause/next, not the compact pill he wants. A plain MediaSession - the system
+ * media controls are exempt from the Android 13 notification permission, so no
+ * permission prompt. The service polls VLC itself (the app's own poll stops when the
+ * screen is off); every two seconds on the home Wi-Fi, only while the setting is on.
  */
 /** 34:12 or 1:50:24. */
 private fun fmtClockSec(sec: Long): String {
@@ -50,8 +53,6 @@ private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
 private const val ACTION_MEDIA_VOL_DOWN = "com.bingemote.action.VOL_DOWN"
 private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
-private const val ACTION_DEMO_ROW = "com.bingemote.action.DEMO_ROW" // debug builds only
-private const val NOTIF_ROW_ID = 102
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -162,7 +163,6 @@ class MediaControlsService : Service() {
             }
             ACTION_MEDIA_VOL_DOWN -> { volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
             ACTION_MEDIA_VOL_UP -> { volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
-            ACTION_DEMO_ROW -> { if (BuildConfig.DEBUG) postDemoRow(); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
@@ -209,16 +209,16 @@ class MediaControlsService : Service() {
                     PlaybackState.ACTION_FAST_FORWARD or
                     PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
             )
+            // No position, no buffered end: position signals are what turn a media
+            // notification into Samsung's big "Live notification" card (class doc).
             .setState(
                 if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                st.timeSec * 1000L,
+                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
                 if (playing) 1f else 0f,
             )
-            .setBufferedPosition(st.lengthSec * 1000L)
             .build()
         s.setPlaybackState(state)
         val meta = android.media.MediaMetadata.Builder()
-            .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, st.lengthSec * 1000L)
             .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
             .build()
         s.setMetadata(meta)
@@ -237,13 +237,11 @@ class MediaControlsService : Service() {
                         PlaybackState.ACTION_FAST_FORWARD or
                     PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
                 )
-                .setState(PlaybackState.STATE_PLAYING, (34 * 60 + 12) * 1000L, 1f)
-                .setBufferedPosition((110 * 60 + 24) * 1000L)
+                .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
                 .build(),
         )
         s.setMetadata(
             android.media.MediaMetadata.Builder()
-                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, (110 * 60 + 24) * 1000L)
                 .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "demo.mkv")
                 .build(),
         )
@@ -251,12 +249,13 @@ class MediaControlsService : Service() {
         postMediaNotification(true, (34 * 60 + 12).toLong(), (110 * 60 + 24).toLong(), "demo.mkv")
     }
 
-    // Ezzy's compact bar replaces the old MediaStyle card: one row, five buttons
-    // (rewind / vol down / play-pause / vol up / forward), his icon artwork, both
-    // skips on his primary interval. The view is custom, but the style keeps the
-    // media session attached, so the notification is still a media notification:
-    // the system media surface keeps working and the Android 13 notification
-    // permission exemption still applies (no prompt, same as before).
+    // Ezzy's target is the compact media pill (the Unified Remote look): the SYSTEM
+    // renders the card from the session plus the action list - no custom view of ours.
+    // MediaStyle + the session token keeps it a media notification: the media surface
+    // hosts it and the Android 13 notification-permission exemption still applies.
+    // No duration or position is published anywhere (see the class doc): those are the
+    // signals that make Samsung promote it to the big "Live notification" card with the
+    // system's own prev/pause/next - his "I don't understand" screenshot.
     private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -277,25 +276,9 @@ class MediaControlsService : Service() {
         val dm = resources.displayMetrics.density
         fun px(dp: Int) = (dp * dm + 0.5f).toInt()
         val skipSec = store.skipMainSec
-        val views = android.widget.RemoteViews(packageName, R.layout.notification_controls)
-        views.setImageViewBitmap(R.id.btn_rewind, NotificationArt.skip(px(34), forward = false, label = skipSec.toString()))
-        views.setImageViewBitmap(R.id.btn_vol_down, NotificationArt.volumeDown(px(24)))
-        views.setImageViewBitmap(R.id.btn_play_pause, if (playing) NotificationArt.pause(px(36)) else NotificationArt.play(px(36)))
-        views.setImageViewBitmap(R.id.btn_vol_up, NotificationArt.volumeUp(px(24)))
-        views.setImageViewBitmap(R.id.btn_forward, NotificationArt.skip(px(34), forward = true, label = skipSec.toString()))
-        views.setOnClickPendingIntent(R.id.btn_rewind, serviceIntent(ACTION_MEDIA_REWIND))
-        views.setOnClickPendingIntent(R.id.btn_vol_down, serviceIntent(ACTION_MEDIA_VOL_DOWN))
-        views.setOnClickPendingIntent(R.id.btn_play_pause, serviceIntent(ACTION_MEDIA_PLAY_PAUSE))
-        views.setOnClickPendingIntent(R.id.btn_vol_up, serviceIntent(ACTION_MEDIA_VOL_UP))
-        views.setOnClickPendingIntent(R.id.btn_forward, serviceIntent(ACTION_MEDIA_FAST_FORWARD))
-        views.setContentDescription(R.id.btn_rewind, "Back $skipSec seconds")
-        views.setContentDescription(R.id.btn_vol_down, "Volume down")
-        views.setContentDescription(R.id.btn_play_pause, if (playing) "Pause" else "Play")
-        views.setContentDescription(R.id.btn_vol_up, "Volume up")
-        views.setContentDescription(R.id.btn_forward, "Forward $skipSec seconds")
-        // The same five as notification actions too: the stock-Android media card and
-        // the expanded decorated view render from the action list, not the custom view,
-        // so a surface that ignores the custom layout still shows his controls.
+        // The five buttons are notification actions rendered by the SYSTEM media card:
+        // One UI's compact pill shows them all, stock Android caps the compact view at
+        // three (platform limit, the same for every app including Unified Remote).
         fun act(icon: android.graphics.Bitmap, label: String, intentAction: String) =
             Notification.Action.Builder(android.graphics.drawable.Icon.createWithBitmap(icon), label, serviceIntent(intentAction)).build()
         val n = Notification.Builder(this, CHANNEL_ID)
@@ -309,8 +292,10 @@ class MediaControlsService : Service() {
             .addAction(act(if (playing) NotificationArt.pause(px(24)) else NotificationArt.play(px(24)), if (playing) "Pause" else "Play", ACTION_MEDIA_PLAY_PAUSE))
             .addAction(act(NotificationArt.volumeUp(px(24)), "Volume up", ACTION_MEDIA_VOL_UP))
             .addAction(act(NotificationArt.skip(px(24), forward = true, label = skipSec.toString()), "Forward $skipSec seconds", ACTION_MEDIA_FAST_FORWARD))
-            .setCustomContentView(views)
-            .setStyle(Notification.DecoratedMediaCustomViewStyle().setMediaSession(s.sessionToken))
+            .setStyle(
+                Notification.MediaStyle().setMediaSession(s.sessionToken)
+                    .setShowActionsInCompactView(0, 1, 2, 3, 4),
+            )
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -319,51 +304,6 @@ class MediaControlsService : Service() {
         }
     }
 
-    // CI experiment (debug builds only): the SAME compact bar posted as a plain
-    // custom-view notification with NO media-session token, under a second id.
-    // Instinct 2's question: does the stock shade render the custom row, and does it
-    // stay enqueued without the POST_NOTIFICATIONS grant? Production keeps the token
-    // (the exemption may need it); this only measures what stock Android does without it.
-    private fun postDemoRow() {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW),
-            )
-        }
-        val store = Store(this)
-        val skipSec = store.skipMainSec
-        val dm = resources.displayMetrics.density
-        fun px(dp: Int) = (dp * dm + 0.5f).toInt()
-        fun intentFor(action: String) = android.app.PendingIntent.getService(
-            this, action.hashCode(), Intent(this, MediaControlsService::class.java).setAction(action),
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
-        )
-        val views = android.widget.RemoteViews(packageName, R.layout.notification_controls)
-        views.setImageViewBitmap(R.id.btn_rewind, NotificationArt.skip(px(34), forward = false, label = skipSec.toString()))
-        views.setImageViewBitmap(R.id.btn_vol_down, NotificationArt.volumeDown(px(24)))
-        views.setImageViewBitmap(R.id.btn_play_pause, NotificationArt.pause(px(36)))
-        views.setImageViewBitmap(R.id.btn_vol_up, NotificationArt.volumeUp(px(24)))
-        views.setImageViewBitmap(R.id.btn_forward, NotificationArt.skip(px(34), forward = true, label = skipSec.toString()))
-        views.setOnClickPendingIntent(R.id.btn_rewind, intentFor(ACTION_MEDIA_REWIND))
-        views.setOnClickPendingIntent(R.id.btn_vol_down, intentFor(ACTION_MEDIA_VOL_DOWN))
-        views.setOnClickPendingIntent(R.id.btn_play_pause, intentFor(ACTION_MEDIA_PLAY_PAUSE))
-        views.setOnClickPendingIntent(R.id.btn_vol_up, intentFor(ACTION_MEDIA_VOL_UP))
-        views.setOnClickPendingIntent(R.id.btn_forward, intentFor(ACTION_MEDIA_FAST_FORWARD))
-        views.setContentDescription(R.id.btn_rewind, "Back $skipSec seconds")
-        views.setContentDescription(R.id.btn_vol_down, "Volume down")
-        views.setContentDescription(R.id.btn_play_pause, "Pause")
-        views.setContentDescription(R.id.btn_vol_up, "Volume up")
-        views.setContentDescription(R.id.btn_forward, "Forward $skipSec seconds")
-        val n = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("demo.mkv")
-            .setContentText("34:12 of 1:50:24")
-            .setCustomContentView(views)
-            .setStyle(Notification.DecoratedCustomViewStyle())
-            .build()
-        nm.notify(NOTIF_ROW_ID, n)
-    }
 
     override fun onDestroy() {
         stopForeground(STOP_FOREGROUND_REMOVE)

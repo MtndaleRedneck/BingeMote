@@ -106,12 +106,25 @@ adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || t
 if [ "$PIN_OK" = "1" ]; then adb shell locksettings clear --old 1234 || true; fi
 adb shell input keyevent 82
 sleep 1
-# rev19: the compact control bar lives in the app's own notification, which only
-# renders its custom layout in the UNLOCKED shade (the lockscreen shows the system
-# media card instead). Capture the unlocked shade so the bar is visually verified.
-adb shell cmd statusbar expand-notifications
+# MediaStyle pill (Ezzy's Unified direction): stock Android renders the media card
+# itself from the session plus the action list - there is no custom view to verify.
+# Capture the collapsed card in the quick-settings shade, then try to expand the
+# player in place for the all-five-actions view (stock caps compact at three).
+adb shell cmd statusbar expand-settings
 sleep 3
-adb exec-out screencap -p > "screenshots/unlocked-controls-shade.png"
+adb exec-out screencap -p > "screenshots/media-card-collapsed.png"
+BTN=$(adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml | tr '<' '\n' | grep 'Volume down' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ')
+if [ -n "$BTN" ]; then
+  BX=$(echo $BTN | awk '{printf "%d", ($1+$3)/2}')
+  BY=$(echo $BTN | awk '{printf "%d", ($2+$4)/2}')
+  adb shell input tap "$BX" "$((BY - 160))"
+  sleep 2
+else
+  echo "NOTE: no Volume down button on the shade; media card expansion not attempted"
+fi
+adb exec-out screencap -p > "screenshots/media-card-expanded.png"
+adb shell cmd statusbar collapse
+sleep 1
 # Exemption + posting evidence: the media notification must be ENQUEUED on this
 # Android 13+ emulator with no notification-permission grant, still carrying the
 # session token (MediaStyle lineage) and the five actions.
@@ -122,10 +135,17 @@ adb shell am start -n com.bingemote/.MainActivity --ei skipmain 5 >/dev/null
 sleep 2
 adb shell dumpsys notification --noredact > screenshots/notification-dump-skip5.txt 2>/dev/null || true
 if grep -q 'Back 5 seconds' screenshots/notification-dump-skip5.txt && grep -q 'Forward 5 seconds' screenshots/notification-dump-skip5.txt && ! grep -q 'Back 10 seconds' screenshots/notification-dump-skip5.txt; then
-  echo "ok: compact bar skip labels follow the 5s setting"
+  echo "ok: media card skip labels follow the 5s setting"
 else
-  echo "::error::compact bar did NOT follow the 5s skip setting"; exit 1
+  echo "::error::media card did NOT follow the 5s skip setting"; exit 1
 fi
+# MediaStyle evidence: id 101 enqueued with the session token, the five actions and
+# the compact-view indices.
+grep -q '|com.bingemote|101|' screenshots/notification-dump-skip5.txt || { echo "::error::media notification id 101 not enqueued"; exit 1; }
+grep -q 'android.mediaSession' screenshots/notification-dump-skip5.txt || { echo "::error::session token extra missing"; exit 1; }
+grep -q 'android.compactActions' screenshots/notification-dump-skip5.txt || { echo "::error::compact action indices missing"; exit 1; }
+grep -q 'Volume down' screenshots/notification-dump-skip5.txt && grep -q 'Volume up' screenshots/notification-dump-skip5.txt || { echo "::error::volume actions missing"; exit 1; }
+echo "ok: id 101 enqueued with session token, volume actions, compact indices"
 adb shell am start -n com.bingemote/.MainActivity --ei skipmain 10 >/dev/null
 sleep 1
 # Permission-grant evidence (Instinct 2): the exemption claim needs the grant to be ABSENT.
@@ -135,22 +155,6 @@ if grep -q 'POST_NOTIFICATIONS: granted=true' screenshots/package-perms.txt; the
 fi
 grep -m1 'POST_NOTIFICATIONS' screenshots/package-perms.txt || true
 echo "ok: POST_NOTIFICATIONS is NOT granted on this emulator"
-# Instinct 2: with the media-session token attached, stock Android promotes the
-# notification into the media carousel and never renders the custom row. Post the
-# SAME bar token-free (debug only) and record what stock Android does with it.
-adb shell am start -n com.bingemote/.MainActivity --es demorow true >/dev/null
-sleep 2
-adb shell dumpsys notification --noredact > screenshots/notification-dump-row.txt 2>/dev/null || true
-if grep -q '|com.bingemote|102|' screenshots/notification-dump-row.txt; then
-  echo "ok: token-free custom bar STAYS POSTED without the grant (id 102 enqueued)"
-else
-  echo "RESULT: token-free row NOT enqueued - the no-grant exemption needs the media-session token"
-fi
-adb shell cmd statusbar expand-notifications
-sleep 3
-adb exec-out screencap -p > "screenshots/compact-bar-row.png"
-adb shell input keyevent 4
-sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.
 adb shell input keyevent 4
 sleep 1

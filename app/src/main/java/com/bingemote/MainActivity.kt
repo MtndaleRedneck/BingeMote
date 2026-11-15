@@ -160,10 +160,6 @@ class MainActivity : ComponentActivity() {
             store.demoControls = true
             MediaControls.sync(this, store)
         }
-        // Experiment: post the same bar as a token-free plain row (see postDemoRow).
-        if (intent.hasExtra("demorow")) {
-            startService(Intent(this, MediaControlsService::class.java).setAction("com.bingemote.action.DEMO_ROW"))
-        }
     }
 
     override fun onNewIntent(intent: Intent) {

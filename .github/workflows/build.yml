@@ -51,6 +51,10 @@ jobs:
           echo "VERSION=$V" >> $GITHUB_ENV
           cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
 
+      # Review verification: the exact artifact hashes in the run log (Instinct 2).
+      - name: Print APK hashes
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk BingeMote-Android-*.apk
+
       # The debug APK on every run, so a review can install the exact bytes CI
       # exercised (the signed release APK above only uploads on publish runs).
       - uses: actions/upload-artifact@v4
@@ -125,6 +129,12 @@ jobs:
           choco install innosetup --no-progress -y
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
           Move-Item helper/Output/BingeMote-PC-*.exe .
+
+      # Review verification: the exact artifact hashes in the run log (Instinct 2).
+      - name: Print helper artifact hashes
+        run: |
+          Get-FileHash helper/out/BingeMote.exe -Algorithm SHA256 | Format-List
+          Get-FileHash BingeMote-PC-*.exe -Algorithm SHA256 | Format-List
 
       - uses: actions/upload-artifact@v4
         with:
