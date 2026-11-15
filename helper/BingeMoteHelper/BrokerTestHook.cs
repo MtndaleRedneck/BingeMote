@@ -231,7 +231,8 @@ internal static class BrokerTestHook
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr h, uint access, out IntPtr token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool ConvertStringSidToSid(string sid, out IntPtr pSid);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount, IntPtr sidsToDisable, uint privDeleteCount, IntPtr privsToDelete, uint groupCount, IntPtr groupsToRestrict, out IntPtr newToken);
-    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool SetThreadToken(IntPtr thread, IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] private static extern bool ImpersonateLoggedOnUser(IntPtr token);
+    [DllImport("advapi32.dll")] private static extern bool RevertToSelf();
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CreateProcessAsUser(IntPtr token, string? app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string? dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool LookupPrivilegeValue(string? system, string name, out long luid);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES newState, uint len, IntPtr prev, IntPtr retLen);
@@ -292,8 +293,11 @@ internal static class BrokerTestHook
         var restricted = NewStandardLikeToken();
         try
         {
-            if (!SetThreadToken(IntPtr.Zero, restricted))
-                throw new InvalidOperationException("SetThreadToken:win32=" + Marshal.GetLastWin32Error());
+            // ImpersonateLoggedOnUser accepts the PRIMARY restricted token (SetThreadToken
+            // does not - CI run 43681243000: win32=5) and needs no SeImpersonatePrivilege
+            // for a token from our own logon session.
+            if (!ImpersonateLoggedOnUser(restricted))
+                throw new InvalidOperationException("ImpersonateLoggedOnUser:win32=" + Marshal.GetLastWin32Error());
             string pidNote = "nopipe"; var legacy = -1;
             try
             {
@@ -307,7 +311,7 @@ internal static class BrokerTestHook
             File.WriteAllText(outfile, $"broker_pid={pidNote} legacy_win32={legacy} result={result}");
             return result == InputBrokerClient.BrokerResult.Played ? 0 : 1;
         }
-        finally { SetThreadToken(IntPtr.Zero, IntPtr.Zero); CloseHandle(restricted); }
+        finally { RevertToSelf(); CloseHandle(restricted); }
     }
 
     /// <summary>--run-restricted [--] [args]: relaunch this exe with the given args (none =
