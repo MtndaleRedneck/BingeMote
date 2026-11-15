@@ -840,7 +840,8 @@ public static class Probe {
     $sentInfo = Get-ScheduledTaskInfo -TaskName 'BingeMote CI LimitedProbe'
     Write-Host "limited-task sentinel: $(if (Test-Path $sentinel) { 'ran' } else { 'NEVER RAN' }) (LastRunTime=$($sentInfo.LastRunTime) LastTaskResult=$($sentInfo.LastTaskResult))"
     Unregister-ScheduledTask -TaskName 'BingeMote CI LimitedProbe' -Confirm:$false
-    $opAction = New-ScheduledTaskAction -Execute $exe -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
+    $exeAbs = (Resolve-Path $exe).Path  # Task Scheduler resolves the action path itself; a relative path fails with 0x80070002 (run 43684647851)
+    $opAction = New-ScheduledTaskAction -Execute $exeAbs -Argument ('--broker-op "m 1 0" "{0}"' -f $opOut)
     Register-ScheduledTask -TaskName 'BingeMote CI RestrictedOp' -Action $opAction -Principal $limited -Force | Out-Null
     Start-ScheduledTask -TaskName 'BingeMote CI RestrictedOp'
     $opDeadline = (Get-Date).AddSeconds(90)
