@@ -271,12 +271,22 @@ class MediaControlsService : Service() {
         views.setContentDescription(R.id.btn_play_pause, if (playing) "Pause" else "Play")
         views.setContentDescription(R.id.btn_vol_up, "Volume up")
         views.setContentDescription(R.id.btn_forward, "Forward $skipSec seconds")
+        // The same five as notification actions too: the stock-Android media card and
+        // the expanded decorated view render from the action list, not the custom view,
+        // so a surface that ignores the custom layout still shows his controls.
+        fun act(icon: android.graphics.Bitmap, label: String, intentAction: String) =
+            Notification.Action.Builder(android.graphics.drawable.Icon.createWithBitmap(icon), label, serviceIntent(intentAction)).build()
         val n = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(title?.ifBlank { null } ?: "Playing")
             .setContentText("${fmtClockSec(timeSec)} of ${fmtClockSec(lengthSec)}")
             .setContentIntent(openApp)
             .setOngoing(playing)
+            .addAction(act(NotificationArt.skip(px(24), forward = false, label = skipSec.toString()), "Back $skipSec seconds", ACTION_MEDIA_REWIND))
+            .addAction(act(NotificationArt.volumeDown(px(24)), "Volume down", ACTION_MEDIA_VOL_DOWN))
+            .addAction(act(if (playing) NotificationArt.pause(px(24)) else NotificationArt.play(px(24)), if (playing) "Pause" else "Play", ACTION_MEDIA_PLAY_PAUSE))
+            .addAction(act(NotificationArt.volumeUp(px(24)), "Volume up", ACTION_MEDIA_VOL_UP))
+            .addAction(act(NotificationArt.skip(px(24), forward = true, label = skipSec.toString()), "Forward $skipSec seconds", ACTION_MEDIA_FAST_FORWARD))
             .setCustomContentView(views)
             .setStyle(Notification.DecoratedMediaCustomViewStyle().setMediaSession(s.sessionToken))
             .build()

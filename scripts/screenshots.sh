@@ -112,6 +112,10 @@ sleep 1
 adb shell cmd statusbar expand-notifications
 sleep 3
 adb exec-out screencap -p > "screenshots/unlocked-controls-shade.png"
+# Exemption + posting evidence: the media notification must be ENQUEUED on this
+# Android 13+ emulator with no notification-permission grant, still carrying the
+# session token (MediaStyle lineage) and the five actions.
+adb shell dumpsys notification --noredact > screenshots/notification-dump.txt 2>/dev/null || true
 adb shell input keyevent 4
 sleep 1
 # End UNLOCKED: every phase after this launches the app and must see it.
