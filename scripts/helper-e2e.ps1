@@ -567,6 +567,79 @@ public static class WinEnum {
     Assert $vlcUp "VLC is running after play"
     Get-Process vlc -ErrorAction SilentlyContinue | Stop-Process -Force
 
+    # c6: a junction inside the jail must not escape it. rev15 exposed an outside
+    # listing through one; rev16 resolves the reparse target and jails it.
+    $outside = Join-Path $env:TEMP 'bingemote-e2e-outside'
+    New-Item -ItemType Directory -Force $outside | Out-Null
+    Set-Content (Join-Path $outside 'secret.mkv') 'fake'
+    New-Item -ItemType Junction -Path (Join-Path $movies 'escape') -Target $outside | Out-Null
+    $r = Invoke-HelperGet '/movies/list?path=escape' $token
+    Assert ($r.code -eq 404) "listing through a junction out of the jail is refused (got $($r.code))"
+    $r = Invoke-Helper '/movies/play' '{"path":"escape/secret.mkv"}' $token
+    Assert ($r.code -eq 400) "playing through a junction out of the jail is refused (got $($r.code))"
+    Remove-Item (Join-Path $movies 'escape') -Force
+
+    # c1: a saved resume place survives helper restarts and the no-VLC poll cycle.
+    # rev15 rewrote the store every 5 s with no VLC running and a seeded entry
+    # became {}.
+    Write-Host "== resume history survives restarts (c1) =="
+    $storeDir = Join-Path $env:APPDATA 'BingeMote'
+    New-Item -ItemType Directory -Force $storeDir | Out-Null
+    $store = Join-Path $storeDir 'resume-places.json'
+    $movieKey = Join-Path $movies 'clip.mkv'
+    foreach ($cycle in 1..5) {
+        $pos = 600 * $cycle
+        if ($cycle -eq 5) { $pos = 123456789 }  # an extreme valid value, the review's repeat
+        $seed = @{ $movieKey = @{ Position = $pos; Length = ($pos + 3000) } }
+        ($seed | ConvertTo-Json -Compress -Depth 3) | Set-Content $store -Encoding UTF8
+        # Let at least one 5 s no-VLC poll pass with the helper watching: the store
+        # must not be rewritten under us.
+        Start-Sleep -Seconds 6
+        $onDisk = Get-Content $store -Raw
+        Assert ($onDisk -match ('"Position":' + $pos + '[^0-9]')) "resume entry survives the no-VLC poll (cycle $cycle)"
+        Assert ($onDisk -match 'clip\.mkv') "resume entry still names its file (cycle $cycle)"
+        Stop-Process -Id $p.Id -Force
+        Start-Sleep -Seconds 1
+        $p = Start-Process $exe -PassThru
+        $up = $false
+        foreach ($i in 1..40) {
+            try {
+                $c = New-Object Net.Sockets.TcpClient
+                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            } catch { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $up) { throw "helper did not restart in resume cycle $cycle" }
+        $after = Get-Content $store -Raw
+        Assert ($after -match ('"Position":' + $pos + '[^0-9]')) "resume entry survives helper restart $cycle"
+    }
+
+    # c5: a fragmented live-mouse message over the 4KB bound is closed, not buffered
+    # without limit (rev15 held a 64 MB fragment open, helper memory 17.9 -> 168 MB).
+    Write-Host "== ws fragmented message bound (c5) =="
+    $cws = [System.Net.WebSockets.ClientWebSocket]::new()
+    $cws.Options.SetRequestHeader('X-BingeMote-Token', $token)
+    $cws.ConnectAsync([Uri]'ws://127.0.0.1:8488/ws', [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    $frag = [Text.Encoding]::UTF8.GetBytes('x' * 2048)
+    foreach ($i in 1..4) {
+        try {
+            $cws.SendAsync([ArraySegment[byte]]$frag, [System.Net.WebSockets.WebSocketMessageType]::Text, [bool]$false, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+        } catch { break }  # the server may already have closed after the bound tripped
+    }
+    $wsClosed = $false
+    $wsBuf = New-Object byte[] 256
+    foreach ($i in 1..20) {
+        try {
+            $cts = [Threading.CancellationTokenSource]::new(500)
+            $rr = $cws.ReceiveAsync([ArraySegment[byte]]$wsBuf, $cts.Token).GetAwaiter().GetResult()
+            if ($rr.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { $wsClosed = $true; break }
+        } catch [OperationCanceledException] {
+            if ($cws.State -ne [System.Net.WebSockets.WebSocketState]::Open) { $wsClosed = $true; break }
+        } catch { $wsClosed = $true; break }  # a faulted socket means the server dropped us
+    }
+    Assert $wsClosed "the server closes a fragmented message over the 4KB bound (state $($cws.State))"
+    try { $cws.Abort() } catch {}
+    $cws.Dispose()
+
     # UDP discovery answers the app's broadcast.
     Write-Host "== UDP discovery =="
     $udp = New-Object Net.Sockets.UdpClient

@@ -209,6 +209,11 @@ Check ($r.code -eq 400) "non-finite move gets HTTP 400 (got $($r.code))"
 Write-Host "== T-http: command API hygiene =="
 $r = Invoke-Helper '/mouse/move' '{"dx":' $token
 Check ($r.code -eq 400) "malformed JSON body is a 400 (got $($r.code))"
+$r = Invoke-Helper '/mouse/move' '{"dx":NaN,"dy":0}' $token
+Check ($r.code -eq 400) "bare NaN literal is a 400 (got $($r.code))"
+$bigBody = '{"text":"' + ('x' * 70000) + '"}'
+$r = Invoke-Helper '/type' $bigBody $token
+Check ($r.code -eq 400) "an over-64KB body is a 400 (got $($r.code))"
 $r = Invoke-Helper '/mouse/move' '{"dy":1}' $token
 Check ($r.code -eq 400) "missing field is a 400 (got $($r.code))"
 $r = Invoke-Helper '/mouse/move' '{"dx":"fast","dy":0}' $token

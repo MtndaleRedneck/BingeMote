@@ -114,7 +114,13 @@ internal static class ResumeTracker
         if (Process.GetProcessesByName("vlc").Length == 0)
         {
             // VLC closed: forget the "current" file (its last place is already saved).
-            lock (Gate) { _currentFile = null; SaveLocked(); }
+            // Save only on the transition: a steady no-VLC state used to rewrite the
+            // store every 5 s, clobbering anything that landed on disk since load -
+            // c1 turned a valid seeded entry into {} this way.
+            lock (Gate)
+            {
+                if (_currentFile != null) { _currentFile = null; SaveLocked(); }
+            }
             MediaActive = false;
             return;
         }
@@ -178,7 +184,11 @@ internal static class ResumeTracker
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            File.WriteAllText(StorePath, JsonSerializer.Serialize(ByFile));
+            // Atomic: a crash mid-write must never leave a truncated store behind
+            // (same class of loss as the non-atomic config.json the review flagged).
+            var tmp = StorePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(ByFile));
+            File.Move(tmp, StorePath, true);
             _lastSave = DateTime.UtcNow;
         }
         catch { }
