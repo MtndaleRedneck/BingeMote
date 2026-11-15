@@ -193,27 +193,45 @@ try {
     if (-not $up) { throw "helper did not start listening on 8488" }
     Write-Host "helper is listening"
     # rev18 (Instinct 2, the unexplained 43689454762-cancelled 32efe77 hang): durable
-    # phase/process/task/pipe telemetry that survives a step-timeout kill. A child
-    # process writes a snapshot to THIS console every 60s for 26 minutes; on a hang
-    # the run log then shows the last live state instead of going dark (a job-level
-    # cancel keeps no logs; the 28-min step cap keeps them - this fills the console).
+    # phase/process/task/pipe telemetry that survives a step-timeout kill.
+    # rev19 (Instinct 2 follow-up): the hidden child's console output went nowhere -
+    # snapshots now go to a FILE and Assert splices them into the run log as they
+    # land; the trap prints the rest. The pipe enumeration path was wrong ('\.\pipe'
+    # resolved nothing) and its errors were swallowed; both fixed, every query is
+    # time-bounded, and the child ends with a final DEADLINE dump. On a hang the run
+    # log shows the last live state instead of going dark (a job-level cancel keeps
+    # no logs; the 28-min step cap keeps them - this fills the log).
     $heartbeatScript = Join-Path $env:TEMP 'bm-e2e-heartbeat.ps1'
+    $heartbeatFile = Join-Path $env:TEMP 'bm-e2e-heartbeat.log'
+    Remove-Item $heartbeatFile -Force -ErrorAction SilentlyContinue
     @'
-$end = (Get-Date).AddMinutes(26)
-while ((Get-Date) -lt $end) {
-    Start-Sleep -Seconds 60
-    Write-Output ("== heartbeat " + (Get-Date).ToString("HH:mm:ss") + " ==")
-    Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
-        Write-Output ("process: pid=" + $_.ProcessId + " session=" + $_.SessionId + " started=" + $_.CreationDate + " cmd=" + $_.CommandLine)
-    }
-    Get-ScheduledTask -TaskName 'BingeMote*' -ErrorAction SilentlyContinue | ForEach-Object {
+param($OutFile)
+function Snap($tag) {
+    $lines = @("== heartbeat $tag " + (Get-Date).ToString("HH:mm:ss") + " ==")
+    try { $lines += Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -OperationTimeoutSec 15 -ErrorAction Stop | ForEach-Object {
+        "process: pid=" + $_.ProcessId + " session=" + $_.SessionId + " started=" + $_.CreationDate + " cmd=" + $_.CommandLine } } catch { $lines += "process: CIM query failed: $($_.Exception.Message)" }
+    try { $lines += Get-ScheduledTask -TaskName 'BingeMote*' -ErrorAction Stop | ForEach-Object {
         $i = $_ | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
-        Write-Output ("task: " + $_.TaskName + " state=" + $_.State + " last=" + $(if ($i) { $i.LastTaskResult } else { '?' }))
-    }
-    try { [IO.Directory]::GetFiles('\.\pipe') | Where-Object { $_ -match 'ingemote|ingeMote' } | ForEach-Object { Write-Output ("pipe: " + $_) } } catch {}
+        "task: " + $_.TaskName + " state=" + $_.State + " last=" + $(if ($i) { $i.LastTaskResult } else { '?' }) } } catch { $lines += "task: query failed: $($_.Exception.Message)" }
+    try { $p = [IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match 'BingeMote' }
+        if ($p) { $lines += ($p | ForEach-Object { "pipe: " + $_ }) } else { $lines += "pipe: (no BingeMote pipe)" } } catch { $lines += "pipe: enumeration failed: $($_.Exception.Message)" }
+    Add-Content $OutFile $lines
 }
+$end = (Get-Date).AddMinutes(26)
+while ((Get-Date) -lt $end) { Start-Sleep -Seconds 60; Snap "tick" }
+Snap "DEADLINE (final dump)"
 '@ | Set-Content $heartbeatScript
-    $heartbeat = Start-Process pwsh -ArgumentList '-NoProfile','-File',$heartbeatScript -PassThru -WindowStyle Hidden
+    $heartbeat = Start-Process pwsh -ArgumentList '-NoProfile','-File',$heartbeatScript,'-OutFile',$heartbeatFile -PassThru -WindowStyle Hidden
+    $script:hbPrinted = 0
+    function Sync-Heartbeat {
+        # Splice new heartbeat snapshots into the run log (called from Assert).
+        try {
+            if (Test-Path $heartbeatFile) {
+                $raw = Get-Content $heartbeatFile -Raw
+                if ($raw -and $raw.Length -gt $script:hbPrinted) { Write-Host $raw.Substring($script:hbPrinted).TrimEnd(); $script:hbPrinted = $raw.Length }
+            }
+        } catch { }
+    }
     # On any failure from here on, dump the helper log and process state so CI
     # failures are diagnosable from the run log alone.
     trap {
@@ -227,6 +245,8 @@ while ((Get-Date) -lt $end) {
         powercfg /requests
         $sysLog = 'C:\Windows\System32\config\systemprofile\AppData\Local\BingeMote\helper.log'
         if (Test-Path $sysLog) { Write-Host "== SYSTEM-profile helper.log =="; Get-Content $sysLog }
+        Write-Host "== heartbeat snapshots =="
+        Sync-Heartbeat
         try { if ($heartbeat -and -not $heartbeat.HasExited) { Stop-Process -Id $heartbeat.Id -Force } } catch { }
         foreach ($tn in 'BingeMote Input Broker','BingeMote UIPI Blocker','BingeMote CI RestrictedOp','BingeMote CI RestrictedLaunch','BingeMote CI Squat','BingeMote CI VerifySquat','BingeMote CI LimitedProbe') {
             try { $ti = Get-ScheduledTaskInfo -TaskName $tn; Write-Host "task ${tn}: LastRunTime=$($ti.LastRunTime) LastTaskResult=$($ti.LastTaskResult)" } catch { Write-Host "task ${tn}: not registered" }
@@ -240,7 +260,7 @@ while ((Get-Date) -lt $end) {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
         return @{ code = [int]$r.StatusCode; body = $r.Content }
     }
-    function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+    function Assert($cond, $msg) { Sync-Heartbeat; if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
     function Stop-Tracked($proc) {
         # rev17: an --ensure-running second copy can win the single-instance race and
         # the tracked process then exits on its own; Stop-Process on that dead pid

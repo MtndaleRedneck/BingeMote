@@ -171,6 +171,10 @@ jobs:
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
+        # 28-min cap matches the stress gate: a hang dies inside the step so the
+        # job keeps its log (a job-level cancel keeps none) and the heartbeat
+        # snapshots in the log show the last live state.
+        timeout-minutes: 28
         run: pwsh -File scripts/helper-e2e.ps1
 
       - name: VLC control tests (real VLC, app request shapes)

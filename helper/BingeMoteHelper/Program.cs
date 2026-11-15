@@ -128,6 +128,77 @@ internal static class Program
     internal const int MaxPairFailures = 5;
     internal static readonly TimeSpan PairCodeLifetime = TimeSpan.FromMinutes(10);
 
+    internal enum SecondLaunchAction { ShowOnly, AskManualQuit, CooperativeQuitTakeover }
+
+    // rev19 (Instinct 2, the unsupported "unit-covered" claim): the second-launch
+    // decision as one pure function so unit tests pin the whole state table:
+    //   same exe (path AND file identity)          -> show-only
+    //   same path but identity conflict            -> show-only (fail closed)
+    //   unreadable shadow holder (SYSTEM broker)   -> show-only
+    //   unidentified holder (no readable path)     -> show-only (unknown)
+    //   missing/unparseable version                -> show-only (unknown)
+    //   older launching copy (downgrade)           -> show-only
+    //   newer/equal, running copy pre-1.1.0        -> ask him to quit by hand
+    //   newer/equal, running copy has the events   -> cooperative quit + takeover
+    internal static SecondLaunchAction DecideSecondLaunch(
+        bool sameExe, bool samePathIdentityConflict, bool copyShadowed,
+        string? runningPath, string? selfPath,
+        string? mineVersion, string? theirsVersion,
+        bool runningCopyHasQuitEvent,
+        out string reason)
+    {
+        if (!sameExe && runningPath == null && copyShadowed)
+        {
+            reason = "Launched while already running (the running copy could not be read)";
+            return SecondLaunchAction.ShowOnly;
+        }
+        if (samePathIdentityConflict)
+        {
+            reason = "The running copy's file identity did not match this exe (failing closed)";
+            return SecondLaunchAction.ShowOnly;
+        }
+        if (sameExe)
+        {
+            reason = "Launched while already running";
+            return SecondLaunchAction.ShowOnly;
+        }
+        if (runningPath == null || selfPath == null)
+        {
+            // Instinct 2 (rev19 review BLOCKER): an UNIDENTIFIED mutex holder left
+            // every flag unset and fell through to the cooperative quit. Unknown is
+            // show-only: never killed, never replaced.
+            reason = "The running copy could not be identified (no readable process path) - treating it as unknown";
+            return SecondLaunchAction.ShowOnly;
+        }
+        // A different exe is an update only when this LAUNCHING copy's version is
+        // equal-or-newer than the running copy's, both parsed. A missing or
+        // unparseable version is UNKNOWN, and unknown never authorizes a quit.
+        Version? mine = null, theirs = null;
+        try
+        {
+            if (mineVersion != null) mine = new Version(mineVersion);
+            if (theirsVersion != null) theirs = new Version(theirsVersion);
+        }
+        catch { }
+        if (mine == null || theirs == null)
+        {
+            reason = "Could not read both versions - treating the running copy as unknown";
+            return SecondLaunchAction.ShowOnly;
+        }
+        if (mine.CompareTo(theirs) < 0)
+        {
+            reason = "An older exe launched while a newer copy ran";
+            return SecondLaunchAction.ShowOnly;
+        }
+        if (!runningCopyHasQuitEvent)
+        {
+            reason = "An older copy (before 1.1.0) is running";
+            return SecondLaunchAction.AskManualQuit;
+        }
+        reason = "Update launched while an older copy ran";
+        return SecondLaunchAction.CooperativeQuitTakeover;
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -340,79 +411,44 @@ internal static class Program
                 var id = PipePeer.SameFile(runningPath!, selfPath!);
                 if (id != true) { sameExe = false; samePathIdentityConflict = true; }
             }
-            if (!sameExe && runningPath == null && copyShadowed)
-            {
-                // rev17: the mutex holder could not be read, but an unreadable same-named
-                // process exists (the SYSTEM broker, or an elevated copy). Broker mode
-                // returns before this mutex, so the holder is a live UI copy (Ezzy's PC,
-                // Nov 15 2026: double-click never opened the window; every launch took
-                // over and restarted the app).
-                // rev18 (Instinct 2 MEDIUM): show-window authority and kill/takeover
-                // authority stay separate. Showing is safe to request blind - the named
-                // event belongs to whoever owns the single-instance mutex, so it reaches
-                // exactly the running copy whoever that is. Quit/takeover is NOT safe
-                // blind: an unidentified copy is "unknown", and unknown is never killed,
-                // never replaced. The old rev17 code pretended sameExe=true here, which
-                // would also have passed an unidentified copy into the downgrade path.
-                // rev18 (Instinct 2): log the signal outcome honestly - a swallowed
-                // Set() failure must not read as a successful request in the log.
-                var shadowSignaled = false;
-                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); shadowSignaled = true; } catch { }
-                Log(shadowSignaled
-                    ? "Launched while already running (the running copy could not be read) - asked it to show its window, not taking over."
-                    : "Launched while already running (the running copy could not be read) - could NOT signal its show event, not taking over.");
-                return 0;
-            }
-            // A different exe is an update only when this launch is the same or a newer
-            // version; an older exe (e.g. left in Downloads) must not downgrade the running copy.
-            // rev19 (Instinct 2 state table): "update" means this LAUNCHING copy's
-            // version is equal-or-newer than the running copy's, both parsed. An older
-            // launching copy shows the running window and exits. A MISSING or
-            // UNPARSEABLE version is UNKNOWN, and unknown never authorizes a quit or
-            // a takeover - it is show-only, same as a downgrade.
-            var isDowngrade = false;
-            var versionUnknown = false;
+            // rev17: the mutex holder could not be read, but an unreadable same-named
+            // process exists (the SYSTEM broker, or an elevated copy). Broker mode
+            // returns before this mutex, so the holder is a live UI copy (Ezzy's PC,
+            // Nov 15 2026: double-click never opened the window; every launch took
+            // over and restarted the app).
+            // rev18 (Instinct 2 MEDIUM): show-window authority and kill/takeover
+            // authority stay separate. Showing is safe to request blind - the named
+            // event belongs to whoever owns the single-instance mutex, so it reaches
+            // exactly the running copy whoever that is. Quit/takeover is NOT safe
+            // blind: an unidentified copy is "unknown", and unknown is never killed,
+            // never replaced. The old rev17 code pretended sameExe=true here, which
+            // would also have passed an unidentified copy into the downgrade path.
+            string? mineVersion = null, theirsVersion = null;
             if (!sameExe && !samePathIdentityConflict && runningPath != null && selfPath != null)
             {
                 try
                 {
-                    var mine = FileVersionInfo.GetVersionInfo(selfPath).FileVersion;
-                    var theirs = FileVersionInfo.GetVersionInfo(runningPath).FileVersion;
-                    if (mine == null || theirs == null) versionUnknown = true;
-                    else if (new Version(mine).CompareTo(new Version(theirs)) < 0) isDowngrade = true;
+                    mineVersion = FileVersionInfo.GetVersionInfo(selfPath).FileVersion;
+                    theirsVersion = FileVersionInfo.GetVersionInfo(runningPath).FileVersion;
                 }
-                catch { versionUnknown = true; }
+                catch { }
             }
-            else if (!sameExe && !samePathIdentityConflict)
+            EventWaitHandle? oldQuit = null;
+            try { oldQuit = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
+            var action = DecideSecondLaunch(sameExe, samePathIdentityConflict, copyShadowed,
+                runningPath, selfPath, mineVersion, theirsVersion, oldQuit != null, out var reason);
+            if (action == SecondLaunchAction.ShowOnly)
             {
-                // Instinct 2 (rev19 review BLOCKER): an UNIDENTIFIED mutex holder -
-                // no readable running path (and not the recognized unreadable-shadow
-                // case handled above), or no self path - left every flag unset and
-                // fell through to the cooperative quit below, contradicting the
-                // pinned "unknown never quits" rule. Unknown is show-only.
-                versionUnknown = true;
-            }
-            if (sameExe || isDowngrade || versionUnknown || samePathIdentityConflict)
-            {
+                // rev18 (Instinct 2): log the signal outcome honestly - a swallowed
+                // Set() failure must not read as a successful request in the log.
                 var showSignaled = false;
                 try { EventWaitHandle.OpenExisting(ShowEventName).Set(); showSignaled = true; } catch { }
-                var reason = samePathIdentityConflict
-                    ? "The running copy's file identity did not match this exe (failing closed)"
-                    : versionUnknown
-                        ? (runningPath == null
-                            ? "The running copy could not be identified (no readable process path) - treating it as unknown"
-                            : "Could not read both versions - treating the running copy as unknown")
-                        : isDowngrade
-                            ? "An older exe launched while a newer copy ran"
-                            : "Launched while already running";
                 Log(showSignaled
                     ? reason + " - asked the running copy to show its window, not taking over."
                     : reason + " - could NOT signal its show event, not taking over.");
                 return 0;
             }
-            EventWaitHandle? oldQuit = null;
-            try { oldQuit = EventWaitHandle.OpenExisting(QuitEventName); } catch { }
-            if (oldQuit == null)
+            if (action == SecondLaunchAction.AskManualQuit)
             {
                 Log("An older copy (before 1.1.0) is running - asked him to quit it by hand.");
                 MessageBox.Show(
@@ -428,7 +464,7 @@ internal static class Program
             // There is no Process.Kill anywhere in this flow - takeover waits on the
             // old copy's own exit and mutex release.
             Log("Update launched while an older copy ran - asked it to quit, taking over.");
-            oldQuit.Set();
+            oldQuit!.Set(); // non-null: CooperativeQuitTakeover implies the event opened
             // The old copy exits and releases the mutex; take it over (give it a few seconds).
             var tookOver = false;
             for (var i = 0; i < 40 && !tookOver; i++)
