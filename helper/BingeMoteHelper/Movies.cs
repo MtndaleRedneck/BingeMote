@@ -28,12 +28,40 @@ internal static class Movies
         if (root.Length == 0) return null;
         try
         {
-            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            // rev16: compare REPARSE-RESOLVED paths. Plain GetFullPath left a hole: a
+            // junction or symlink inside the movies folder pointed outside it and still
+            // passed the prefix check.
+            var fullRoot = ResolveReparse(Path.GetFullPath(root)).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var full = Path.GetFullPath(Path.Combine(fullRoot, rel.Replace('/', Path.DirectorySeparatorChar)));
-            if (!full.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return null;
-            return full;
+            if (!ResolveReparse(full).StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) return null;
+            return full; // the unresolved path opens the same target; the check above is what gates
         }
         catch { return null; }
+    }
+
+    /// <summary>Full path with reparse points (junctions, symlinks) resolved segment by
+    /// segment, so a link at any depth is seen for the jail comparison. Non-links and
+    /// missing segments pass through unchanged.</summary>
+    private static string ResolveReparse(string path)
+    {
+        var rootPath = Path.GetPathRoot(path) ?? "";
+        var current = rootPath;
+        foreach (var seg in path[rootPath.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, seg);
+            try
+            {
+                var link = Directory.Exists(current) ? Directory.ResolveLinkTarget(current, false)
+                    : File.Exists(current) ? File.ResolveLinkTarget(current, false)
+                    : null;
+                if (link != null)
+                    current = Path.GetFullPath(Path.IsPathRooted(link.FullName)
+                        ? link.FullName
+                        : Path.Combine(Path.GetDirectoryName(current) ?? rootPath, link.FullName));
+            }
+            catch { }
+        }
+        return current;
     }
 
     /// <summary>List one level of the movies folder (folders first, then video files).</summary>

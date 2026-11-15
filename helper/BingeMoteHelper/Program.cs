@@ -702,10 +702,14 @@ internal static class Program
                 "/Create /F /TN \"BingeMote Watchdog\" /XML \"" + tmp + "\"")
             { CreateNoWindow = true, UseShellExecute = false };
             using var p = System.Diagnostics.Process.Start(psi);
-            p?.WaitForExit(10000);
+            // rev16: a silent failure here costs the keep-alive with no trace anywhere.
+            if (p == null || !p.WaitForExit(10000))
+                Log("watchdog registration: schtasks did not finish in time");
+            else if (p.ExitCode != 0)
+                Log("watchdog registration: schtasks exit code " + p.ExitCode);
             try { System.IO.File.Delete(tmp); } catch { }
         }
-        catch { /* the watchdog is a safety net, not a requirement */ }
+        catch (Exception ex) { Log("watchdog registration failed: " + ex.GetType().Name); /* the watchdog is a safety net, not a requirement */ }
     }
 }
 

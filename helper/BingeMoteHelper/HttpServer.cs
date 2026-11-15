@@ -484,6 +484,13 @@ internal sealed class HttpServer : IDisposable
                 }
                 if (r.MessageType != WebSocketMessageType.Text) continue;
                 text.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
+                // rev16: bound fragmented messages. Commands are small JSON; without a
+                // cap a sender could grow this StringBuilder without limit.
+                if (text.Length > 4096)
+                {
+                    Program.Log("Live mouse message over the 4KB bound - closing the connection.");
+                    break;
+                }
                 if (!r.EndOfMessage) continue;
                 lastFrameAt = DateTime.UtcNow;
                 // Removing a phone must stop its input right away, not when it happens to
