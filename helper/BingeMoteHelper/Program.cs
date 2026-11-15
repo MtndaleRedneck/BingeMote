@@ -368,10 +368,13 @@ internal static class Program
             }
             // Surface the vlc.exe rule inventory the elevated step saved (report only).
             FirewallSetup.LogVlcRuleInventory();
-
-        // Resume places: load the saved ones and watch VLC while it runs.
-        ResumeTracker.Start();
         }
+
+        // Resume places: load the saved ones and watch VLC while it runs. rev16: this
+        // must run on EVERY launch. It sat inside the one-time firewall-marker block
+        // above, so after the first run the saved places were never loaded - and the
+        // poller's next save wrote this session's empty map over them (data loss).
+        ResumeTracker.Start();
 
         // A live pairing code is a way in, so one exists only when this PC still needs
         // pairing. After pairing, a new code comes only from the window's Pair button.
@@ -544,7 +547,14 @@ internal static class Program
             _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
             }
         }
-        catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+        catch (Exception loadEx)
+        {
+            // rev16: a broken config must not vanish under the defaults the next save
+            // writes - keep it for diagnosis and say so in the log.
+            try { File.Copy(ConfigPath, ConfigPath + ".broken", overwrite: true); } catch { }
+            try { Log("config load failed (" + loadEx.GetType().Name + "); the broken file was kept as config.json.broken"); } catch { }
+            lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null;
+        }
         // A vlcrc write that was waiting for VLC to close survives a helper restart:
         // complete it now when VLC is already closed, or re-arm the retry when it is not.
         var pendingVlc = _pendingVlcFromConfig;
@@ -568,7 +578,11 @@ internal static class Program
             homeNetworks = HomeNetworks.ToArray(),
             lastRunVersion = LastRunVersion,
         });
-        File.WriteAllText(ConfigPath, json);
+        // rev16: atomic replace. A crash or power cut mid-write used to leave a torn
+        // config.json, and the load error path then silently reset pairing to defaults.
+        var tmp = ConfigPath + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Move(tmp, ConfigPath, overwrite: true);
     }
 
     internal static string MachineLabel() => Environment.MachineName;
