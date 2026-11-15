@@ -819,8 +819,11 @@ public static class Probe {
     Write-Host "== rev17 non-elevated broker client =="
     $opOut = Join-Path $env:TEMP 'bingemote-broker-op.txt'
     Remove-Item $opOut -Force -ErrorAction SilentlyContinue
-    & $exe --broker-op-restricted "m 1 0" $opOut
-    $opRc = $LASTEXITCODE
+    # Start-Process -Wait: the call operator does NOT reliably wait for a WinExe
+    # (CI run 43682006798: $LASTEXITCODE read 0 while the hook was still running).
+    $opProc = Start-Process $exe -ArgumentList @('--broker-op-restricted', 'm 1 0', $opOut) -PassThru
+    if (-not $opProc.WaitForExit(60000)) { try { $opProc.Kill() } catch { }; throw "--broker-op-restricted hook did not exit in 60s" }
+    $opRc = $opProc.ExitCode
     $opLine = if (Test-Path $opOut) { (Get-Content $opOut -Raw).Trim() } else { "(no result file)" }
     Write-Host "restricted client: rc=$opRc $opLine"
     Assert ($opLine -match 'legacy_win32=5') "restricted token is standard-like: the pre-rev17 handle check IS denied (legacy_win32=5), so this test can see Ezzy's condition"
@@ -843,8 +846,9 @@ public static class Probe {
     if (-not $up) { throw "helper did not restart for the second-launch shadow test" }
     $logPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     $logBefore = (Get-Item $logPath).Length
-    & $exe --run-restricted
-    $showRc = $LASTEXITCODE
+    $showProc = Start-Process $exe -ArgumentList '--run-restricted' -PassThru
+    if (-not $showProc.WaitForExit(120000)) { try { $showProc.Kill() } catch { }; throw "--run-restricted did not exit in 120s" }
+    $showRc = $showProc.ExitCode
     Start-Sleep -Seconds 1
     $fullLog = Get-Content $logPath -Raw
     $newLog = $fullLog.Substring([Math]::Min($logBefore, $fullLog.Length))
