@@ -116,8 +116,10 @@ adb exec-out screencap -p > "screenshots/media-card-collapsed.png"
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
 adb shell cat /sdcard/ui.xml > screenshots/shade-ui.xml 2>/dev/null || true
 # Expand the player in place by tapping the media card itself (the compact view
-# caps at 3 actions on stock, so Volume down only exists after expansion).
-CARD=$(grep -o 'resource-id="com.android.systemui:id/qs_media_controls"[^>]*bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' screenshots/shade-ui.xml | grep -o '[0-9]*' | tr '\n' ' ' || true)
+# caps at 3 actions on stock, so Volume down only exists after expansion). Take
+# the numbers from the bounds attr ONLY - the node's content-desc carries clock
+# text ("34:12 of 1:50:24") whose digits poisoned a naive grep.
+CARD=$(grep 'qs_media_controls' screenshots/shade-ui.xml | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
 echo "media card bounds: '${CARD:-none}' (shade-ui.xml saved)"
 if [ -n "$CARD" ]; then
   CX=$(echo $CARD | awk '{printf "%d", ($1+$3)/2}')
@@ -129,8 +131,17 @@ else
 fi
 adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
 adb shell cat /sdcard/ui.xml > screenshots/shade-ui-expanded.xml 2>/dev/null || true
-if grep -q 'Volume down' screenshots/shade-ui-expanded.xml; then echo 'ok: expanded player shows all five actions'; else echo 'NOTE: expanded player lacks Volume down'; fi
+if grep -q 'Volume down' screenshots/shade-ui-expanded.xml; then echo 'ok: expanded player shows all five actions'; else echo 'NOTE: stock QS player shows the session transport buttons only; the five custom actions are on the shade entry (see notif-shade.png + dumpsys)'; fi
 adb exec-out screencap -p > "screenshots/media-card-expanded.png"
+# Notification shade entry: MediaStyle renders OUR actions there (compact: the
+# first three - Back, Volume down, Pause). This is the stock rendering of the
+# actual buttons Ezzy gets five-across in One UI's pill.
+adb shell cmd statusbar expand-notifications
+sleep 2
+adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
+adb shell cat /sdcard/ui.xml > screenshots/shade-notif-ui.xml 2>/dev/null || true
+adb exec-out screencap -p > "screenshots/notif-shade.png"
+if grep -q 'Volume down' screenshots/shade-notif-ui.xml; then echo 'ok: shade entry renders the custom volume actions'; else echo 'NOTE: shade entry lacks Volume down'; fi
 adb shell cmd statusbar collapse
 sleep 1
 # Exemption + posting evidence: the media notification must be ENQUEUED on this
