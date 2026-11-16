@@ -71,7 +71,7 @@ jobs:
         run: choco install innosetup --no-progress -y
       - name: Build the REV16 test installer (the build Ezzy had before round 3)
         run: |
-          git worktree add "$env:GITHUB_WORKSPACE\rev16src" b4fa396
+          git worktree add "$env:GITHUB_WORKSPACE\rev16src" ceddd72
           dotnet publish rev16src/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o rev16src/helper/out
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=1.7.8" rev16src/helper/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC (rev16) failed" }
