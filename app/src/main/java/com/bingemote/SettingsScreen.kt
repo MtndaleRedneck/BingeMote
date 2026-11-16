@@ -248,6 +248,52 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        SettingsSection("Lock-screen log") {
+            val view = androidx.compose.ui.platform.LocalView.current
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                        tapHaptic(view, haptics)
+                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_SUBJECT, "BingeMote lock-screen log")
+                            putExtra(android.content.Intent.EXTRA_TEXT, BMLog.read(context))
+                        }
+                        context.startActivity(android.content.Intent.createChooser(send, null))
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Share the lock-screen controls log",
+                    color = TextC, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    lineHeight = 20.sp, modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null, tint = Muted, modifier = Modifier.size(24.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Clear the log",
+                color = Muted, fontSize = 12.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                        tapHaptic(view, haptics)
+                        BMLog.clear(context)
+                    }
+                    .padding(4.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text("What the bar did, newest last. Nothing leaves the phone unless you share it.", color = Muted, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(14.dp))
+
         SettingsSection("Updates") {
             var checking by remember { mutableStateOf(false) }
             var result by remember { mutableStateOf("") }

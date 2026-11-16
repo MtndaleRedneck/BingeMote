@@ -33,12 +33,20 @@ object MediaControls {
  * Lock-screen media controls (off by default, Phone 8): while the setting is on and a
  * movie plays, the system media surface shows his five controls (skip back, volume
  * down, play/pause, volume up, skip forward - the Unified Remote pill look). No
- * position or duration is published on purpose: a media notification with a seek
- * position renders as Samsung's big "Live notification" card with the system's own
- * prev/pause/next, not the compact pill he wants. A plain MediaSession - the system
- * media controls are exempt from the Android 13 notification permission, so no
- * permission prompt. The service polls VLC itself (the app's own poll stops when the
- * screen is off); every two seconds on the home Wi-Fi, only while the setting is on.
+ * position or duration is published on purpose: the bar shows the place as plain
+ * text but can't be dragged. A plain MediaSession - the system media controls are
+ * exempt from the Android 13 notification permission, so no permission prompt. The
+ * service polls VLC itself (the app's own poll stops when the screen is off); every
+ * two seconds on the home Wi-Fi, only while the setting is on.
+ *
+ * 1.12.4 (Ezzy's One UI 7 recording): the 1.12.3 bar still landed in Samsung's big
+ * "Live notifications" card even with no position/duration published, so position
+ * signals were NOT the trigger - the remaining one is posting the bar ongoing while
+ * playing. The bar now posts NON-ongoing and opts out of Android 16's
+ * promoted-ongoing where that API exists; the 2s poll re-posts it while playback
+ * lasts, so it survives a swipe anyway. Every service line also lands in the
+ * on-phone BMLog ring (Settings has the share row) after the same recording showed
+ * the card vanish mid-use with no logcat on his phone to say why.
  */
 /** 34:12 or 1:50:24. */
 private fun fmtClockSec(sec: Long): String {
@@ -53,7 +61,6 @@ private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
 private const val ACTION_MEDIA_VOL_DOWN = "com.bingemote.action.VOL_DOWN"
 private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
-private const val TAG = "BMBar"
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -66,6 +73,8 @@ class MediaControlsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        BMLog.init(this)
+        BMLog.i("service create")
         val store = Store(this)
         val s = MediaSession(this, "BingeMote")
         val cb = object : MediaSession.Callback() {
@@ -73,10 +82,10 @@ class MediaControlsService : Service() {
             // means (play or pause), and the command is idempotent, so a stale cached
             // state or a double tap can never flip playback the wrong way (Ezzy's
             // dead/inverting pause button was the old toggle guessing wrong).
-            override fun onPlay() { android.util.Log.i(TAG, "session onPlay"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
-            override fun onPause() { android.util.Log.i(TAG, "session onPause"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
-            override fun onRewind() { android.util.Log.i(TAG, "session onRewind"); jump(store, -store.skipSecondarySec) }
-            override fun onFastForward() { android.util.Log.i(TAG, "session onFastForward"); jump(store, store.skipMainSec) }
+            override fun onPlay() { BMLog.i("session onPlay"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
+            override fun onPause() { BMLog.i("session onPause"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
+            override fun onRewind() { BMLog.i("session onRewind"); jump(store, -store.skipSecondarySec) }
+            override fun onFastForward() { BMLog.i("session onFastForward"); jump(store, store.skipMainSec) }
             // The system media surface renders its two extra slots from these actions;
             // they fire his two chosen skip intervals (main forward, secondary back).
             // Headset/AVRCP fallbacks only - the advertised button set lives in
@@ -88,7 +97,7 @@ class MediaControlsService : Service() {
             // One UI's pill reads the notification's actions - both must offer the
             // same five, wired to the same handlers.
             override fun onCustomAction(action: String, extras: android.os.Bundle?) {
-                android.util.Log.i(TAG, "session custom: $action")
+                BMLog.i("session custom: $action")
                 when (action) {
                     ACTION_MEDIA_REWIND -> jump(store, -store.skipMainSec)
                     ACTION_MEDIA_FAST_FORWARD -> jump(store, store.skipMainSec)
@@ -113,7 +122,7 @@ class MediaControlsService : Service() {
     }
 
     private fun run(block: () -> Unit) {
-        scope.launch { try { block(); refreshNow() } catch (_: Exception) {} }
+        scope.launch { try { block(); refreshNow() } catch (e: Exception) { BMLog.w("command FAILED: $e") } }
     }
 
     /** One volume button step (5%). Same contract as the in-app volume row
@@ -140,10 +149,10 @@ class MediaControlsService : Service() {
                 } else {
                     val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
                     Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, (st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100))
-                    android.util.Log.i(TAG, "volume via vlc ${st.volumeRaw} -> ${(st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100)}")
+                    BMLog.i("volume via vlc ${st.volumeRaw} -> ${(st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100)}")
                 }
                 refreshNow()
-            } catch (e: Exception) { android.util.Log.w(TAG, "volume FAILED: $e") }
+            } catch (e: Exception) { BMLog.w("volume FAILED: $e") }
         }
     }
 
@@ -153,9 +162,9 @@ class MediaControlsService : Service() {
                 val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
                 Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword,
                     (st.timeSec + deltaSec).coerceIn(0, st.lengthSec))
-                android.util.Log.i(TAG, "seek ${st.timeSec} -> ${(st.timeSec + deltaSec).coerceIn(0, st.lengthSec)}")
+                BMLog.i("seek ${st.timeSec} -> ${(st.timeSec + deltaSec).coerceIn(0, st.lengthSec)}")
                 refreshNow()
-            } catch (e: Exception) { android.util.Log.w(TAG, "seek FAILED: $e") }
+            } catch (e: Exception) { BMLog.w("seek FAILED: $e") }
         }
     }
 
@@ -164,28 +173,29 @@ class MediaControlsService : Service() {
         when (intent?.action) {
             // The compact bar's skips both use his primary interval (Ezzy's design);
             // the system media card keeps its own secondary-back / main-forward pair.
-            ACTION_MEDIA_REWIND -> { android.util.Log.i(TAG, "tap rewind"); jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
-            ACTION_MEDIA_FAST_FORWARD -> { android.util.Log.i(TAG, "tap forward"); jump(Store(this), Store(this).skipMainSec); return START_STICKY }
+            ACTION_MEDIA_REWIND -> { BMLog.i("tap rewind"); jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
+            ACTION_MEDIA_FAST_FORWARD -> { BMLog.i("tap forward"); jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
                 // Read the live state at tap time and send the opposite. Never trust
                 // the cached lastPlaying: a stale cache is what made the old toggle
                 // feel dead or inverted.
-                android.util.Log.i(TAG, "tap play/pause")
+                BMLog.i("tap play/pause")
                 scope.launch {
                     try {
                         val st = Vlc.status(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword)
                         Vlc.setPaused(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword, st.playing)
-                        android.util.Log.i(TAG, "play/pause sent (was playing=${st.playing})")
+                        BMLog.i("play/pause sent (was playing=${st.playing})")
                         refreshNow()
-                    } catch (e: Exception) { android.util.Log.w(TAG, "play/pause FAILED: $e") }
+                    } catch (e: Exception) { BMLog.w("play/pause FAILED: $e") }
                 }
                 return START_STICKY
             }
-            ACTION_MEDIA_VOL_DOWN -> { android.util.Log.i(TAG, "tap volume down"); volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
-            ACTION_MEDIA_VOL_UP -> { android.util.Log.i(TAG, "tap volume up"); volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_MEDIA_VOL_DOWN -> { BMLog.i("tap volume down"); volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
+            ACTION_MEDIA_VOL_UP -> { BMLog.i("tap volume up"); volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
         if (pollJob?.isActive != true) {
+            BMLog.i("poll loop start")
             pollJob = scope.launch {
                 while (isActive) {
                     pollOnce()
@@ -201,36 +211,48 @@ class MediaControlsService : Service() {
     private fun refreshNow() { refreshRequested = true }
 
     private suspend fun pollOnce() {
-        val store = Store(this)
-        if (!store.lockScreenControls || !store.isConfigured) { stopSelf(); return }
-        if (refreshRequested) { refreshRequested = false } /* poll right away anyway */
-        val st = try {
-            Vlc.status(store.host, store.vlcPort, store.vlcPassword)
-        } catch (e: Vlc.BadAuth) {
-            // The one automatic heal: adopt the PC's current password once; never push ours.
-            if (VlcAuthRepair.tryHealOnce(store)) return // the next poll uses it
-            failures++
-            android.util.Log.w(TAG, "poll auth FAILED ($failures)")
-            if (failures >= 5) { session?.isActive = false; android.util.Log.w(TAG, "poll: session deactivated after $failures failures") }
-            return
-        } catch (e: Exception) {
-            failures++
-            android.util.Log.w(TAG, "poll FAILED ($failures): $e")
-            // VLC gone for good: drop the controls rather than pose over a dead player.
-            if (failures >= 5) { session?.isActive = false; android.util.Log.w(TAG, "poll: session deactivated after $failures failures") }
-            return
+        // 1.12.4: guard the WHOLE body. On 1.12.3 only the VLC call was protected, so
+        // one bad state push or notification post threw out of the poll coroutine and
+        // killed the service silently - the bar simply vanished (Ezzy's recording).
+        try {
+            val store = Store(this)
+            if (!store.lockScreenControls || !store.isConfigured) {
+                BMLog.w("stopSelf: setting off or PC not configured (controls=${store.lockScreenControls}, configured=${store.isConfigured})")
+                stopSelf()
+                return
+            }
+            if (refreshRequested) { refreshRequested = false } /* poll right away anyway */
+            val st = try {
+                Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+            } catch (e: Vlc.BadAuth) {
+                // The one automatic heal: adopt the PC's current password once; never push ours.
+                if (VlcAuthRepair.tryHealOnce(store)) { BMLog.w("poll auth FAILED - adopted the PC's current password"); return } // the next poll uses it
+                failures++
+                BMLog.w("poll auth FAILED ($failures)")
+                if (failures >= 5) { session?.isActive = false; BMLog.w("poll: session deactivated after $failures failures") }
+                return
+            } catch (e: Exception) {
+                failures++
+                BMLog.w("poll FAILED ($failures): $e")
+                // VLC gone for good: drop the controls rather than pose over a dead player.
+                if (failures >= 5) { session?.isActive = false; BMLog.w("poll: session deactivated after $failures failures") }
+                return
+            }
+            failures = 0
+            val s = session ?: return
+            val playing = st.playing
+            if (playing != lastPlaying) BMLog.i("poll: ${if (playing) "playing" else "paused"} ${fmtClockSec(st.timeSec)}/${fmtClockSec(st.lengthSec)}")
+            lastPlaying = playing
+            pushSessionState(s, playing, store)
+            val meta = android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
+                .build()
+            s.setMetadata(meta)
+            s.isActive = true
+            postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
+        } catch (t: Throwable) {
+            BMLog.w("poll crashed, service stays up: $t")
         }
-        failures = 0
-        val s = session ?: return
-        val playing = st.playing
-        lastPlaying = playing
-        pushSessionState(s, playing, store)
-        val meta = android.media.MediaMetadata.Builder()
-            .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
-            .build()
-        s.setMetadata(meta)
-        s.isActive = true
-        postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
     }
 
     // Session state for every surface: play/pause as the only STANDARD action plus
@@ -238,8 +260,7 @@ class MediaControlsService : Service() {
     // reads the session, not the notification) and One UI's pill both offer the same
     // five commands. No REWIND/FAST_FORWARD/SKIP standard actions: stock renders
     // those with misleading labels ("Previous track") - and SKIP_TO_* has no handler.
-    // No position, no buffered end: position signals are what turn a media
-    // notification into Samsung's big "Live notification" card (class doc).
+    // No position, no buffered end: the bar shows the place as text but can't be dragged.
     private fun pushSessionState(s: MediaSession, playing: Boolean, store: Store) {
         val skip = store.skipMainSec
         val state = PlaybackState.Builder()
@@ -277,9 +298,10 @@ class MediaControlsService : Service() {
     // renders the card from the session plus the action list - no custom view of ours.
     // MediaStyle + the session token keeps it a media notification: the media surface
     // hosts it and the Android 13 notification-permission exemption still applies.
-    // No duration or position is published anywhere (see the class doc): those are the
-    // signals that make Samsung promote it to the big "Live notification" card with the
-    // system's own prev/pause/next - his "I don't understand" screenshot.
+    // Posted NON-ongoing (1.12.4): an ongoing playing bar is what Samsung promoted
+    // into its big "Live notifications" card on his One UI 7 phone even with no
+    // position/duration published - and that card's taps reached nothing. The 2s
+    // poll re-posts the bar while playback lasts, so it survives a swipe anyway.
     private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -310,7 +332,7 @@ class MediaControlsService : Service() {
             .setContentTitle(title?.ifBlank { null } ?: "Playing")
             .setContentText("${fmtClockSec(timeSec)} of ${fmtClockSec(lengthSec)}")
             .setContentIntent(openApp)
-            .setOngoing(playing)
+            .setOngoing(false) // see the comment above: ongoing was Samsung's Live-card trigger
             .addAction(act(NotificationArt.skip(px(24), forward = false, label = skipSec.toString()), "Back $skipSec seconds", ACTION_MEDIA_REWIND))
             .addAction(act(NotificationArt.volumeDown(px(24)), "Volume down", ACTION_MEDIA_VOL_DOWN))
             .addAction(act(if (playing) NotificationArt.pause(px(24)) else NotificationArt.play(px(24)), if (playing) "Pause" else "Play", ACTION_MEDIA_PLAY_PAUSE))
@@ -320,6 +342,17 @@ class MediaControlsService : Service() {
                 Notification.MediaStyle().setMediaSession(s.sessionToken)
                     .setShowActionsInCompactView(0, 1, 2, 3, 4),
             )
+            .apply {
+                if (android.os.Build.VERSION.SDK_INT >= 36) {
+                    // Android 16's promoted-ongoing ("Live Update") surface has an
+                    // explicit opt-out; compileSdk predates the constant, so reflect.
+                    try {
+                        Notification.Builder::class.java
+                            .getMethod("setRequestPromotedOngoing", Boolean::class.javaPrimitiveType ?: Boolean::class.java)
+                            .invoke(this, false)
+                    } catch (_: Exception) { }
+                }
+            }
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -328,8 +361,15 @@ class MediaControlsService : Service() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // The started service keeps running when the app card is swiped away; the line
+        // exists so a bar death can be told apart from a recents swipe in the log.
+        BMLog.i("app swiped from recents (service keeps running)")
+        super.onTaskRemoved(rootIntent)
+    }
 
     override fun onDestroy() {
+        BMLog.w("service destroy (bar torn down)")
         stopForeground(STOP_FOREGROUND_REMOVE)
         pollJob?.cancel()
         session?.let { it.isActive = false; it.release() }

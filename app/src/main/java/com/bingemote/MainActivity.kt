@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
+        BMLog.init(this)
         // Screenshot rig: pick the cancel-circle treatment for the cancel captures.
         if (BuildConfig.DEBUG) intent.getStringExtra("cancelstyle")?.let { store.cancelStyle = it }
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
