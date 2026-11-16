@@ -64,7 +64,7 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar(
-                pill = { StatusPill(connected = !remote.unreachable) },
+                pill = { StatusPill(connected = remote.helperDiagnostic == "HTTP 200: paired and answering" && !remote.unpaired) },
                 settings = {
                     HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                         androidx.compose.material3.Icon(
@@ -196,7 +196,7 @@ private fun HomeContent(
                 if (remote.unpaired) "Pair again in Settings. The PC answered but refused the saved token."
                 else if (refused) "The PC answered; VLC refused the saved password."
                 else if (lost) "Trying saved address and UDP discovery"
-                else if (vlcOut) "Helper answers. Pick a film in Movies to start VLC."
+                else if (vlcOut) "PC helper is connected. VLC status is unavailable."
                 else when (s?.state) {
                     "playing" -> "Playing"
                     "paused" -> "Paused"

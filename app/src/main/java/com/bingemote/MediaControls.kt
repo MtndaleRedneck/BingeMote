@@ -15,6 +15,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Starts or stops the lock-screen controls service to match the setting. */
 object MediaControls {
@@ -53,6 +57,9 @@ class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
     private var failures = 0
+    private val pollMutex = Mutex()
+    private var foregroundStarted = false
+    private var lastRender: List<Any?>? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -60,6 +67,14 @@ class MediaControlsService : Service() {
         super.onCreate()
         BMLog.init(this)
         BMLog.i("service create")
+        scope.launch {
+            PlaybackUpdates.latest.collect { snapshot ->
+                if (snapshot != null && snapshot.endpoint == "${Store(this@MediaControlsService).host}:${Store(this@MediaControlsService).vlcPort}") {
+                    lastPlaying = snapshot.status.playing
+                    postMediaNotification(snapshot.status.playing, snapshot.status.timeSec, snapshot.status.lengthSec, snapshot.status.title)
+                }
+            }
+        }
         // A prior version's session is released when its process is replaced.
         // No new session is created here, so the row cannot supply a media token.
     }
@@ -69,6 +84,10 @@ class MediaControlsService : Service() {
      * unmute only if it was muted); otherwise drive VLC volume with the shared mute
      * restore, clamped at 100% like the row (LOW1/LOW2 - the bar used to bypass both
      * and could push VLC to 200%). */
+    private fun currentPlayback(store: Store): VlcStatus = PlaybackUpdates.latest.value
+        ?.takeIf { it.endpoint == "${store.host}:${store.vlcPort}" && android.os.SystemClock.elapsedRealtimeNanos() - it.requestedAt < 5_000_000_000L }
+        ?.status ?: Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+
     private fun volumeBy(store: Store, delta: Int) {
         scope.launch {
             try {
@@ -86,24 +105,25 @@ class MediaControlsService : Service() {
                     val next = (store.preMuteRaw + delta).coerceIn(0, Vlc.VOLUME_100)
                     Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next)
                 } else {
-                    val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+                    val st = currentPlayback(store)
                     Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, (st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100))
                     BMLog.i("volume via vlc ${st.volumeRaw} -> ${(st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100)}")
                 }
                 refreshNow()
-            } catch (e: Exception) { BMLog.w("volume FAILED: $e") }
+            } catch (e: Exception) { if (e is CancellationException) throw e; BMLog.w("volume FAILED: $e") }
         }
     }
 
     private fun jump(store: Store, deltaSec: Int) {
         scope.launch {
             try {
-                val st = Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+                val st = currentPlayback(store)
                 Vlc.seekTo(store.host, store.vlcPort, store.vlcPassword,
                     (st.timeSec + deltaSec).coerceIn(0, st.lengthSec))
+                PlaybackUpdates.publish(android.os.SystemClock.elapsedRealtimeNanos(), st.copy(timeSec = (st.timeSec + deltaSec).coerceIn(0, st.lengthSec)), "${store.host}:${store.vlcPort}")
                 BMLog.i("seek ${st.timeSec} -> ${(st.timeSec + deltaSec).coerceIn(0, st.lengthSec)}")
                 refreshNow()
-            } catch (e: Exception) { BMLog.w("seek FAILED: $e") }
+            } catch (e: Exception) { if (e is CancellationException) throw e; BMLog.w("seek FAILED: $e") }
         }
     }
 
@@ -114,7 +134,11 @@ class MediaControlsService : Service() {
             return START_NOT_STICKY
         }
         // Enter foreground immediately, before the first network poll.
-        postMediaNotification(lastPlaying, 0, 0, null)
+        if (!foregroundStarted) {
+            val recent = PlaybackUpdates.latest.value?.takeIf { android.os.SystemClock.elapsedRealtimeNanos() - it.requestedAt < 10_000_000_000L }
+            lastPlaying = recent?.status?.playing ?: false
+            postMediaNotification(lastPlaying, 0, 0, recent?.status?.title)
+        }
         if (!(BuildConfig.DEBUG && Store(this).demoControls)) {
         if (pollJob?.isActive != true) {
             BMLog.i("poll loop start")
@@ -137,11 +161,12 @@ class MediaControlsService : Service() {
                 BMLog.i("tap play/pause")
                 scope.launch {
                     try {
-                        val st = Vlc.status(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword)
+                        val st = currentPlayback(Store(this@MediaControlsService))
                         Vlc.setPaused(Store(this@MediaControlsService).host, Store(this@MediaControlsService).vlcPort, Store(this@MediaControlsService).vlcPassword, st.playing)
+                        PlaybackUpdates.publish(android.os.SystemClock.elapsedRealtimeNanos(), st.copy(state = if(st.playing) "paused" else "playing"), "${Store(this@MediaControlsService).host}:${Store(this@MediaControlsService).vlcPort}")
                         BMLog.i("play/pause sent (was playing=${st.playing})")
                         refreshNow()
-                    } catch (e: Exception) { BMLog.w("play/pause FAILED: $e") }
+                    } catch (e: Exception) { if (e is CancellationException) throw e; BMLog.w("play/pause FAILED: $e") }
                 }
                 return START_STICKY
             }
@@ -154,9 +179,10 @@ class MediaControlsService : Service() {
 
     @Volatile private var refreshRequested = false
     @Volatile private var lastPlaying = false
-    private fun refreshNow() { refreshRequested = true }
+    private fun refreshNow() { refreshRequested = true; scope.launch { pollOnce() } }
 
-    private suspend fun pollOnce() {
+    private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
+    private suspend fun pollBody() {
         // 1.12.4: guard the WHOLE body. On 1.12.3 only the VLC call was protected, so
         // one bad state push or notification post threw out of the poll coroutine and
         // killed the service silently - the bar simply vanished (Ezzy's recording).
@@ -168,6 +194,7 @@ class MediaControlsService : Service() {
                 return
             }
             if (refreshRequested) { refreshRequested = false } /* poll right away anyway */
+            val requestedAt = android.os.SystemClock.elapsedRealtimeNanos()
             val st = try {
                 Vlc.status(store.host, store.vlcPort, store.vlcPassword)
             } catch (e: Vlc.BadAuth) {
@@ -177,7 +204,7 @@ class MediaControlsService : Service() {
                 BMLog.w("poll auth FAILED ($failures)")
                 if (failures >= 5) { BMLog.w("controls stopped after $failures poll failures"); stopSelf() }
                 return
-            } catch (e: Exception) {
+            } catch (e: Exception) { if (e is CancellationException) throw e;
                 failures++
                 BMLog.w("poll FAILED ($failures): $e")
                 // VLC gone for good: drop the controls rather than pose over a dead player.
@@ -187,9 +214,9 @@ class MediaControlsService : Service() {
             failures = 0
             val playing = st.playing
             if (playing != lastPlaying) BMLog.i("poll: ${if (playing) "playing" else "paused"} ${st.timeSec}s/${st.lengthSec}s")
-            lastPlaying = playing
-            postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
+            PlaybackUpdates.publish(requestedAt, st, "${store.host}:${store.vlcPort}")
         } catch (t: Throwable) {
+            if (t is CancellationException) throw t
             BMLog.w("poll crashed, service stays up: $t")
         }
     }
@@ -199,7 +226,10 @@ class MediaControlsService : Service() {
         postMediaNotification(true, 2052, 6624, "demo.mkv")
     }
 
-    private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
+    @Synchronized private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
+        val config = resources.configuration
+        val key = listOf(playing, title, Store(this).skipMainSec, config.uiMode, resources.displayMetrics.densityDpi)
+        if (foregroundStarted && key == lastRender) return
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             nm.createNotificationChannel(
@@ -264,11 +294,16 @@ class MediaControlsService : Service() {
                 }
             }
             .build()
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
+        if (foregroundStarted) {
+            nm.notify(NOTIF_ID, n)
+        } else if (android.os.Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(NOTIF_ID, n)
         }
+        foregroundStarted = true
+        lastRender = key
+        BMLog.i("notification render playing=$playing")
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -281,7 +316,7 @@ class MediaControlsService : Service() {
     override fun onDestroy() {
         BMLog.w("service destroy (bar torn down)")
         stopForeground(STOP_FOREGROUND_REMOVE)
-        pollJob?.cancel()
+        scope.cancel()
         super.onDestroy()
     }
 }

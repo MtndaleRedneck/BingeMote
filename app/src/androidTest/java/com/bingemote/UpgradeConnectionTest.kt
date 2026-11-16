@@ -99,6 +99,8 @@ class UpgradeConnectionTest {
             }
             assertTrue("Actual release UI shows $wanted",device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(wanted)),20_000))
             if(mode=="unreachable") assertTrue("UDP reply count visible",device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.textContains("UDP 8489: 0 replies")),12_000))
+            val badge=if(mode=="refused" || mode=="vlc") "Connected" else "Disconnected"
+            assertTrue("Badge follows helper, not VLC: $badge",device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(badge)),5_000))
             val copy=device.findObject(androidx.test.uiautomator.By.text("Copy diagnostics"))
             assertNotNull("Copy button visible",copy);copy.click();Thread.sleep(400)
             var report=""

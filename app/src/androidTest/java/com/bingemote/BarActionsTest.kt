@@ -40,6 +40,7 @@ class BarActionsTest {
         @Volatile var time = 30L
         @Volatile var volume = 128
         @Volatile var authFail = false
+        @Volatile var statusDelayMs = 0L
         private val running = AtomicBoolean(true)
         private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val port = server.localPort
@@ -76,6 +77,7 @@ class BarActionsTest {
                                     }
                                     requests += query
                                 } else {
+                                    if (statusDelayMs > 0) Thread.sleep(statusDelayMs)
                                     requests += "status"
                                 }
                                 val body = """{"time":$time,"length":3600,"volume":$volume,"state":"$state","information":{"category":{"meta":{"filename":"demo.mkv"}}}}"""
@@ -122,10 +124,12 @@ class BarActionsTest {
             device.dumpWindowHierarchy(java.io.File("/sdcard/bar-actions-failure-ui.xml"))
             device.takeScreenshot(java.io.File("/sdcard/bar-actions-failure.png"))
         }
+        var lastTapStart = 0L
         fun fire(title: String) {
             device.openNotification()
             val button = device.findObject(UiSelector().description(title))
             if (!button.waitForExists(10_000)) { captureFailure(); fail("no visible custom-row button: $title"); return }
+            lastTapStart = android.os.SystemClock.elapsedRealtime()
             button.click()
         }
         fun hasLabel(title: String): Boolean {
@@ -139,8 +143,13 @@ class BarActionsTest {
                 if (!hasLabel(it)) { captureFailure(); fail("missing visible button: $it") }
             }
             // Pause: playing -> pl_forcepause must reach the PC.
+            stub.statusDelayMs = 1800
             fire("Pause")
             waitFor("pl_forcepause at stub", 10_000) { stub.requests.any { it.contains("pl_forcepause") } }
+            val tapToReceipt = android.os.SystemClock.elapsedRealtime() - lastTapStart
+            println("BAR_LATENCY_MS=$tapToReceipt (status endpoint delayed1800ms)")
+            if(tapToReceipt >= 1600) fail("tap waited on status poll: ${tapToReceipt}ms")
+            stub.statusDelayMs = 0
             // The card must follow the PC's state: stub is paused, the label flips to Play.
             waitFor("label flips to Play", 15_000) { hasLabel("Play") }
             fire("Play")

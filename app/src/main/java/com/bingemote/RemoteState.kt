@@ -8,6 +8,10 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -142,7 +146,8 @@ class RemoteState(
         catch (e: Vlc.BadAuth) { throw e }
         catch (e: Vlc.ConnectTimeout) { throw e }
         catch (e: HelperClient.ConnectTimeout) { throw e }
-        catch (e: Exception) { block() }
+        catch (e: Exception) {
+            if (e is CancellationException) throw e; block() }
     }
 
     fun start() {
@@ -160,7 +165,11 @@ class RemoteState(
         pollJob = null
     }
 
-    suspend fun pollOnce() {
+    private val pollMutex = Mutex()
+    suspend fun pollOnce() = pollMutex.withLock {
+        supervisorScope { pollBody(this) }
+    }
+    private suspend fun pollBody(pollScope: CoroutineScope) {
         // The helper-notice state belongs to the pairing it was learned from: a new
         // or cleared token makes it stale. Reset it here so a re-paired phone never
         // sees "pair again" (or a leftover helper warning) about its NEW pairing.
@@ -180,13 +189,15 @@ class RemoteState(
         // While VLC is closed, re-check it every 4th cycle instead of every cycle (fewer
         // dead-end requests); the helper ping still runs every cycle either way.
         val skipVlc = vlcClosed && (closedPolls++ % CmdPolicy.CLOSED_POLL_EVERY != 0)
+        val vlcRequestAt = android.os.SystemClock.elapsedRealtimeNanos()
         val vlcDeferred = if (skipVlc) null
-            else scope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
+            else pollScope.async { twiceIO { Vlc.status(store.host, store.vlcPort, store.vlcPassword) } }
         val volDeferred = if (store.helperToken.isNotBlank())
-            scope.async {
+            pollScope.async {
                 try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } }
                 catch (e: HelperClient.BadToken) { helperDiagnostic = "HTTP ${e.code}: pairing token rejected"; throw e }
-                catch (e: Exception) { helperDiagnostic = ConnectionDiagnostics.helperFailure(e); null }
+                catch (e: Exception) {
+            if (e is CancellationException) throw e; helperDiagnostic = ConnectionDiagnostics.helperFailure(e); null }
             }
         else null
         // The helper's answer counts even when VLC's does not: the volume reading used to
@@ -220,6 +231,7 @@ class RemoteState(
             val s = vlcDeferred!!.await()
             status = s
             vlcDiagnostic = "HTTP 200: answering"
+            PlaybackUpdates.publish(vlcRequestAt, s, "${store.host}:${store.vlcPort}")
             // A new video clears the remembered subtitle pick; the sheet then shows the
             // file's own selected track instead of a checkmark from the previous video.
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
@@ -240,13 +252,16 @@ class RemoteState(
             val healed = withContext(Dispatchers.IO) { VlcAuthRepair.tryHealOnce(store) }
             if (healed) { vlcRefused = false; return } // the next poll uses the fresh password
             vlcRefused = true
+            status = null
             failures = UNREACHABLE_AFTER
             unreachable = true
         } catch (e: Exception) {
+            if (e is CancellationException) throw e;
             vlcDiagnostic = ConnectionDiagnostics.failureKind(e)
             failures++
             if (failures >= UNREACHABLE_AFTER) {
                 unreachable = true
+                status = null // Do not present old time/playback as live during a failed connection.
                 // The PC answering its helper but not VLC means VLC simply isn't open.
                 vlcClosed = store.helperToken.isNotBlank() &&
                     withContext(Dispatchers.IO) {
