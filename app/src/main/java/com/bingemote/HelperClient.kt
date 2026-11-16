@@ -24,13 +24,13 @@ object HelperClient {
     private const val DISCOVER_MAGIC = "BINGEMOTE_DISCOVER_V1"
     private const val REPLY_MAGIC = "BINGEMOTE_HERE_V1"
 
-    class Unreachable(val msg: String) : Exception(msg)
+    class Unreachable(val msg: String, val code: Int? = null, cause: Throwable? = null) : Exception(msg, cause)
     /** Shown to the user. The raw socket text ("failed to connect to /192.168.1.5 (port 8488) after 2500ms") used to leak into Movies. */
     private const val NO_PC = "Can't reach BingeMote on the PC. Check that the PC is on and BingeMote is open."
-    class BadToken(val msg: String) : Exception(msg)
+    class BadToken(val msg: String, val code: Int = 401) : Exception(msg)
     class BadPairCode(val msg: String) : Exception(msg)
     /** The PC could not be connected to at all (off, sleeping, new address). */
-    class ConnectTimeout(val msg: String) : Exception(msg)
+    class ConnectTimeout(val msg: String, cause: Throwable? = null) : Exception(msg, cause)
 
     /** The mouse screen's live connection: while it is open, move/scroll/zoom/button go
      * out as fire-and-forget frames on it and the HTTP request below never happens. */
@@ -60,10 +60,10 @@ object HelperClient {
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
-        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
-        catch (e: Exception) { throw Unreachable(NO_PC) }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: Exception) { throw Unreachable(NO_PC, cause = e) }
         finally { releaseQuietly(c) }
     }
 
@@ -86,10 +86,10 @@ object HelperClient {
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
-        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
-        catch (e: Exception) { throw Unreachable(NO_PC) }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: Exception) { throw Unreachable(NO_PC, cause = e) }
         finally { releaseQuietly(c) }
     }
 
@@ -100,14 +100,14 @@ object HelperClient {
      */
     private fun failure(c: HttpURLConnection): Exception {
         val code = c.responseCode
-        if (code == 401 || code == 403) return BadToken("The PC rejected the pairing token.")
+        if (code == 401 || code == 403) return BadToken("The PC rejected the pairing token.", code)
         val detail = try {
             c.errorStream?.use { JSONObject(it.readBytes().toString(Charsets.UTF_8)).optString("detail") }
                 ?.takeIf { it.isNotBlank() }
         } catch (e: Exception) { null }
-        if (detail != null) return Unreachable(detail)
-        if (code == 404) return Unreachable("BingeMote PC is too old for this app.")
-        return Unreachable("BingeMote PC answered with error $code.")
+        if (detail != null) return Unreachable(detail, code)
+        if (code == 404) return Unreachable("BingeMote PC is too old for this app.", code)
+        return Unreachable("BingeMote PC answered with error $code.", code)
     }
 
     /** Let OkHttp pool the socket (keep-alive); disconnect() forced a fresh TCP handshake on every
@@ -178,10 +178,10 @@ object HelperClient {
         } catch (e: BadToken) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
-        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC) }
-        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC) }
-        catch (e: Exception) { throw Unreachable(NO_PC) }
+        catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.ConnectException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: java.net.UnknownHostException) { throw ConnectTimeout(NO_PC, e) }
+        catch (e: Exception) { throw Unreachable(NO_PC, cause = e) }
         finally { releaseQuietly(c) }
     }
 
@@ -244,7 +244,7 @@ object HelperClient {
             }
         } catch (e: BadPairCode) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(NO_PC) }
+        catch (e: Exception) { throw Unreachable(NO_PC, cause = e) }
         finally { releaseQuietly(c) }
     }
 
@@ -376,7 +376,7 @@ object HelperClient {
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("X-BingeMote-Token", token)
             // Connect explicitly so a dead PC (connect timeout) is told apart from an error answer.
-            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
+            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC, e) }
             c.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
             if (c.responseCode == 401) throw BadToken("phone no longer paired")
             if (c.responseCode !in 200..299) throw Unreachable("volume get failed (${c.responseCode})")
@@ -386,7 +386,7 @@ object HelperClient {
         } catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
         catch (e: BadToken) { throw e }
-        catch (e: Exception) { throw Unreachable(NO_PC) }
+        catch (e: Exception) { throw Unreachable(NO_PC, cause = e) }
         finally { releaseQuietly(c) }
     }
 

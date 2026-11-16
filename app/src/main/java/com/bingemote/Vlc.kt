@@ -47,12 +47,12 @@ object Vlc {
     /** One volume button step: 5% in VLC units. */
     const val VOLUME_STEP = 13
 
-    class Unreachable(val msg: String) : Exception(msg)
+    class Unreachable(val msg: String, cause: Throwable? = null) : Exception(msg, cause)
     class BadAuth(val msg: String) : Exception(msg)
     /** VLC answered, but with an error - NOT a connection failure. */
-    class VlcError(val msg: String) : Exception(msg)
+    class VlcError(val msg: String, val code: Int? = null) : Exception(msg)
     /** The connect itself timed out: VLC (or the PC) is gone; retrying just doubles the wait. */
-    class ConnectTimeout(val msg: String) : Exception(msg)
+    class ConnectTimeout(val msg: String, cause: Throwable? = null) : Exception(msg, cause)
 
     private fun encode(v: String) = URLEncoder.encode(v, "UTF-8")
 
@@ -65,17 +65,17 @@ object Vlc {
             c.setRequestProperty("Authorization", "Basic $creds")
             // Connect explicitly, so a dead VLC (connect timeout) is told apart from VLC
             // answering with an error - Movies only switches to the PC app on the former.
-            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout("VLC did not answer in time.") }
+            try { c.connect() } catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout("VLC did not answer in time.", e) }
             when (c.responseCode) {
                 200 -> return c.inputStream.use { it.readText(2 * 1024 * 1024) }
                 401 -> throw BadAuth("VLC rejected the password.")
-                else -> throw VlcError("VLC answered with error ${c.responseCode}.")
+                else -> throw VlcError("VLC answered with error ${c.responseCode}.", c.responseCode)
             }
         } catch (e: BadAuth) { throw e }
         catch (e: VlcError) { throw e }
         catch (e: ConnectTimeout) { throw e }
         catch (e: Unreachable) { throw e }
-        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach VLC.") }
+        catch (e: Exception) { throw Unreachable(e.message ?: "Could not reach VLC.", e) }
         finally { releaseQuietly(c) }
     }
 

@@ -25,6 +25,17 @@ class RemoteState(
     val store: Store,
     private val scope: CoroutineScope,
 ) {
+    var helperDiagnostic by mutableStateOf("Not checked yet"); private set
+    var vlcDiagnostic by mutableStateOf("Not checked yet"); private set
+    var discoveryDiagnostic by mutableStateOf("UDP 8489: not searched yet"); private set
+    var discoveryReplies by mutableStateOf<Int?>(null); private set
+    var checkedAt by mutableStateOf(""); private set
+    private fun markChecked() { checkedAt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date()) }
+    fun diagnosticText(): String = "BingeMote ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
+        "Saved helper: ${store.host}:${store.helperPort}\nSaved VLC: ${store.host}:${store.vlcPort}\n" +
+        "Helper: $helperDiagnostic\nVLC: $vlcDiagnostic\n$discoveryDiagnostic\nLast poll: $checkedAt\n" +
+        "Notification permission: ${MediaControls.allowed(app)}; controls enabled: ${store.lockScreenControls}"
+
     var status by mutableStateOf<VlcStatus?>(null)
         private set
     var unreachable by mutableStateOf(false)
@@ -163,6 +174,7 @@ class RemoteState(
             helperDownAt = 0L
         }
         if (!store.isConfigured) return
+        markChecked()
         // Status and Windows volume in parallel: a blocked helper used to stall the whole
         // poll (time and seek bar only updated every ~11s when VLC answered but the helper didn't).
         // While VLC is closed, re-check it every 4th cycle instead of every cycle (fewer
@@ -173,8 +185,8 @@ class RemoteState(
         val volDeferred = if (store.helperToken.isNotBlank())
             scope.async {
                 try { twiceIO { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } }
-                catch (e: HelperClient.BadToken) { throw e }
-                catch (e: Exception) { null }
+                catch (e: HelperClient.BadToken) { helperDiagnostic = "HTTP ${e.code}: pairing token rejected"; throw e }
+                catch (e: Exception) { helperDiagnostic = ConnectionDiagnostics.helperFailure(e); null }
             }
         else null
         // The helper's answer counts even when VLC's does not: the volume reading used to
@@ -182,6 +194,7 @@ class RemoteState(
         if (volDeferred != null) {
             val vm = try { volDeferred.await() } catch (e: HelperClient.BadToken) { unpaired = true; null }
             if (vm != null) {
+                helperDiagnostic = "HTTP 200: paired and answering"
                 helperFailures = 0
                 shareMute(vm.second)
                 helperDown = false
@@ -201,11 +214,12 @@ class RemoteState(
                 helperNotice = helperDown && !unpaired &&
                     System.currentTimeMillis() - helperDownAt >= 5000
             }
-        } else winVolume = null
+        } else { winVolume = null; helperDiagnostic = "No saved pairing token" }
         if (skipVlc) return
         try {
             val s = vlcDeferred!!.await()
             status = s
+            vlcDiagnostic = "HTTP 200: answering"
             // A new video clears the remembered subtitle pick; the sheet then shows the
             // file's own selected track instead of a checkmark from the previous video.
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
@@ -220,6 +234,7 @@ class RemoteState(
             connecting = false
             expectingVlc = false
         } catch (e: Vlc.BadAuth) {
+            vlcDiagnostic = "HTTP 401: password refused"
             // The one automatic heal: adopt the PC's current password once. The phone never
             // pushes its stored copy at the PC - a refusal can be an intentional PC change.
             val healed = withContext(Dispatchers.IO) { VlcAuthRepair.tryHealOnce(store) }
@@ -228,6 +243,7 @@ class RemoteState(
             failures = UNREACHABLE_AFTER
             unreachable = true
         } catch (e: Exception) {
+            vlcDiagnostic = ConnectionDiagnostics.failureKind(e)
             failures++
             if (failures >= UNREACHABLE_AFTER) {
                 unreachable = true
@@ -254,6 +270,11 @@ class RemoteState(
                     return@launch
                 }
                 val found = HelperClient.discover(3000)
+                withContext(Dispatchers.Main) {
+                    discoveryReplies = found.size
+                    val endpoints = found.joinToString(", ") { "${it.host}:${it.port}" }
+                    discoveryDiagnostic = "UDP 8489: ${found.size} replies" + if (endpoints.isBlank()) "" else " ($endpoints)"
+                }
                 // The pairing token is the PC's identity; its name is only a label.
                 val match = found.firstOrNull { HelperClient.ping(it.host, it.port, store.helperToken) }
                 if (match != null) {
@@ -262,6 +283,7 @@ class RemoteState(
                         store.helperPort = match.port
                         publishAddress(match.host, match.port, store.helperToken)
                         failures = 0
+                        discoveryDiagnostic += "; saved-token match adopted"
                     }
                 }
             } finally {

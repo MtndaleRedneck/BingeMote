@@ -18,7 +18,7 @@ class UpgradeConnectionTest {
     private val ctx get() = inst.targetContext
     private val token = "upgrade-fixture-token"
     private val password = "upgrade-fixture-password"
-    private class Pc(private val token: String, private val password: String) : AutoCloseable {
+    private class Pc(private val token: String, private val password: String, private val helperCode: Int = 200, private val vlcCode: Int = 200) : AutoCloseable {
         val helper = AtomicInteger(); val vlc = AtomicInteger()
         private val servers = listOf(18488,18080).map { ServerSocket(it, 50, InetAddress.getByName("127.0.0.1")) }
         @Volatile private var live = true
@@ -32,7 +32,8 @@ class UpgradeConnectionTest {
                     val body=if(!good) "{}" else if(index==0) {
                         helper.incrementAndGet(); if(request.contains("/volume/get")) """{"volume":50,"mute":false}""" else """{"ok":true}"""
                     } else { vlc.incrementAndGet(); """{"time":30,"length":3600,"volume":128,"state":"playing","information":{"category":{"meta":{"filename":"fixture.mkv"}}}}""" }
-                    val bytes=body.toByteArray();sock.getOutputStream().write(("HTTP/1.1 "+(if(good) "200 OK" else "401 Unauthorized")+"\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray()+bytes)
+                    val code = if(!good) 401 else if(index==0) helperCode else vlcCode
+                    val bytes=body.toByteArray();sock.getOutputStream().write(("HTTP/1.1 "+"$code Fixture"+"\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray()+bytes)
                 }
             } } catch (_:Exception) { }
         } } }
@@ -47,7 +48,7 @@ class UpgradeConnectionTest {
         // Sync disk before the package replacement. Values remain encrypted at rest.
         ctx.getSharedPreferences("settings",0).edit().putString("upgradeFixture","seeded124").commit()
         Thread.sleep(500)
-        println("UPGRADE: old release seeded ordinary+encrypted preferences; helper/VLC auth passed")
+        println("UPGRADE: prior release seeded ordinary+encrypted preferences; helper/VLC auth passed")
     }
     @Test fun verifyNewReleaseAfterUpdate() {
         val s=Store(ctx)
@@ -77,6 +78,39 @@ class UpgradeConnectionTest {
                     device.pressHome();Thread.sleep(500)
                 } finally { scope.cancel() }
             }
+        }
+    }
+
+    @Test fun diagnosticReasons() {
+        val mode=InstrumentationRegistry.getArguments().getString("scenario") ?: "token"
+        val s=Store(ctx)
+        s.pcName="Diagnostic fixture"; s.host="127.0.0.1";s.helperPort=if(mode=="unreachable") 18489 else 18488;s.vlcPort=18080
+        s.helperToken=token;s.vlcPassword=password;s.setupDone=true;s.lockScreenControls=false
+        val hc=if(mode=="token") 401 else 200
+        val vc=if(mode=="refused" || mode=="token") 401 else 503
+        Pc(token,password,hc,vc).use {
+            inst.runOnMainSync { ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            val device=UiDevice.getInstance(inst)
+            val wanted=when(mode) {
+                "token" -> "PC rejected this phone's pairing"
+                "refused" -> "VLC refused the password"
+                "vlc" -> "VLC isn't answering"
+                else -> "No connection at 127.0.0.1"
+            }
+            assertTrue("Actual release UI shows $wanted",device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text(wanted)),20_000))
+            if(mode=="unreachable") assertTrue("UDP reply count visible",device.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.textContains("UDP 8489: 0 replies")),12_000))
+            val copy=device.findObject(androidx.test.uiautomator.By.text("Copy diagnostics"))
+            assertNotNull("Copy button visible",copy);copy.click();Thread.sleep(400)
+            var report=""
+            inst.runOnMainSync {
+                val clip=ctx.getSystemService(android.content.ClipboardManager::class.java).primaryClip
+                report=clip?.getItemAt(0)?.text?.toString() ?: ""
+            }
+            assertTrue(report.contains("Saved helper: 127.0.0.1:"))
+            assertFalse(report.contains(token));assertFalse(report.contains(password))
+            assertTrue("screenshot",device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"diagnostic-$mode.png")))
+            println("DIAGNOSTIC $mode: $report")
+            device.pressHome()
         }
     }
 }

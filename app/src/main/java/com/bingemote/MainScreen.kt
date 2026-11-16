@@ -168,6 +168,8 @@ private fun HomeContent(
     onMouse: () -> Unit,
 ) {
     val s = remote.status
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
     // Now playing
     // When the PC is unreachable the card itself says so; no overlay, no Retry.
     // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
@@ -185,15 +187,16 @@ private fun HomeContent(
     ) {
         Column {
             Text(
-                if (refused) "VLC refused the password" else if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
+                if (remote.unpaired || refused || lost || vlcOut) ConnectionDiagnostics.title(remote.unpaired, refused, lost, vlcOut, remote.store.host)
                 else s?.title?.let { displayName(it).ifBlank { "Nothing playing" } } ?: "Nothing playing",
                 color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
                 maxLines = 2,
             )
             Text(
-                if (refused) "If you changed it on the PC, re-pair in Settings or set it back by hand"
-                else if (lost) "Trying to reconnect"
-                else if (vlcOut) "Pick a film in Movies and it starts by itself"
+                if (remote.unpaired) "Pair again in Settings. The PC answered but refused the saved token."
+                else if (refused) "The PC answered; VLC refused the saved password."
+                else if (lost) "Trying saved address and UDP discovery"
+                else if (vlcOut) "Helper answers. Pick a film in Movies to start VLC."
                 else when (s?.state) {
                     "playing" -> "Playing"
                     "paused" -> "Paused"
@@ -204,7 +207,7 @@ private fun HomeContent(
             // Strictly-necessary helper notices ride the hero itself - no second card.
             // A removed pairing says pair again; a silent helper says what it affects.
             // Neither shows while the hero already says the PC is unreachable.
-            if (!lost) {
+            if (!lost && !remote.unpaired) {
                 if (remote.unpaired) {
                     Spacer(Modifier.height(6.dp))
                     Text("This phone isn't paired with the PC anymore - pair again.", color = Color(0xFF3D2A12), fontSize = 13.sp)
@@ -213,6 +216,13 @@ private fun HomeContent(
                     Text("BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume.", color = Color(0xFF3D2A12), fontSize = 13.sp)
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Text("Saved ${remote.store.host}:${remote.store.helperPort} | Helper: ${remote.helperDiagnostic}\nVLC: ${remote.vlcDiagnostic}\n${remote.discoveryDiagnostic}",
+                color = Color(0xFF3D2A12), fontSize = 11.sp)
+            androidx.compose.material3.TextButton(onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(remote.diagnosticText()))
+                copied = true
+            }) { Text(if (copied) "Diagnostics copied" else "Copy diagnostics", color = Color(0xFF1B1B1E)) }
             // Screenshot-rig only: the proposed helper/unpaired note rendered inside the
             // hero for the review captures. Never set outside the rig; release never shows it.
             if (BuildConfig.DEBUG) remote.mockHeroNote?.let {

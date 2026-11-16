@@ -16,3 +16,11 @@ adb logcat -d > evidence/logcat.txt
 adb exec-out screencap -p > evidence/after-upgrade.png
 grep -q '^OK (1 test)' evidence/verify126-denied.txt
 grep -q '^OK (1 test)' evidence/verify126-granted.txt
+
+for scenario in token refused vlc unreachable; do
+  adb shell am force-stop com.bingemote
+  adb shell am instrument -w -e scenario "$scenario" -e class 'com.bingemote.UpgradeConnectionTest#diagnosticReasons' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee "evidence/diagnostic-$scenario.txt"
+  adb pull "/sdcard/Android/data/com.bingemote/files/diagnostic-$scenario.png" "evidence/diagnostic-$scenario.png"
+  grep -q '^OK (1 test)' "evidence/diagnostic-$scenario.txt"
+done
+adb logcat -d > evidence/logcat.txt
