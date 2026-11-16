@@ -70,12 +70,10 @@ Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX
 ; already elevated, so the task is created without any extra prompt; the broker
 ; itself starts at the next sign-in.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-broker.ps1"""; Flags: runhidden waituntilterminated
-; The interactive install is elevated; without runasoriginaluser the postinstall
-; launch serves from the INSTALLING ADMIN's session and profile when a standard user
-; elevates with admin credentials: that copy is unpaired (pairing lives in the user's
-; own profile) and holds port 8488, so the user's own later launches cannot bind -
-; the phone "doesn't connect at all" (Ezzy, Nov 15 2026). The silent entry below
-; already had the flag; scripts/upgrade-e2e.ps1 phase 3 pins the failure signature.
+; Explicitly state Inno's existing postinstall default. This flag is NOT a fix:
+; postinstall already implies runasoriginaluser. If Setup was started elevated,
+; it cannot recover an earlier non-elevated user's credentials. The forced
+; foreign-profile test models a failure signature, not its origin on a user's PC.
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent runasoriginaluser
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
