@@ -115,4 +115,26 @@ class UpgradeConnectionTest {
             device.pressHome()
         }
     }
+    @Test fun notificationSettingPermissionPopup() {
+        val d=UiDevice.getInstance(inst);val s=Store(ctx)
+        s.setupDone=true;s.lockScreenControls=false
+        val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
+        ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
+        inst.runOnMainSync { ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        val settings=d.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.desc("Settings")),10_000)
+        assertNotNull(settings);settings.click()
+        repeat(6) {
+            if(!d.hasObject(androidx.test.uiautomator.By.text("Notification shade controls")))
+                d.swipe(d.displayWidth/2,d.displayHeight*3/4,d.displayWidth/2,d.displayHeight/3,25)
+        }
+        assertFalse(d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
+        val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull(toggle);toggle.click()
+        assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000))
+        assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again.png")))
+        d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
+        if(again) assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.android.settings")),8_000))
+        else assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.google.android.permissioncontroller")),8_000))
+        d.pressBack();d.pressHome()
+    }
+
 }

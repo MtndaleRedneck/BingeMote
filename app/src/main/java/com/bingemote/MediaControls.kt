@@ -25,6 +25,17 @@ object MediaControls {
     fun allowed(context: Context): Boolean =
         androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
 
+    fun requestOrOpenSettings(activity: android.app.Activity) {
+        val prefs = activity.getSharedPreferences("notification_permission", Context.MODE_PRIVATE)
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean("asked",false)) {
+            prefs.edit().putBoolean("asked",true).apply()
+            requestPermission(activity)
+        } else {
+            activity.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,activity.packageName))
+        }
+    }
+
     fun requestPermission(activity: android.app.Activity) {
         if (android.os.Build.VERSION.SDK_INT >= 33 && !allowed(activity)) {
             androidx.core.app.ActivityCompat.requestPermissions(activity,
