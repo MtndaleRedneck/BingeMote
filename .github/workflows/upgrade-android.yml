@@ -1,7 +1,7 @@
-name: Android signed in-place upgrade regression
+name: Android diagnostic release upgrade
 on:
   push:
-    branches: [i1/upgrade126]
+    branches: [fix/diagnostic127]
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,47 +12,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: i1/oneui
-          path: old
-      - uses: actions/checkout@v4
-        with:
           path: new
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
-      - name: Build both signed release APKs and same-key instrumentation
+      - name: Test and build signed diagnostic release
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: bingemote
+          OLD_URL: ${{ secrets.UPGRADE_126_URL }}
         run: |
           set -eu
           trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
-          (cd old && ./gradlew --no-daemon assembleRelease)
-          (cd new && ./gradlew --no-daemon assembleRelease assembleDebugAndroidTest)
+          (cd new && ./gradlew --no-daemon testDebugUnitTest assembleRelease assembleDebugAndroidTest)
+          mkdir -p old/app/build/outputs/apk/release
+          curl --fail --silent --show-error "$OLD_URL" -o old/app/build/outputs/apk/release/app-release.apk
+          echo '1181896542b366dd79bede6f175daecbb75807a26a5cc2f909b1cd075aadaf5a  old/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
           BT=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
           "$BT" sign --ks "$KEYSTORE_FILE" --ks-key-alias bingemote --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out new-test.apk new/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-          "$BT" verify --print-certs old/app/build/outputs/apk/release/app-release.apk
-          "$BT" verify --print-certs new/app/build/outputs/apk/release/app-release.apk
-          sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk new-test.apk
-      - name: Use exact delivered release assets (private expiring URLs)
-        env:
-          OLD_URL: ${{ secrets.UPGRADE_124_URL }}
-          NEW_URL: ${{ secrets.UPGRADE_126_URL }}
-        run: |
-          set -eu
-          curl --fail --silent --show-error "$OLD_URL" -o old/app/build/outputs/apk/release/app-release.apk
-          curl --fail --silent --show-error "$NEW_URL" -o new/app/build/outputs/apk/release/app-release.apk
-          echo 'ca4baf0f288d2ecaae6b199c8c4edf795e78220d0a329c47d6633d739c460e82  old/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
-          echo '1181896542b366dd79bede6f175daecbb75807a26a5cc2f909b1cd075aadaf5a  new/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
-          BT=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          "$BT" verify --verbose --print-certs old/app/build/outputs/apk/release/app-release.apk
           "$BT" verify --verbose --print-certs new/app/build/outputs/apk/release/app-release.apk
-          sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk
+          sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk new-test.apk
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -71,3 +55,8 @@ jobs:
         with:
           name: android-upgrade-evidence
           path: evidence/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-diagnostic127
+          path: new/app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
