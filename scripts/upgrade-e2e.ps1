@@ -2,10 +2,10 @@
 # connect at all" after installing over the rev16 build). The main helper-e2e only
 # ever reinstalls the SAME build over itself on a clean machine; this one installs
 # the REV16 build, pairs a simulated phone, then upgrades to this branch's build and
-# proves the paired phone still connects. A third phase documents the foreign-session
-# failure signature (a copy started by an elevated installer under a different
-# account holds port 8488 unpaired while the user's own copy cannot bind) and proves
-# the phone path heals once the foreign copy is gone.
+# proves the paired phone still connects in this runner fixture. A third phase
+# forces a SYSTEM serving copy to reproduce a foreign-profile bind/token failure,
+# then requires the installer to recover the user's authenticated serving copy.
+# This does not establish the origin of the reported failure on Ezzy's PC.
 #
 # Installer waits have a four-minute deadline and emit their log tails every 15s.
 # HTTP, CIM and scheduled-task operations use their own bounds. These are diagnostic
@@ -119,17 +119,16 @@ try {
   # SURVIVED the upgrade: the old token must still authenticate.
   $r = Invoke-Helper '/ping' '{}' $token
   Assert ($r.code -eq 200) "paired phone still connects after the rev16 -> round-3 upgrade (got $($r.code): $($r.body))"
-  Write-Host "PAIRING SURVIVED THE UPGRADE - the plain rev16 -> round-3 path is not the bug."
+  Write-Host "PAIRING SURVIVED THE UPGRADE in this runner fixture; actual PC cause remains unconfirmed."
 
-  Write-Host "== Phase 3: foreign-session copy - the suspected real-world failure signature =="
-  # A hand-run (interactive) install launches {app}\BingeMote.exe ELEVATED; for a
-  # standard user elevating with admin credentials that first serving copy lives in
-  # the ADMIN's session/profile. Simulate the shape with a SYSTEM copy (same class:
-  # foreign session, foreign profile), deterministically:
-  #   SYSTEM copy binds 8488 first -> the user's own copy cannot bind
-  #   ("Could not start listening" in the USER's helper.log) and the paired token is
-  #   401 against the foreign copy's empty profile. Then prove the phone path heals
-  #   once the foreign copy is gone.
+  Write-Host "== Phase 3: forced foreign-session copy - constructed failure signature =="
+  # Deliberately start a SYSTEM serving copy with a separate profile. This is a
+  # constructed fault, not proof that interactive Setup causes it. Inno already
+  # defaults postinstall entries to runasoriginaluser; an explicitly elevated
+  # Setup cannot recover credentials from before its own launch.
+  # SYSTEM binds 8488 first, the user copy cannot bind, and the user's paired token
+  # gets 401 from SYSTEM's empty profile. Then the installer must recover service
+  # and the original token without manual process cleanup.
   Set-TaskState 'BingeMote Watchdog' $false
   Set-TaskState 'BingeMote Input Broker' $false
   Stop-AllCopies
