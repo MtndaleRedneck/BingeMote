@@ -163,6 +163,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 126) {
+            BMLog.i("notification permission result allowed=${MediaControls.allowed(this)}")
+            MediaControls.sync(this, store)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (BuildConfig.DEBUG) handleControlExtras(intent)
