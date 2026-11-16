@@ -50,13 +50,15 @@ function ServingCopies {
   # 8488 socket to PID 4 (System) and GetOwner on it returns nothing - the socket
   # owner can NEVER identify the serving user. Identify the serving copy by the
   # running process instead: BingeMote.exe instances at the installed path, with
-  # each one's real account. Callers assert on the account set; Wait-Listen has
+  # each tray/server copy's real account. Exclude only the explicit broker roles,
+  # which intentionally run as SYSTEM and never serve HTTP. Callers assert on the
+  # remaining account set; Wait-Listen has
   # already proven 8488 is being served.
   @(Get-CimInstance Win32_Process -OperationTimeoutSec 15 -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.ExecutablePath -eq $appExe } |
+    Where-Object { $_.ExecutablePath -eq $appExe -and $_.CommandLine -notmatch '(?:^|\s)--(?:broker-launcher|input-broker)(?:\s|$)' } |
     ForEach-Object {
       $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner -OperationTimeoutSec 15
-      [pscustomobject]@{ Pid = $_.ProcessId; User = "$($owner.Domain)\$($owner.User)" }
+      [pscustomobject]@{ Pid = $_.ProcessId; Session = $_.SessionId; CommandLine = $_.CommandLine; User = "$($owner.Domain)\$($owner.User)" }
     })
 }
 
