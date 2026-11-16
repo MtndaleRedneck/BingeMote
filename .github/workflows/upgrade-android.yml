@@ -1,7 +1,7 @@
 name: Android diagnostic release upgrade
 on:
   push:
-    branches: [fix/diagnostic127]
+    branches: [fix/connection128]
   workflow_dispatch:
 permissions:
   contents: read
@@ -57,6 +57,6 @@ jobs:
           path: evidence/*
       - uses: actions/upload-artifact@v4
         with:
-          name: signed-diagnostic127
+          name: signed-connection128
           path: new/app/build/outputs/apk/release/app-release.apk
           retention-days: 1
