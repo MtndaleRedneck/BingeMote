@@ -39,6 +39,20 @@ jobs:
           "$BT" verify --print-certs old/app/build/outputs/apk/release/app-release.apk
           "$BT" verify --print-certs new/app/build/outputs/apk/release/app-release.apk
           sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk new-test.apk
+      - name: Use exact delivered release assets (private expiring URLs)
+        env:
+          OLD_URL: ${{ secrets.UPGRADE_124_URL }}
+          NEW_URL: ${{ secrets.UPGRADE_126_URL }}
+        run: |
+          set -eu
+          curl --fail --silent --show-error "$OLD_URL" -o old/app/build/outputs/apk/release/app-release.apk
+          curl --fail --silent --show-error "$NEW_URL" -o new/app/build/outputs/apk/release/app-release.apk
+          echo 'ca4baf0f288d2ecaae6b199c8c4edf795e78220d0a329c47d6633d739c460e82  old/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
+          echo '1181896542b366dd79bede6f175daecbb75807a26a5cc2f909b1cd075aadaf5a  new/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
+          BT=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$BT" verify --verbose --print-certs old/app/build/outputs/apk/release/app-release.apk
+          "$BT" verify --verbose --print-certs new/app/build/outputs/apk/release/app-release.apk
+          sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
