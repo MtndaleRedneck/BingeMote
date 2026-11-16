@@ -118,6 +118,14 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
           Move-Item helper/Output/BingeMote-PC-*.exe .
 
+      # Review verification: the exact artifact hashes in the run log (Instinct 2
+      # first pass, finding 5: the round-3 build had no hash line to map the
+      # delivered installer back to).
+      - name: Print helper artifact hashes
+        run: |
+          Get-FileHash helper/out/BingeMote.exe -Algorithm SHA256 | Format-List
+          Get-FileHash BingeMote-PC-*.exe -Algorithm SHA256 | Format-List
+
       - uses: actions/upload-artifact@v4
         with:
           name: BingeMote-PC
@@ -180,6 +188,25 @@ jobs:
       - name: VLC control tests (real VLC, app request shapes)
         run: pwsh -File scripts/vlc-e2e.ps1
 
+      # rev20 follow-up (Instinct 2 first pass, finding 3): the heartbeat snapshots
+      # are uploaded in this workflow too, not only in stress - the same hang that
+      # can lose a stress run's log can lose this job's 28-minute step log.
+      - name: Stage heartbeat snapshots
+        if: always()
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\e2e-heartbeat"
+          New-Item -ItemType Directory $out -Force | Out-Null
+          $log = "$env:TEMP\bm-e2e-heartbeat.log"; $ps1 = "$env:TEMP\bm-e2e-heartbeat.ps1"
+          if (Test-Path $log) { Copy-Item $log $out\ } else { Write-Host "WARNING: heartbeat log missing ($log) - the e2e died before the watcher started" }
+          if (Test-Path $ps1) { Copy-Item $ps1 $out\ } else { Write-Host "WARNING: heartbeat script missing ($ps1)" }
+          Get-ChildItem $out | Select-Object Name, Length
+      - name: Upload heartbeat snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-heartbeat
+          path: e2e-heartbeat
+          if-no-files-found: warn
 
   screenshots:
     runs-on: ubuntu-latest
