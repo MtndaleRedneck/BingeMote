@@ -135,6 +135,18 @@ class BarActionsTest {
             waitFor("volume down at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=115") } }
             fire("Volume up")
             waitFor("volume up at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=128") } }
+            // Session route: stock's QS player and One UI's pill read the SESSION's
+            // custom actions, not the notification's. Drive the same commands through
+            // a MediaController on the session token from the notification extras.
+            stub.requests.clear()
+            @Suppress("DEPRECATION")
+            val token = bar()?.extras?.getParcelable("android.mediaSession") as? android.media.session.MediaSession.Token
+            if (token == null) { fail("no session token extra on the notification"); return }
+            val mc = android.media.session.MediaController(ctx, token)
+            mc.transportControls.sendCustomAction("com.bingemote.action.VOL_DOWN", null)
+            waitFor("session volume down at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=115") } }
+            mc.transportControls.sendCustomAction("com.bingemote.action.FAST_FORWARD", null)
+            waitFor("session seek fwd at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=seek&val=35") } }
         } finally {
             ctx.stopService(Intent(ctx, MediaControlsService::class.java))
             stub.stop()

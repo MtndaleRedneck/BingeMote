@@ -119,7 +119,7 @@ adb shell cat /sdcard/ui.xml > screenshots/shade-ui.xml 2>/dev/null || true
 # caps at 3 actions on stock, so Volume down only exists after expansion). Take
 # the numbers from the bounds attr ONLY - the node's content-desc carries clock
 # text ("34:12 of 1:50:24") whose digits poisoned a naive grep.
-CARD=$(grep 'qs_media_controls' screenshots/shade-ui.xml | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
+CARD=$(tr '<' '\n' < screenshots/shade-ui.xml | grep 'qs_media_controls' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
 echo "media card bounds: '${CARD:-none}' (shade-ui.xml saved)"
 if [ -n "$CARD" ]; then
   CX=$(echo $CARD | awk '{printf "%d", ($1+$3)/2}')

@@ -79,8 +79,23 @@ class MediaControlsService : Service() {
             override fun onFastForward() { android.util.Log.i(TAG, "session onFastForward"); jump(store, store.skipMainSec) }
             // The system media surface renders its two extra slots from these actions;
             // they fire his two chosen skip intervals (main forward, secondary back).
+            // Headset/AVRCP fallbacks only - the advertised button set lives in
+            // pushSessionState (play/pause + the four custom actions).
             override fun onSkipToPrevious() { jump(store, -store.skipSecondarySec) }
             override fun onSkipToNext() { jump(store, store.skipMainSec) }
+            // Custom actions carry the full five-button set to EVERY system surface:
+            // stock's QS player reads the session (and ignores notification actions),
+            // One UI's pill reads the notification's actions - both must offer the
+            // same five, wired to the same handlers.
+            override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
+                android.util.Log.i(TAG, "session custom: $action")
+                when (action) {
+                    ACTION_MEDIA_REWIND -> jump(store, -store.skipMainSec)
+                    ACTION_MEDIA_FAST_FORWARD -> jump(store, store.skipMainSec)
+                    ACTION_MEDIA_VOL_DOWN -> volumeBy(store, -Vlc.VOLUME_STEP)
+                    ACTION_MEDIA_VOL_UP -> volumeBy(store, Vlc.VOLUME_STEP)
+                }
+            }
             // No onSeekTo and no ACTION_SEEK_TO: the bar shows the place but can't be dragged.
         }
         callback = cb
@@ -209,22 +224,7 @@ class MediaControlsService : Service() {
         val s = session ?: return
         val playing = st.playing
         lastPlaying = playing
-        val state = PlaybackState.Builder()
-            .setActions(
-                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
-                    PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_REWIND or
-                    PlaybackState.ACTION_FAST_FORWARD or
-                    PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
-            )
-            // No position, no buffered end: position signals are what turn a media
-            // notification into Samsung's big "Live notification" card (class doc).
-            .setState(
-                if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-                if (playing) 1f else 0f,
-            )
-            .build()
-        s.setPlaybackState(state)
+        pushSessionState(s, playing, store)
         val meta = android.media.MediaMetadata.Builder()
             .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
             .build()
@@ -233,20 +233,37 @@ class MediaControlsService : Service() {
         postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
     }
 
+    // Session state for every surface: play/pause as the only STANDARD action plus
+    // the other four as custom actions with his labels, so stock's QS player (which
+    // reads the session, not the notification) and One UI's pill both offer the same
+    // five commands. No REWIND/FAST_FORWARD/SKIP standard actions: stock renders
+    // those with misleading labels ("Previous track") - and SKIP_TO_* has no handler.
+    // No position, no buffered end: position signals are what turn a media
+    // notification into Samsung's big "Live notification" card (class doc).
+    private fun pushSessionState(s: MediaSession, playing: Boolean, store: Store) {
+        val skip = store.skipMainSec
+        val state = PlaybackState.Builder()
+            .setActions(
+                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
+                    PlaybackState.ACTION_PAUSE,
+            )
+            .addCustomAction(ACTION_MEDIA_REWIND, "Back $skip seconds", R.drawable.ic_bm_back)
+            .addCustomAction(ACTION_MEDIA_VOL_DOWN, "Volume down", R.drawable.ic_bm_vol_down)
+            .addCustomAction(ACTION_MEDIA_VOL_UP, "Volume up", R.drawable.ic_bm_vol_up)
+            .addCustomAction(ACTION_MEDIA_FAST_FORWARD, "Forward $skip seconds", R.drawable.ic_bm_fwd)
+            .setState(
+                if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                if (playing) 1f else 0f,
+            )
+            .build()
+        s.setPlaybackState(state)
+    }
+
     // CI screenshot state (debug builds only): the seeded session as it looks mid-movie.
     private fun seedDemo() {
         val s = session ?: return
-        s.setPlaybackState(
-            PlaybackState.Builder()
-                .setActions(
-                    PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
-                        PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_REWIND or
-                        PlaybackState.ACTION_FAST_FORWARD or
-                    PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT,
-                )
-                .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
-                .build(),
-        )
+        pushSessionState(s, true, Store(this))
         s.setMetadata(
             android.media.MediaMetadata.Builder()
                 .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "demo.mkv")
