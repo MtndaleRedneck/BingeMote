@@ -53,6 +53,38 @@ jobs:
           path: e2e-heartbeat
           if-no-files-found: warn
 
+  # Cross-version upgrade proof (Ezzy Nov 15: round-3 "doesn't connect at all" after
+  # upgrading from the rev16 build): install the REV16 build, pair a simulated phone,
+  # upgrade to this build, and prove the phone still connects; then pin the
+  # foreign-session failure signature the installer fix removes.
+  upgrade-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build the REV16 test installer (the build Ezzy had before round 3)
+        run: |
+          git worktree add "$env:GITHUB_WORKSPACE\rev16src" b4fa396
+          dotnet publish rev16src/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o rev16src/helper/out
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=1.7.8" rev16src/helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC (rev16) failed" }
+      - name: Build this branch's test installer
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBROKER_TEST_HOOK" -o helper/out
+          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: Cross-version upgrade e2e (rev16 -> this build, paired phone)
+        timeout-minutes: 25
+        run: pwsh -File scripts/upgrade-e2e.ps1 -OldSetup "rev16src/helper/Output/BingeMote-PC-1.7.8.exe" -NewSetup "helper/Output/BingeMote-PC-1.7.8.exe"
+
   # Fault-confirmation suite: Instinct 2's static review findings as runtime assertions.
   broker-faults:
     needs: e2e-gate
