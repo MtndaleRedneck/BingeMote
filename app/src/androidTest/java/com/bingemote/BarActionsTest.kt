@@ -7,6 +7,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.Before
+import org.junit.Assert.assertFalse
+import androidx.test.uiautomator.UiSelector
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.InetAddress
@@ -24,6 +27,12 @@ import kotlin.concurrent.thread
  * (1.12.2 swallowed it, which is why a dead card looked fine).
  */
 class BarActionsTest {
+    @Before fun notificationPermission() {
+        val inst = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(inst)
+        device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
+    }
+
 
     private class StubVlc {
         val requests = CopyOnWriteArrayList<String>()
@@ -108,23 +117,31 @@ class BarActionsTest {
         ctx.startService(Intent(ctx, MediaControlsService::class.java))
         val nm = ctx.getSystemService(NotificationManager::class.java)
         fun bar() = nm.activeNotifications.firstOrNull { it.id == 101 }?.notification
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         fun fire(title: String) {
-            val n = bar()
-            if (n == null) { fail("notification gone before firing $title"); return }
-            val a = n.actions?.firstOrNull { it.title?.toString() == title }
-            if (a == null) { fail("no action '$title' (have ${n.actions?.map { it.title }})"); return }
-            a.actionIntent.send()
+            device.openNotification()
+            val button = device.findObject(UiSelector().description(title))
+            if (!button.waitForExists(10_000)) { fail("no visible custom-row button: $title"); return }
+            button.click()
+        }
+        fun hasLabel(title: String): Boolean {
+            device.openNotification()
+            return device.findObject(UiSelector().description(title)).exists()
         }
         try {
-            waitFor("notification with 5 actions", 20_000) { bar()?.actions?.size == 5 }
+            waitFor("custom notification row", 20_000) { bar()?.contentView != null }
+            assertFalse("no media token", bar()!!.extras.containsKey("android.mediaSession"))
+            listOf("Back 5 seconds", "Volume down", "Pause", "Volume up", "Forward 5 seconds").forEach {
+                if (!hasLabel(it)) fail("missing visible button: $it")
+            }
             // Pause: playing -> pl_forcepause must reach the PC.
             fire("Pause")
             waitFor("pl_forcepause at stub", 10_000) { stub.requests.any { it.contains("pl_forcepause") } }
             // The card must follow the PC's state: stub is paused, the label flips to Play.
-            waitFor("label flips to Play", 15_000) { bar()?.actions?.any { it.title?.toString() == "Play" } == true }
+            waitFor("label flips to Play", 15_000) { hasLabel("Play") }
             fire("Play")
             waitFor("pl_forceresume at stub", 10_000) { stub.requests.any { it.contains("pl_forceresume") } }
-            waitFor("label flips to Pause", 15_000) { bar()?.actions?.any { it.title?.toString() == "Pause" } == true }
+            waitFor("label flips to Pause", 15_000) { hasLabel("Pause") }
             // Skips use his 5s interval (absolute seek from the stub's clock).
             fire("Back 5 seconds")
             waitFor("seek back at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=seek&val=25") } }
@@ -135,18 +152,7 @@ class BarActionsTest {
             waitFor("volume down at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=115") } }
             fire("Volume up")
             waitFor("volume up at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=128") } }
-            // Session route: stock's QS player and One UI's pill read the SESSION's
-            // custom actions, not the notification's. Drive the same commands through
-            // a MediaController on the session token from the notification extras.
-            stub.requests.clear()
-            @Suppress("DEPRECATION")
-            val token = bar()?.extras?.getParcelable("android.mediaSession") as? android.media.session.MediaSession.Token
-            if (token == null) { fail("no session token extra on the notification"); return }
-            val mc = android.media.session.MediaController(ctx, token)
-            mc.transportControls.sendCustomAction("com.bingemote.action.VOL_DOWN", null)
-            waitFor("session volume down at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=115") } }
-            mc.transportControls.sendCustomAction("com.bingemote.action.FAST_FORWARD", null)
-            waitFor("session seek fwd at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=seek&val=35") } }
+            assertFalse("row must not create a media token", bar()!!.extras.containsKey("android.mediaSession"))
         } finally {
             ctx.stopService(Intent(ctx, MediaControlsService::class.java))
             stub.stop()
