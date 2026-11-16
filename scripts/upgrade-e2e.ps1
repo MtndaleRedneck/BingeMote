@@ -7,9 +7,9 @@
 # account holds port 8488 unpaired while the user's own copy cannot bind) and proves
 # the phone path heals once the foreign copy is gone.
 #
-# Every external call is bounded (jobs with timeouts for schtasks, -TimeoutSec on
-# HTTP, -OperationTimeoutSec on CIM). Any failure leaves the machine as close to
-# clean as the finally can make it.
+# Installer waits have a four-minute deadline and emit their log tails every 15s.
+# HTTP, CIM and scheduled-task operations use their own bounds. These are diagnostic
+# bounds, not proof that every OS operation or cleanup path cannot hang.
 param(
   [Parameter(Mandatory=$true)][string]$OldSetup,   # rev16 installer exe (TEST build, PAIR_CODE_HOOK)
   [Parameter(Mandatory=$true)][string]$NewSetup    # this branch's installer exe (TEST build, PAIR_CODE_HOOK)
@@ -60,12 +60,36 @@ function ServingCopies {
     })
 }
 
+function Invoke-Installer([string]$setup, [string]$logName, [switch]$uninstall) {
+  $log = Join-Path $env:TEMP $logName
+  $args_ = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="{0}"' -f $log))
+  Write-Host "INSTALLER START path=$setup log=$log deadline=240s"
+  $p = Start-Process -FilePath (Resolve-Path $setup).Path -ArgumentList $args_ -PassThru
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  while (-not $p.HasExited -and $clock.Elapsed.TotalSeconds -lt 240) {
+    Start-Sleep -Seconds 15
+    $p.Refresh()
+    Write-Host "INSTALLER WAIT pid=$($p.Id) elapsed=$([int]$clock.Elapsed.TotalSeconds)s exited=$($p.HasExited)"
+    if (Test-Path $log) { Get-Content $log -Tail 18 | ForEach-Object { Write-Host "INSTALLER LOG: $_" } }
+  }
+  if (-not $p.HasExited) {
+    Write-Host 'INSTALLER TIMEOUT: process snapshot before killing the installer tree'
+    Get-CimInstance Win32_Process -OperationTimeoutSec 15 -Filter "Name='BingeMote.exe' OR Name='powershell.exe' OR Name='schtasks.exe' OR Name='netsh.exe' OR Name='taskkill.exe'" |
+      Select-Object ProcessId, ParentProcessId, SessionId, Name, CommandLine | Format-List | Out-String | Write-Host
+    $killer = Start-Process -FilePath "$env:SystemRoot\System32\taskkill.exe" -ArgumentList @('/F','/T','/PID',"$($p.Id)") -PassThru
+    if (-not $killer.WaitForExit(10000)) { Write-Host 'WARNING: installer tree kill did not finish within 10s' }
+    throw "Installer exceeded 240s: $setup; see emitted installer log and process snapshot"
+  }
+  Write-Host "INSTALLER EXIT pid=$($p.Id) code=$($p.ExitCode) elapsed=$([int]$clock.Elapsed.TotalSeconds)s"
+  return [int]$p.ExitCode
+}
+
 try {
   Write-Host "== Phase 1: install the REV16 build and pair a simulated phone =="
   Assert (Test-Path $OldSetup) "rev16 installer exists at $OldSetup"
   Assert (Test-Path $NewSetup) "new installer exists at $NewSetup"
-  & $OldSetup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bm-old-install.log" | Out-Null
-  Assert ($LASTEXITCODE -eq 0) "rev16 silent install exit 0 (got $LASTEXITCODE)"
+  $exit = Invoke-Installer $OldSetup bm-old-install.log
+  Assert ($exit -eq 0) "rev16 silent install exit 0 (got $exit)"
   Assert (Wait-Listen 60) "rev16 build serves 8488 after install"
   $o1 = ServingCopies
   Write-Host "post-install copies at the installed path: $($o1 | ConvertTo-Json -Compress)"
@@ -82,8 +106,8 @@ try {
   Assert ($r.code -eq 200) "rev16 paired phone can ping (got $($r.code))"
 
   Write-Host "== Phase 2: silent upgrade to THIS build - the phone must stay connected =="
-  & $NewSetup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bm-new-install.log" | Out-Null
-  Assert ($LASTEXITCODE -eq 0) "round-3 silent upgrade exit 0 (got $LASTEXITCODE)"
+  $exit = Invoke-Installer $NewSetup bm-new-install.log
+  Assert ($exit -eq 0) "round-3 silent upgrade exit 0 (got $exit)"
   Assert (Wait-Listen 90) "upgraded build serves 8488 (silent install relaunches it as the original user)"
   $o2 = ServingCopies
   Write-Host "post-upgrade copies at the installed path: $($o2 | ConvertTo-Json -Compress)"
@@ -146,10 +170,15 @@ try {
   Write-Host "== Phase 4: uninstall leaves nothing =="
   Stop-AllCopies
   $unins = Join-Path $env:ProgramFiles 'BingeMote\unins000.exe'
-  & $unins /VERYSILENT /NORESTART | Out-Null
+  $exit = Invoke-Installer $unins bm-uninstall.log
+  Assert ($exit -eq 0) "uninstall exits 0 (got $exit)"
   Assert (-not (Test-Path $appExe)) "uninstall removed the protected copy"
   Write-Host "UPGRADE E2E PASSED"
 } finally {
+  foreach ($log in @((Join-Path $env:TEMP 'bm-old-install.log'), (Join-Path $env:TEMP 'bm-new-install.log'), $userLog, $sysLog)) {
+    Write-Host "FINAL LOG TAIL: $log"
+    if (Test-Path $log) { Get-Content $log -Tail 60 -ErrorAction Continue | Write-Host }
+  }
   Stop-AllCopies
   Set-TaskState 'BingeMote Watchdog' $true
   Set-TaskState 'BingeMote Input Broker' $true
