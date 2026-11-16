@@ -159,15 +159,17 @@ try {
   $r = Invoke-Helper '/ping' '{}' $token
   Assert ($r.code -eq 401) "paired phone token is 401 against the foreign copy - Ezzy's 'doesn't connect at all' signature (got $($r.code))"
   Write-Host "SIGNATURE DOCUMENTED: foreign-session copy serves 8488 unpaired; user's copy cannot bind; paired phone is refused."
-  # Heal: foreign copy gone, the user's copy serves and the old token works again.
-  Stop-AllCopies
-  $del = Start-Job { param($t) schtasks.exe /Delete /F /TN $t 2>&1 | Out-String } -ArgumentList $sysTask
-  if (-not (Wait-Job $del -Timeout 15)) { Write-Host "WARNING: foreign-session task delete timed out" }
-  Receive-Job $del | Out-Null; Remove-Job $del -Force -ErrorAction SilentlyContinue
-  Start-Process $appExe
-  Assert (Wait-Listen 60) "user copy serves 8488 again after the foreign copy is gone"
+  # Test installer recovery while the foreign tray/server is STILL running.
+  # This is deliberately not a manual Stop-AllCopies or Start-Process recovery.
+  $exit = Invoke-Installer $NewSetup bm-recovery-install.log
+  Assert ($exit -eq 0) "recovery installer exits 0 with a foreign server present (got $exit)"
+  Assert (Wait-Listen 60) "HTTP port serves after installer recovery"
+  $healedCopies = ServingCopies
+  Write-Host "post-recovery serving copies: $($healedCopies | ConvertTo-Json -Compress)"
+  Assert (@($healedCopies | Where-Object { $_.User -match [regex]::Escape($env:USERNAME) }).Count -ge 1) "recovery installer starts the original user's serving copy"
+  Assert (@($healedCopies | Where-Object { $_.User -notmatch [regex]::Escape($env:USERNAME) }).Count -eq 0) "recovery installer removes foreign-account serving copies"
   $r = Invoke-Helper '/ping' '{}' $token
-  Assert ($r.code -eq 200) "paired phone connects again after the foreign copy is gone (healed)"
+  Assert ($r.code -eq 200) "old paired phone token connects after INSTALLER recovery, without manual process cleanup (got $($r.code))"
 
   Write-Host "== Phase 4: uninstall leaves nothing =="
   Stop-AllCopies
@@ -177,7 +179,7 @@ try {
   Assert (-not (Test-Path $appExe)) "uninstall removed the protected copy"
   Write-Host "UPGRADE E2E PASSED"
 } finally {
-  foreach ($log in @((Join-Path $env:TEMP 'bm-old-install.log'), (Join-Path $env:TEMP 'bm-new-install.log'), $userLog, $sysLog)) {
+  foreach ($log in @((Join-Path $env:TEMP 'bm-old-install.log'), (Join-Path $env:TEMP 'bm-new-install.log'), (Join-Path $env:TEMP 'bm-recovery-install.log'), $userLog, $sysLog)) {
     Write-Host "FINAL LOG TAIL: $log"
     if (Test-Path $log) { Get-Content $log -Tail 60 -ErrorAction Continue | Write-Host }
   }
