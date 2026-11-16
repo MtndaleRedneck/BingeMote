@@ -137,10 +137,14 @@ Write-Host "ok: watchdog task re-registered at the protected copy"
 # launched an UNTRACKED --ensure-running UI copy; the rev17 second-launch section
 # then signaled that copy to show and its tray-tucked control failed - the second
 # time this race went red): registration is proven above, so park the Watchdog for
-# the rest of the run. The outer finally re-enables it unconditionally, and the
+# the rest of the run. Parking is NOT set-and-forget (Instinct 2 first pass, finding
+# 2: the round-3 logs show it back to Ready at 548 and 863): any UI start re-registers
+# it ENABLED (RegisterWatchdog does schtasks /Create /F), so the heartbeat watcher
+# re-parks it every tick - the drift window is under one 60s tick, not zero. The
+# outer finally re-enables it unconditionally and now verifies the restore, and the
 # rev19 unidentified-holder test still pause/restores it locally.
 Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
-Write-Host "ok: watchdog parked for the run (re-enabled in the outer finally)"
+Write-Host "ok: watchdog parked (re-parked every heartbeat tick; restored and verified in the outer finally)"
 
 # rev17: install/upgrade must leave the broker UP in the same session - no sign-out,
 # and the harness must not start the task itself here. Until rev16 the broker only
@@ -1326,8 +1330,9 @@ public static class BmWinEnum {
     Write-Host "holder side: $holdResult"
     Assert ($holdResult -eq 'no-quit-signal') "holder-observed truth: the quit event was never set"
     # Restore the broker and the running UI copy for the sections below. The
-    # Watchdog stays PARKED (rev20b: parked for the whole run after registration
-    # was proven; the outer finally re-enables it unconditionally).
+    # Watchdog stays parked between heartbeat ticks (rev20c: the watcher re-parks
+    # it every tick - UI starts re-register it ENABLED; restored and verified in
+    # the outer finally).
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 500 }
     $p = Start-Process $exe -PassThru
