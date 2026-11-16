@@ -1297,7 +1297,7 @@ public static class BmWinEnum {
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Tracked $p
     # The 5-minute Watchdog would relaunch a SAME-NAMED UI copy mid-test and re-mask
-    # the unidentified holder; it is already parked for the whole run (rev20b), and
+    # the unidentified holder; the watcher re-parks it every tick (rev20c), and
     # this local disable keeps the test self-contained if the park is ever lifted.
     # The outer finally re-enables it unconditionally, so it is never left off.
     Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
