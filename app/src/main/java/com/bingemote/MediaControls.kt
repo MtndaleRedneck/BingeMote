@@ -115,6 +115,17 @@ class MediaControlsService : Service() {
         }
         // Enter foreground immediately, before the first network poll.
         postMediaNotification(lastPlaying, 0, 0, null)
+        if (!(BuildConfig.DEBUG && Store(this).demoControls)) {
+        if (pollJob?.isActive != true) {
+            BMLog.i("poll loop start")
+            pollJob = scope.launch {
+                while (isActive) {
+                    pollOnce()
+                    delay(2000)
+                }
+            }
+        }
+        }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
             ACTION_MEDIA_REWIND -> { BMLog.i("tap rewind"); jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
@@ -138,15 +149,6 @@ class MediaControlsService : Service() {
             ACTION_MEDIA_VOL_UP -> { BMLog.i("tap volume up"); volumeBy(Store(this), Vlc.VOLUME_STEP); return START_STICKY }
         }
         if (BuildConfig.DEBUG && Store(this).demoControls) { seedDemo(); return START_STICKY }
-        if (pollJob?.isActive != true) {
-            BMLog.i("poll loop start")
-            pollJob = scope.launch {
-                while (isActive) {
-                    pollOnce()
-                    delay(2000)
-                }
-            }
-        }
         return START_STICKY
     }
 
