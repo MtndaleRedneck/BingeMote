@@ -14,7 +14,7 @@ try {
     foreach ($cmd in 'Get-ScheduledTask','Get-ScheduledTaskInfo','Enable-ScheduledTask','Disable-ScheduledTask','Start-ScheduledTask','Stop-ScheduledTask','Register-ScheduledTask','Unregister-ScheduledTask','Set-ScheduledTask') {
         $PSDefaultParameterValues["${cmd}:CimSession"] = $script:cimSession
     }
-} catch { Write-Host "bounded CIM session unavailable ($($_.Exception.Message)); scheduled-task calls fall back to the per-call defaults" }
+} catch { throw "bounded CIM session unavailable ($($_.Exception.Message)) - FAILING the run instead of falling back to unbounded scheduled-task calls (Instinct 2 first pass, finding 4)" }
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
@@ -247,6 +247,10 @@ function Snap($tag) {
         "task: " + $_.TaskName + " state=" + $_.State + " last=" + $(if ($i) { $i.LastTaskResult } else { '?' }) } } catch { $lines += "task: query failed: $($_.Exception.Message)" }
     try { $p = [IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match 'BingeMote' }
         if ($p) { $lines += ($p | ForEach-Object { "pipe: " + $_ }) } else { $lines += "pipe: (no BingeMote pipe)" } } catch { $lines += "pipe: enumeration failed: $($_.Exception.Message)" }
+    # rev20b follow-up (Instinct 2 first pass, finding 2): any UI start re-registers the
+    # Watchdog ENABLED (RegisterWatchdog does schtasks /Create /F), un-parking it mid-run.
+    # Re-park every tick so the drift window stays under one heartbeat interval.
+    try { Disable-ScheduledTask -TaskName 'BingeMote Watchdog' @taskParams -ErrorAction SilentlyContinue | Out-Null } catch { }
     Add-Content $OutFile $lines
 }
 $cs = $null
@@ -312,6 +316,18 @@ Snap "DEADLINE (final dump)"
     Assert $hitBound "a stalled query is abandoned at its 3s bound instead of running 30s"
     Assert ($sw.Elapsed.TotalSeconds -lt 15) "the bound fired in $([int]$sw.Elapsed.TotalSeconds)s"
     Assert ($PSDefaultParameterValues['Get-CimInstance:OperationTimeoutSec'] -eq 15) "every Get-CimInstance carries a 15s operation bound by default"
+    # A REAL bounded query, not a synthetic stall (Instinct 2 first pass, finding 4):
+    # a CIM session to a dead endpoint (TEST-NET-1, unroutable - RFC 5737) with a 3s
+    # operation bound must abandon the query at the bound, not hang for minutes.
+    $deadSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $deadErr = $null
+    try {
+        $dead = New-CimSession -ComputerName '192.0.2.1' -OperationTimeoutSec 3 -ErrorAction Stop
+        try { Get-CimInstance Win32_Process -CimSession $dead -ErrorAction Stop | Out-Null } finally { Remove-CimSession $dead -ErrorAction SilentlyContinue }
+    } catch { $deadErr = $_.Exception.GetType().Name }
+    $deadSw.Stop()
+    Assert ($null -ne $deadErr) "a real query against a dead endpoint fails instead of hanging"
+    Assert ($deadSw.Elapsed.TotalSeconds -lt 30) "the real dead-endpoint query was abandoned at its 3s operation bound (took $([int]$deadSw.Elapsed.TotalSeconds)s, not minutes)"
     function Stop-Tracked($proc) {
         # rev17: an --ensure-running second copy can win the single-instance race and
         # the tracked process then exits on its own; Stop-Process on that dead pid
@@ -1341,19 +1357,25 @@ public static class BmWinEnum {
     $reply = $null
     $pipeError = $null
     try {
-        $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
+    $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
         $pipeClient.Connect(5000)
-        # rev20: bound the stream too - an accepted-but-never-answered connection
-        # used to hang ReadLine/WriteLine forever.
-        $pipeClient.ReadTimeout = 5000
-        $pipeClient.WriteTimeout = 5000
+        # rev20 follow-up (Instinct 2 first pass, finding 1): PipeStream's
+        # ReadTimeout/WriteTimeout setters THROW on .NET 8 ("Timeouts are not
+        # supported on this stream") - the old assignments threw here, the catch
+        # passed on a null reply, and the op was never sent (vacuous pass; the green
+        # run 43792887604's own line shows that exact pipeError). Bound the round
+        # trip with task waits, the same shape as InputBrokerClient.RoundTrip.
         $pw = New-Object System.IO.StreamWriter($pipeClient); $pw.AutoFlush = $true
         $pr = New-Object System.IO.StreamReader($pipeClient)
-        $pw.WriteLine('m 10 0')
-        $reply = $pr.ReadLine()
-        $pipeClient.Dispose()
+        $wt = $pw.WriteLineAsync('m 10 0')
+        if (-not $wt.Wait(5000)) { throw "the write to the broker pipe was not abandoned at its 5s bound" }
+        $rt = $pr.ReadLineAsync()
+        if (-not $rt.Wait(5000)) { throw "the broker's answer was not abandoned at its 5s bound" }
+        $reply = $rt.Result
     } catch { $pipeError = $_.Exception.Message }
-    Assert (($reply -like 'err unauthorized*') -or ($null -eq $reply)) "a client that is not the installed helper is rejected (reply: '$reply' pipeError: '$pipeError')"
+    finally { if ($pipeClient) { $pipeClient.Dispose() } }
+    Assert ($pipeError -notmatch 'Timeouts are not supported') "no local harness fault before the request reached the broker (the rev20 vacuous pass) - pipeError: '$pipeError'"
+    Assert (($reply -like 'err unauthorized*') -or ($null -eq $reply) -or ($pipeError -match 'pipe')) "a client that is not the installed helper is rejected (reply: '$reply' pipeError: '$pipeError')"
     Start-Sleep -Milliseconds 300
     $aA = [Probe]::Pos()
     Assert ([math]::Abs($aA.X - $bA.X) -lt 20) "the rejected op was never played ($($bA.X) -> $($aA.X))"
@@ -1610,6 +1632,13 @@ public static class BmWinEnum {
     # rev20 (Instinct 2 round 3): unconditional restores/cleanup, success or failure.
     # The rev19 test pauses the Watchdog; never leave it off after a failed run.
     Enable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+    # Verify the restore instead of assuming it (Instinct 2 first pass, finding 2: the
+    # Enable used to be suppressed and unchecked).
+    try {
+        $wdState = (Get-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction Stop).State
+        Write-Host "watchdog restore check: state=$wdState"
+        if ($wdState -eq 'Disabled') { Write-Host "WARNING: watchdog still Disabled after the restore" }
+    } catch { Write-Host "WARNING: watchdog restore check failed: $($_.Exception.Message)" }
     # Splice and stop the heartbeat child either way (the trap also stops it; the
     # workflow uploads the raw file as an always-on artifact independent of this).
     try { Sync-Heartbeat } catch { }

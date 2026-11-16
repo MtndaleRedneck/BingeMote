@@ -417,11 +417,15 @@ internal static class Program
             // Nov 15 2026: double-click never opened the window; every launch took
             // over and restarted the app).
             // rev18 (Instinct 2 MEDIUM): show-window authority and kill/takeover
-            // authority stay separate. Showing is safe to request blind - the show
-            // event is created by the running copy itself in Main, so signalling it
-            // asks the running copy to show, whoever that copy is. (The OS does not
-            // bind the event to the mutex; the e2e's unidentified-holder fixture
-            // proves the show-only behavior end to end.) Quit/takeover is NOT safe
+            // authority stay separate. Showing is safe to request blind in the
+            // ordinary case: the running copy creates the event in Main, so signalling
+            // it asks that copy to show. The OS does not bind the event to the mutex:
+            // if something else pre-claims the event, the signal reaches the
+            // pre-claimer, not the running copy - and the e2e's unidentified-holder
+            // fixture proves the launcher's show-only DECISION and the holder's
+            // survival, not delivery of the show to any particular window (the only
+            // show-RECEIPT proof is the identified-copy case in the rev17 section).
+            // Quit/takeover is NOT safe
             // blind: an unidentified copy is "unknown", and unknown is never killed,
             // never replaced. The old rev17 code pretended sameExe=true here, which
             // would also have passed an unidentified copy into the downgrade path.

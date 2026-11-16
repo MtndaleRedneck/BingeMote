@@ -138,8 +138,9 @@ internal static class PipePeer
 
     /// <summary>rev17: image path of any local process WITHOUT opening it.
     /// NtQuerySystemInformation(SystemProcessIdInformation) needs no handle and no
-    /// privilege, so the same-strength image+session peer check works from a
-    /// non-elevated token.
+    /// privilege, so the image+session peer check also works from a non-elevated
+    /// token. NOT the same strength as an opened-process check: it reads what the
+    /// kernel recorded at process start and cannot revalidate against a live handle.
     /// Returns the path in ordinary drive-letter form (the native query answers in
     /// \Device\... form; converted through the machine's drive mappings).</summary>
     private static string ImagePathHandleFree(uint pid)
@@ -251,8 +252,9 @@ internal static class PipePeer
     /// serial + file index survive the alias forms this attestation covers: SUBST
     /// drive letters, reparse points, hardlinks, and 8.3 names. NOT covered:
     /// caller-local DefineDosDevice mappings, native (\\?\) volume spellings, a
-    /// filtered caller device namespace, or mutation after the check - callers fail
-    /// closed on those. A same-named copy of the exe from another folder is a
+    /// filtered caller device namespace, or mutation after the check: this function
+    /// cannot DETECT those cases - it answers only about the two paths as presented.
+    /// A same-named copy of the exe from another folder is a
     /// different file index and does not match. Returns null when either file cannot
     /// be opened (caller decides the fallback).</summary>
     internal static bool? SameFile(string pathA, string pathB)
