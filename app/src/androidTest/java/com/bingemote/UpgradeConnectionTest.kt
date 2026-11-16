@@ -128,10 +128,14 @@ class UpgradeConnectionTest {
             d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-entry-failure.xml"))
         }
         assertNotNull("Settings button after Home/activity launch",settings);settings.click()
-        repeat(6) {
-            if(!d.hasObject(androidx.test.uiautomator.By.text("Notification shade controls")))
-                d.swipe(d.displayWidth/2,d.displayHeight*3/4,d.displayWidth/2,d.displayHeight/3,25)
-        }
+        d.waitForIdle()
+        val scroll=d.findObject(androidx.test.uiautomator.By.scrollable(true))
+        assertNotNull("Settings scroll container",scroll)
+        val target=androidx.test.uiautomator.By.text("Notification shade controls")
+        scroll.setGestureMargin(d.displayWidth/8)
+        scroll.scrollUntil(androidx.test.uiautomator.Direction.DOWN,androidx.test.uiautomator.Until.findObject(target))
+        d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again.png"))
+        d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again.xml"))
         assertFalse(d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
         val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull(toggle);toggle.click()
         assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000))
