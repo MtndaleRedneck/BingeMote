@@ -100,7 +100,8 @@ internal static class PipePeer
             // 2026: open_process:win32=5 at every input op; the broker looked unavailable
             // and the mouse fell back to the local path that loses to elevated windows).
             // The peer check must work from ANY local token, so fall back to the
-            // handle-free query Task Manager itself uses for SYSTEM image paths.
+            // handle-free image-path query (NtQuerySystemInformation), which needs
+            // no process handle and no extra privilege.
             // rev18 (Instinct 2 review): fall back ONLY on access-denied (5) - other
             // errors (no such process, invalid handle) must not take the weaker-read
             // path, and the original error is never dropped.
@@ -137,8 +138,8 @@ internal static class PipePeer
 
     /// <summary>rev17: image path of any local process WITHOUT opening it.
     /// NtQuerySystemInformation(SystemProcessIdInformation) needs no handle and no
-    /// privilege - it is how Task Manager shows SYSTEM process paths to ordinary users -
-    /// so the same-strength image+session peer check works from a non-elevated token.
+    /// privilege, so the same-strength image+session peer check works from a
+    /// non-elevated token.
     /// Returns the path in ordinary drive-letter form (the native query answers in
     /// \Device\... form; converted through the machine's drive mappings).</summary>
     private static string ImagePathHandleFree(uint pid)
@@ -247,10 +248,13 @@ internal static class PipePeer
     }
 
     /// <summary>rev18: peer identity by FILE IDENTITY, not by path spelling. Volume
-    /// serial + file index survive every alias the path check could not see: SUBST and
-    /// namespace games, reparse points, hardlinks, 8.3 names. A same-named copy of the
-    /// exe from another folder is a different file and never matches. Returns null when
-    /// either file cannot be opened (caller decides the fallback).</summary>
+    /// serial + file index survive the alias forms this attestation covers: SUBST
+    /// drive letters, reparse points, hardlinks, and 8.3 names. NOT covered:
+    /// caller-local DefineDosDevice mappings, native (\\?\) volume spellings, a
+    /// filtered caller device namespace, or mutation after the check - callers fail
+    /// closed on those. A same-named copy of the exe from another folder is a
+    /// different file index and does not match. Returns null when either file cannot
+    /// be opened (caller decides the fallback).</summary>
     internal static bool? SameFile(string pathA, string pathB)
     {
         try

@@ -2,6 +2,19 @@
 # Exercises: the elevated firewall/URL-ACL setup, the pairing flow, token auth,
 # every input endpoint, the volume endpoints, and UDP discovery.
 $ErrorActionPreference = 'Stop'
+# rev20 (Instinct 2 round 3): bound every query. Get-CimInstance gets a default 15s
+# operation timeout; the scheduled-task cmdlets take no per-call timeout, so they all
+# run on one CIM session created with a 15s operation bound. A wedged WMI provider or
+# schedule service now fails the affected query instead of hanging the run.
+$PSDefaultParameterValues['Get-CimInstance:OperationTimeoutSec'] = 15
+try {
+    $script:cimSession = New-CimSession -OperationTimeoutSec 15 -ErrorAction Stop
+    # Named list, not a wildcard: the New-ScheduledTask* object builders take no
+    # -CimSession and a wildcard default would break them at bind time.
+    foreach ($cmd in 'Get-ScheduledTask','Get-ScheduledTaskInfo','Enable-ScheduledTask','Disable-ScheduledTask','Start-ScheduledTask','Stop-ScheduledTask','Register-ScheduledTask','Unregister-ScheduledTask','Set-ScheduledTask') {
+        $PSDefaultParameterValues["${cmd}:CimSession"] = $script:cimSession
+    }
+} catch { Write-Host "bounded CIM session unavailable ($($_.Exception.Message)); scheduled-task calls fall back to the per-call defaults" }
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
@@ -101,7 +114,11 @@ Write-Host "ok: silent live upgrade over the running app succeeded and replaced 
 # (protected) path after register-broker.ps1 deleted the stale task.
 $wdOk = $false
 for ($i = 0; $i -lt 90 -and -not $wdOk; $i++) {
-  $wdXml = try { schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String } catch { '' }
+  # rev20: schtasks.exe is an external process with no timeout knob; run it in a job
+  # with a hard 15s bound so a wedged schedule service cannot hang the run.
+  $wdJob = Start-Job { schtasks.exe /Query /TN "BingeMote Watchdog" /XML 2>$null | Out-String }
+  $wdXml = if (Wait-Job $wdJob -Timeout 15) { Receive-Job $wdJob } else { Write-Host "schtasks /Query TIMED OUT after 15s"; '' }
+  Remove-Job $wdJob -Force -ErrorAction SilentlyContinue
   if ($wdXml -match [regex]::Escape($appExe)) { $wdOk = $true } else {
     if ($i % 15 -eq 14) { Write-Host "watchdog re-registration still pending after $((($i)+1)*2)s: task $(if ($wdXml.Trim()) { 'exists, action path differs' } else { 'not found' })" }
     Start-Sleep -Seconds 2
@@ -116,6 +133,14 @@ if (-not $wdOk) {
   throw "rev15: watchdog task not re-registered at the protected copy"
 }
 Write-Host "ok: watchdog task re-registered at the protected copy"
+# rev20b (run 43788656623: the 5-minute Watchdog fired mid-run at 01:55:01 and
+# launched an UNTRACKED --ensure-running UI copy; the rev17 second-launch section
+# then signaled that copy to show and its tray-tucked control failed - the second
+# time this race went red): registration is proven above, so park the Watchdog for
+# the rest of the run. The outer finally re-enables it unconditionally, and the
+# rev19 unidentified-holder test still pause/restores it locally.
+Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+Write-Host "ok: watchdog parked for the run (re-enabled in the outer finally)"
 
 # rev17: install/upgrade must leave the broker UP in the same session - no sign-out,
 # and the harness must not start the task itself here. Until rev16 the broker only
@@ -197,10 +222,15 @@ try {
     # rev19 (Instinct 2 follow-up): the hidden child's console output went nowhere -
     # snapshots now go to a FILE and Assert splices them into the run log as they
     # land; the trap prints the rest. The pipe enumeration path was wrong ('\.\pipe'
-    # resolved nothing) and its errors were swallowed; both fixed, every query is
-    # time-bounded, and the child ends with a final DEADLINE dump. On a hang the run
-    # log shows the last live state instead of going dark (a job-level cancel keeps
-    # no logs; the 28-min step cap keeps them - this fills the log).
+    # resolved nothing) and its errors were swallowed; both fixed, and the child ends
+    # with a final DEADLINE dump.
+    # rev20 (Instinct 2 round 3): the workflow uploads the heartbeat file as its own
+    # artifact with if: always(), so a step-timeout kill or a job cancel still leaves
+    # the snapshots (the run log alone was not an unconditional upload path). The
+    # child's own queries are bounded the same way as the main script's (15s). On a
+    # hang the run log shows the last live state instead of going dark (a job-level
+    # cancel keeps no logs; the 28-min step cap keeps them - the artifact keeps the
+    # heartbeat even when the log is lost).
     $heartbeatScript = Join-Path $env:TEMP 'bm-e2e-heartbeat.ps1'
     $heartbeatFile = Join-Path $env:TEMP 'bm-e2e-heartbeat.log'
     Remove-Item $heartbeatFile -Force -ErrorAction SilentlyContinue
@@ -210,13 +240,17 @@ function Snap($tag) {
     $lines = @("== heartbeat $tag " + (Get-Date).ToString("HH:mm:ss") + " ==")
     try { $lines += Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -OperationTimeoutSec 15 -ErrorAction Stop | ForEach-Object {
         "process: pid=" + $_.ProcessId + " session=" + $_.SessionId + " started=" + $_.CreationDate + " cmd=" + $_.CommandLine } } catch { $lines += "process: CIM query failed: $($_.Exception.Message)" }
-    try { $lines += Get-ScheduledTask -TaskName 'BingeMote*' -ErrorAction Stop | ForEach-Object {
-        $i = $_ | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+    $taskParams = @{}
+    if ($cs) { $taskParams['CimSession'] = $cs }
+    try { $lines += Get-ScheduledTask -TaskName 'BingeMote*' @taskParams -ErrorAction Stop | ForEach-Object {
+        $i = $_ | Get-ScheduledTaskInfo @taskParams -ErrorAction SilentlyContinue
         "task: " + $_.TaskName + " state=" + $_.State + " last=" + $(if ($i) { $i.LastTaskResult } else { '?' }) } } catch { $lines += "task: query failed: $($_.Exception.Message)" }
     try { $p = [IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match 'BingeMote' }
         if ($p) { $lines += ($p | ForEach-Object { "pipe: " + $_ }) } else { $lines += "pipe: (no BingeMote pipe)" } } catch { $lines += "pipe: enumeration failed: $($_.Exception.Message)" }
     Add-Content $OutFile $lines
 }
+$cs = $null
+try { $cs = New-CimSession -OperationTimeoutSec 15 -ErrorAction Stop } catch { }
 $end = (Get-Date).AddMinutes(26)
 while ((Get-Date) -lt $end) { Start-Sleep -Seconds 60; Snap "tick" }
 Snap "DEADLINE (final dump)"
@@ -224,7 +258,10 @@ Snap "DEADLINE (final dump)"
     $heartbeat = Start-Process pwsh -ArgumentList '-NoProfile','-File',$heartbeatScript,'-OutFile',$heartbeatFile -PassThru -WindowStyle Hidden
     $script:hbPrinted = 0
     function Sync-Heartbeat {
-        # Splice new heartbeat snapshots into the run log (called from Assert).
+        # Splice new heartbeat snapshots into the run log (called from Assert, the
+        # trap, and the outer finally). The workflow also uploads the raw file as a
+        # separate always-on artifact, so the newest snapshots survive even a kill
+        # where nothing below runs.
         try {
             if (Test-Path $heartbeatFile) {
                 $raw = Get-Content $heartbeatFile -Raw
@@ -261,6 +298,20 @@ Snap "DEADLINE (final dump)"
         return @{ code = [int]$r.StatusCode; body = $r.Content }
     }
     function Assert($cond, $msg) { Sync-Heartbeat; if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+
+    # rev20 (Instinct 2 round 3): intentional forced-timeout proof. A stalled query
+    # must be abandoned at its bound and the run must keep going. (This proves the
+    # abandon path itself; the scheduled-task/CIM calls carry their 15s bound via
+    # the session defaults set at the top of the script.)
+    Write-Host "== rev20 forced-timeout proof =="
+    $stall = Start-Job { Start-Sleep -Seconds 30 }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $hitBound = -not (Wait-Job $stall -Timeout 3)
+    Stop-Job $stall -ErrorAction SilentlyContinue; Remove-Job $stall -Force -ErrorAction SilentlyContinue
+    $sw.Stop()
+    Assert $hitBound "a stalled query is abandoned at its 3s bound instead of running 30s"
+    Assert ($sw.Elapsed.TotalSeconds -lt 15) "the bound fired in $([int]$sw.Elapsed.TotalSeconds)s"
+    Assert ($PSDefaultParameterValues['Get-CimInstance:OperationTimeoutSec'] -eq 15) "every Get-CimInstance carries a 15s operation bound by default"
     function Stop-Tracked($proc) {
         # rev17: an --ensure-running second copy can win the single-instance race and
         # the tracked process then exits on its own; Stop-Process on that dead pid
@@ -1226,7 +1277,9 @@ public static class BmWinEnum {
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Tracked $p
     # The 5-minute Watchdog would relaunch a SAME-NAMED UI copy mid-test and re-mask
-    # the unidentified holder; pause it for this test, re-enabled at the restore below.
+    # the unidentified holder; it is already parked for the whole run (rev20b), and
+    # this local disable keeps the test self-contained if the park is ever lifted.
+    # The outer finally re-enables it unconditionally, so it is never left off.
     Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
     Start-Sleep -Seconds 1
     $unDir = Join-Path $env:TEMP 'bingemote-unidentified'
@@ -1256,8 +1309,9 @@ public static class BmWinEnum {
     $holdResult = (Test-Path "$holdPidFile.result") ? (Get-Content "$holdPidFile.result" -Raw).Trim() : '(no result file)'
     Write-Host "holder side: $holdResult"
     Assert ($holdResult -eq 'no-quit-signal') "holder-observed truth: the quit event was never set"
-    # Restore the broker, the watchdog, and the running UI copy for the sections below.
-    Enable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+    # Restore the broker and the running UI copy for the sections below. The
+    # Watchdog stays PARKED (rev20b: parked for the whole run after registration
+    # was proven; the outer finally re-enables it unconditionally).
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 500 }
     $p = Start-Process $exe -PassThru
@@ -1289,6 +1343,10 @@ public static class BmWinEnum {
     try {
         $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'BingeMoteInputBroker', 'InOut')
         $pipeClient.Connect(5000)
+        # rev20: bound the stream too - an accepted-but-never-answered connection
+        # used to hang ReadLine/WriteLine forever.
+        $pipeClient.ReadTimeout = 5000
+        $pipeClient.WriteTimeout = 5000
         $pw = New-Object System.IO.StreamWriter($pipeClient); $pw.AutoFlush = $true
         $pr = New-Object System.IO.StreamReader($pipeClient)
         $pw.WriteLine('m 10 0')
@@ -1353,7 +1411,8 @@ public static class BmWinEnum {
         # so re-listen after every connection or the real client finds the pipe busy.
         while ($true) {
             $srv = New-Object System.IO.Pipes.NamedPipeServerStream('BingeMoteInputBroker', 'InOut', 4, 'Byte', 'None')
-            $srv.WaitForConnection()
+            # rev20: bound the accept so a wedged listener cannot pin this job forever.
+            try { if (-not $srv.WaitForConnectionAsync().Wait(10000)) { $srv.Dispose(); continue } } catch { $srv.Dispose(); continue }
             Start-Sleep -Milliseconds 250
             $srv.Dispose()
         }
@@ -1548,6 +1607,15 @@ public static class BmWinEnum {
 
     Write-Host "HELPER E2E PASSED"
 } finally {
+    # rev20 (Instinct 2 round 3): unconditional restores/cleanup, success or failure.
+    # The rev19 test pauses the Watchdog; never leave it off after a failed run.
+    Enable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+    # Splice and stop the heartbeat child either way (the trap also stops it; the
+    # workflow uploads the raw file as an always-on artifact independent of this).
+    try { Sync-Heartbeat } catch { }
+    try { if ($heartbeat -and -not $heartbeat.HasExited) { Stop-Process -Id $heartbeat.Id -Force } } catch { }
+    # The rev19 unidentified-holder fixture must not survive the run either way.
+    try { if ($holder -and -not $holder.HasExited) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue } } catch { }
     if ($p -and -not $p.HasExited) { Stop-Tracked $p }
     Get-Job -ErrorAction SilentlyContinue | Stop-Job -ErrorAction SilentlyContinue
     Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
