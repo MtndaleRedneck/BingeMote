@@ -22,7 +22,7 @@ import kotlin.concurrent.thread
  * End-to-end proof for Ezzy's "the notification altogether doesn't work" on 1.12.2:
  * the five card buttons must REACH the PC and do their job, and the card must follow
  * the PC's state. A stub VLC on localhost records every request; the test fires each
- * notification action's PendingIntent by label and asserts the exact VLC command
+ * visible notification button by label and asserts the exact VLC command
  * arrived. A second test 401s every poll and asserts the failure is LOUD in BMBar
  * (1.12.2 swallowed it, which is why a dead card looked fine).
  */
@@ -118,21 +118,25 @@ class BarActionsTest {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         fun bar() = nm.activeNotifications.firstOrNull { it.id == 101 }?.notification
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        fun captureFailure() {
+            device.dumpWindowHierarchy(java.io.File("/sdcard/bar-actions-failure-ui.xml"))
+            device.takeScreenshot(java.io.File("/sdcard/bar-actions-failure.png"))
+        }
         fun fire(title: String) {
             device.openNotification()
             val button = device.findObject(UiSelector().description(title))
-            if (!button.waitForExists(10_000)) { fail("no visible custom-row button: $title"); return }
+            if (!button.waitForExists(10_000)) { captureFailure(); fail("no visible custom-row button: $title"); return }
             button.click()
         }
         fun hasLabel(title: String): Boolean {
             device.openNotification()
-            return device.findObject(UiSelector().description(title)).exists()
+            return device.findObject(UiSelector().description(title)).waitForExists(5_000)
         }
         try {
             waitFor("custom notification row", 20_000) { bar()?.contentView != null }
             assertFalse("no media token", bar()!!.extras.containsKey("android.mediaSession"))
             listOf("Back 5 seconds", "Volume down", "Pause", "Volume up", "Forward 5 seconds").forEach {
-                if (!hasLabel(it)) fail("missing visible button: $it")
+                if (!hasLabel(it)) { captureFailure(); fail("missing visible button: $it") }
             }
             // Pause: playing -> pl_forcepause must reach the PC.
             fire("Pause")
