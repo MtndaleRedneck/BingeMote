@@ -257,6 +257,9 @@ adb shell am instrument -w -e class 'com.bingemote.BarActionsTest#buttonsReachSt
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/bar-actions-instrument.txt
 adb logcat -d -s BMBar:V > screenshots/bar-actions-log.txt
 cat screenshots/bar-actions-log.txt
+for f in bar-actions-failure-ui.xml bar-actions-failure.png; do
+  adb pull "/sdcard/$f" "screenshots/$f" 2>&1 || echo "No failure capture: $f"
+done
 grep -q '^OK (1 test)' screenshots/bar-actions-instrument.txt || { echo 'ASSERT FAIL: notification action end-to-end test failed (see bar-actions-instrument.txt + bar-actions-log.txt)'; SEEK_FAIL=1; }
 adb logcat -c
 adb shell am instrument -w -e class 'com.bingemote.BarActionsTest#pollFailuresAreLoud' \
