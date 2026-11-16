@@ -87,7 +87,7 @@ class MediaControlsService : Service() {
             // stock's QS player reads the session (and ignores notification actions),
             // One UI's pill reads the notification's actions - both must offer the
             // same five, wired to the same handlers.
-            override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
+            override fun onCustomAction(action: String, extras: android.os.Bundle?) {
                 android.util.Log.i(TAG, "session custom: $action")
                 when (action) {
                     ACTION_MEDIA_REWIND -> jump(store, -store.skipMainSec)
