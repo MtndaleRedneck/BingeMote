@@ -41,8 +41,9 @@ jobs:
         run: |
           $out = "$env:GITHUB_WORKSPACE\e2e-heartbeat"
           New-Item -ItemType Directory $out -Force | Out-Null
-          Copy-Item "$env:TEMP\bm-e2e-heartbeat.log" $out\ -ErrorAction SilentlyContinue
-          Copy-Item "$env:TEMP\bm-e2e-heartbeat.ps1" $out\ -ErrorAction SilentlyContinue
+          $log = "$env:TEMP\bm-e2e-heartbeat.log"; $ps1 = "$env:TEMP\bm-e2e-heartbeat.ps1"
+          if (Test-Path $log) { Copy-Item $log $out\ } else { Write-Host "WARNING: heartbeat log missing ($log) - the e2e died before the watcher started" }
+          if (Test-Path $ps1) { Copy-Item $ps1 $out\ } else { Write-Host "WARNING: heartbeat script missing ($ps1)" }
           Get-ChildItem $out | Select-Object Name, Length
       - name: Upload heartbeat snapshots
         if: always()
