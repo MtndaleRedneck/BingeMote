@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compact one-row playback bar (Ezzy's design): rewind, vol down, play/pause,
+     vol up, forward. Icon bitmaps are set at runtime by NotificationArt so they
+     match the in-app artwork; content descriptions name the live skip seconds. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
+
+    <ImageButton
+        android:id="@+id/btn_rewind"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:scaleType="centerInside"
+        android:padding="8dp" />
+
+    <ImageButton
+        android:id="@+id/btn_vol_down"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:scaleType="centerInside"
+        android:padding="8dp" />
+
+    <ImageButton
+        android:id="@+id/btn_play_pause"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:scaleType="centerInside"
+        android:padding="6dp" />
+
+    <ImageButton
+        android:id="@+id/btn_vol_up"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:scaleType="centerInside"
+        android:padding="8dp" />
+
+    <ImageButton
+        android:id="@+id/btn_forward"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:scaleType="centerInside"
+        android:padding="8dp" />
+</LinearLayout>

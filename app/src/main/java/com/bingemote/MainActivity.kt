@@ -148,6 +148,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 126) MediaControls.sync(this, store)
+    }
+
     override fun onStart() {
         super.onStart()
         if (::remote.isInitialized && store.setupDone) remote.start()
