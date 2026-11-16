@@ -69,116 +69,56 @@ adb shell input swipe 540 1900 540 700 400
 sleep 2
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 
-# Lock-screen media controls (Phone 8): seeded session + media notification,
-# then the system media surface itself: the quick-settings media card (the same
-# controls the lock screen hosts; this emulator has no keyguard to capture).
+# Compact-row proof: permission denied first, then allowed, no media session.
 adb shell am force-stop com.bingemote
-adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true >/dev/null
-sleep 8
-# Quick settings first: the media card sits at the top of this surface.
-adb shell cmd statusbar expand-settings
+adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true
+sleep 4
+adb shell dumpsys notification --noredact > screenshots/permission-denied-dump.txt
+if grep -q '|com.bingemote|101|' screenshots/permission-denied-dump.txt; then
+  echo 'ASSERT FAIL: row enqueued with notification permission denied'; exit 1
+fi
+echo 'ok: denied permission does not post the row'
+adb shell am force-stop com.bingemote
+adb shell pm grant com.bingemote android.permission.POST_NOTIFICATIONS
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true
+sleep 5
+adb shell cmd statusbar expand-notifications
 sleep 3
-adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
+adb shell uiautomator dump /sdcard/ui.xml
+adb shell cat /sdcard/ui.xml > screenshots/compact-row-ui.xml
+adb exec-out screencap -p > screenshots/compact-row.png
+for label in 'Back 10 seconds' 'Volume down' 'Pause' 'Volume up' 'Forward 10 seconds'; do
+  grep -q "$label" screenshots/compact-row-ui.xml || { echo "ASSERT FAIL: missing visible $label"; exit 1; }
+done
+adb shell dumpsys notification --noredact > screenshots/notification-dump.txt
+adb shell dumpsys media_session > screenshots/media-session.txt
+adb shell dumpsys package com.bingemote > screenshots/package-perms.txt
+grep -q '|com.bingemote|101|' screenshots/notification-dump.txt || { echo 'ASSERT FAIL: no custom notification'; exit 1; }
+if grep -q 'package=com.bingemote' screenshots/media-session.txt; then
+  echo 'ASSERT FAIL: unexpected BingeMote media session'; exit 1
+fi
+echo 'ok: five visible controls, custom notification posted, no BingeMote media session'
 adb shell cmd statusbar collapse
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true --ei skipmain 5
+sleep 4
+adb shell cmd statusbar expand-notifications
 sleep 2
-# The real keyguard: the emulator ships with no screen lock, so give it a rig-local
-# PIN for exactly these two captures (cleared right after; never a user credential).
-# adb root works on the google_apis (userdebug) image; if locksettings is unavailable
-# the captures simply show the unlocked surface and the limitation is reported.
-adb root >/dev/null 2>&1 || true
-sleep 2
-adb wait-for-device
-sleep 2
-PIN_OK=0
-if adb shell locksettings set-pin 1234 2>/dev/null; then PIN_OK=1; fi
+adb shell uiautomator dump /sdcard/ui.xml
+adb shell cat /sdcard/ui.xml > screenshots/compact-row-skip5-ui.xml
+grep -q 'Back 5 seconds' screenshots/compact-row-skip5-ui.xml && grep -q 'Forward 5 seconds' screenshots/compact-row-skip5-ui.xml || { echo 'ASSERT FAIL: row ignores skip setting'; exit 1; }
+adb exec-out screencap -p > screenshots/compact-row-skip5.png
+adb shell cmd statusbar collapse
+# Screen off/on persistence capture. This is not a Samsung/One UI test.
 adb shell input keyevent 26
-sleep 3
+sleep 4
 adb shell input keyevent 224
 sleep 3
-adb exec-out screencap -p > "screenshots/lockscreen-keyguard.png"
-echo "keyguard pin set: $PIN_OK" > "screenshots/lockscreen-keyguard-note.txt"
-adb shell cmd statusbar expand-notifications
-sleep 3
-adb exec-out screencap -p > "screenshots/lockscreen-controls-shade.png"
-# Session evidence after the toggles: still active, with which actions.
-adb shell dumpsys media_session > screenshots/media-session.txt 2>/dev/null || true
-# Back to no screen lock and an unlocked device for every phase after this.
-if [ "$PIN_OK" = "1" ]; then adb shell locksettings clear --old 1234 || true; fi
-adb shell input keyevent 82
-sleep 1
-# MediaStyle pill (Ezzy's Unified direction): stock Android renders the media card
-# itself from the session plus the action list - there is no custom view to verify.
-# Capture the collapsed card in the quick-settings shade, then try to expand the
-# player in place for the all-five-actions view (stock caps compact at three).
-adb shell cmd statusbar expand-settings
-sleep 3
-adb exec-out screencap -p > "screenshots/media-card-collapsed.png"
-adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
-adb shell cat /sdcard/ui.xml > screenshots/shade-ui.xml 2>/dev/null || true
-# Expand the player in place by tapping the media card itself (the compact view
-# caps at 3 actions on stock, so Volume down only exists after expansion). Take
-# the numbers from the bounds attr ONLY - the node's content-desc carries clock
-# text ("34:12 of 1:50:24") whose digits poisoned a naive grep.
-CARD=$(tr '<' '\n' < screenshots/shade-ui.xml | grep 'qs_media_controls' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1 | grep -o '[0-9]*' | tr '\n' ' ' || true)
-echo "media card bounds: '${CARD:-none}' (shade-ui.xml saved)"
-if [ -n "$CARD" ]; then
-  CX=$(echo $CARD | awk '{printf "%d", ($1+$3)/2}')
-  CY=$(echo $CARD | awk '{printf "%d", ($2+$4)/2}')
-  adb shell input tap "$CX" "$CY"
-  sleep 2
-else
-  echo "NOTE: no media card on the shade; media card expansion not attempted"
-fi
-adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
-adb shell cat /sdcard/ui.xml > screenshots/shade-ui-expanded.xml 2>/dev/null || true
-if grep -q 'Volume down' screenshots/shade-ui-expanded.xml; then echo 'ok: expanded player shows all five actions'; else echo 'NOTE: stock QS player shows the session transport buttons only; the five custom actions are on the shade entry (see notif-shade.png + dumpsys)'; fi
-adb exec-out screencap -p > "screenshots/media-card-expanded.png"
-# Notification shade entry: MediaStyle renders OUR actions there (compact: the
-# first three - Back, Volume down, Pause). This is the stock rendering of the
-# actual buttons Ezzy gets five-across in One UI's pill.
 adb shell cmd statusbar expand-notifications
 sleep 2
-adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
-adb shell cat /sdcard/ui.xml > screenshots/shade-notif-ui.xml 2>/dev/null || true
-adb exec-out screencap -p > "screenshots/notif-shade.png"
-if grep -q 'Volume down' screenshots/shade-notif-ui.xml; then echo 'ok: shade entry renders the custom volume actions'; else echo 'NOTE: shade entry lacks Volume down'; fi
+adb exec-out screencap -p > screenshots/compact-row-after-screen-off.png
 adb shell cmd statusbar collapse
-sleep 1
-# Exemption + posting evidence: the media notification must be ENQUEUED on this
-# Android 13+ emulator with no notification-permission grant, still carrying the
-# session token (MediaStyle lineage) and the five actions.
-adb shell dumpsys notification --noredact > screenshots/notification-dump.txt 2>/dev/null || true
-# Non-default skip interval proof (Instinct 2): re-seed the bar with a 5s primary
-# skip; the labels and content descriptions must follow the setting. Force-stop
-# first: a plain am start re-delivers the intent to the RUNNING MainActivity
-# ("intent has been delivered to currently running top-most instance") and the
-# extra is never applied, leaving the 10s defaults in the dump.
-adb shell am force-stop com.bingemote
-sleep 1
-adb shell am start -n com.bingemote/.MainActivity --ei skipmain 5 >/dev/null
-sleep 3
-adb shell dumpsys notification --noredact > screenshots/notification-dump-skip5.txt 2>/dev/null || true
-if grep -q 'Back 5 seconds' screenshots/notification-dump-skip5.txt && grep -q 'Forward 5 seconds' screenshots/notification-dump-skip5.txt && ! grep -q 'Back 10 seconds' screenshots/notification-dump-skip5.txt; then
-  echo "ok: media card skip labels follow the 5s setting"
-else
-  echo "::error::media card did NOT follow the 5s skip setting"; exit 1
-fi
-# MediaStyle evidence: id 101 enqueued with the session token, the five actions and
-# the compact-view indices.
-grep -q '|com.bingemote|101|' screenshots/notification-dump-skip5.txt || { echo "::error::media notification id 101 not enqueued"; exit 1; }
-grep -q 'android.mediaSession' screenshots/notification-dump-skip5.txt || { echo "::error::session token extra missing"; exit 1; }
-grep -q 'android.compactActions' screenshots/notification-dump-skip5.txt || { echo "::error::compact action indices missing"; exit 1; }
-grep -q 'Volume down' screenshots/notification-dump-skip5.txt && grep -q 'Volume up' screenshots/notification-dump-skip5.txt || { echo "::error::volume actions missing"; exit 1; }
-echo "ok: id 101 enqueued with session token, volume actions, compact indices"
-adb shell am start -n com.bingemote/.MainActivity --ei skipmain 10 >/dev/null
-sleep 1
-# Permission-grant evidence (Instinct 2): the exemption claim needs the grant to be ABSENT.
-adb shell dumpsys package com.bingemote > screenshots/package-perms.txt 2>/dev/null || true
-if grep -q 'POST_NOTIFICATIONS: granted=true' screenshots/package-perms.txt; then
-  echo "::error::POST_NOTIFICATIONS unexpectedly granted - no-grant evidence invalid"; exit 1
-fi
-grep -m1 'POST_NOTIFICATIONS' screenshots/package-perms.txt || true
-echo "ok: POST_NOTIFICATIONS is NOT granted on this emulator"
 # End UNLOCKED: every phase after this launches the app and must see it.
 adb shell input keyevent 4
 sleep 1
