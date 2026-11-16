@@ -64,7 +64,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: BingeMote-Android-apk
           path: BingeMote-Android-*.apk
