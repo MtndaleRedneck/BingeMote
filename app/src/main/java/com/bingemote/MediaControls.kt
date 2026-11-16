@@ -7,8 +7,6 @@ import android.app.Service
 import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
 import android.os.IBinder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,48 +18,31 @@ import kotlinx.coroutines.launch
 
 /** Starts or stops the lock-screen controls service to match the setting. */
 object MediaControls {
+    fun allowed(context: Context): Boolean =
+        androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+
+    fun requestPermission(activity: android.app.Activity) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !allowed(activity)) {
+            androidx.core.app.ActivityCompat.requestPermissions(activity,
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 126)
+        }
+    }
+
     fun sync(context: Context, store: Store) {
         val i = Intent(context, MediaControlsService::class.java)
-        // The CI screenshot state seeds a demo session with no PC paired.
+        // The CI screenshot state seeds demo controls with no PC paired.
         val demo = BuildConfig.DEBUG && store.demoControls
-        if (store.lockScreenControls && (store.isConfigured || demo)) context.startService(i)
-        else context.stopService(i)
+        if (store.lockScreenControls && (store.isConfigured || demo) && allowed(context)) {
+            androidx.core.content.ContextCompat.startForegroundService(context, i)
+        } else context.stopService(i)
     }
 }
 
-/**
- * Lock-screen media controls (off by default, Phone 8): while the setting is on and a
- * movie plays, the system media surface shows his five controls (skip back, volume
- * down, play/pause, volume up, skip forward - the Unified Remote pill look). No
- * position or duration is published on purpose: the bar shows the place as plain
- * text but can't be dragged. A plain MediaSession - the system media controls are
- * exempt from the Android 13 notification permission, so no permission prompt. The
- * service polls VLC itself (the app's own poll stops when the screen is off); every
- * two seconds on the home Wi-Fi, only while the setting is on.
- *
- * 1.12.4 (Ezzy's One UI 7 recording): the 1.12.3 bar still landed in Samsung's big
- * "Live notifications" card even with no position/duration published, so position
- * signals were NOT the trigger - the remaining one is posting the bar ongoing while
- * playing. The bar now posts NON-ongoing and opts out of Android 16's
- * promoted-ongoing where that API exists; the 2s poll re-posts it while playback
- * lasts, so it survives a swipe anyway. Every service line also lands in the
- * on-phone BMLog ring (Settings has the share row) after the same recording showed
- * the card vanish mid-use with no logcat on his phone to say why.
- */
-/** 34:12 or 1:50:24. */
-private fun fmtClockSec(sec: Long): String {
-    val h = sec / 3600; val m = (sec % 3600) / 60; val ss = sec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, ss) else "%d:%02d".format(m, ss)
-}
-
+/** Five-button remote notification. This is NOT a media session: Android owns the
+ * notification header, but our RemoteViews owns the controls. Requires ordinary
+ * notification permission on Android 13+. Samsung rendering remains unproven. */
 private const val NOTIF_ID = 101
-// 1.12.5: new channel id on purpose - Android keeps the FIRST-created channel's
-// importance, so the old "playback" channel is stuck at LOW on his phone forever.
-// LOW + non-ongoing made the bar invisible (no status icon, shade entry under the
-// fold) once 1.12.4 dropped the ongoing flag that Samsung's Live card key off:
-// "no notification at all" (Ezzy, Nov 15 2026). This channel is DEFAULT so the bar
-// gets a status icon and a normal shade slot, silenced so the 2s re-post never dings.
-private const val CHANNEL_ID = "playback_v2"
+private const val CHANNEL_ID = "remote_controls_v1"
 private const val ACTION_MEDIA_REWIND = "com.bingemote.action.REWIND"
 private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD"
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
@@ -70,8 +51,6 @@ private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
 
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var session: MediaSession? = null
-    private var callback: MediaSession.Callback? = null
     private var pollJob: Job? = null
     private var failures = 0
 
@@ -81,54 +60,8 @@ class MediaControlsService : Service() {
         super.onCreate()
         BMLog.init(this)
         BMLog.i("service create")
-        val store = Store(this)
-        val s = MediaSession(this, "BingeMote")
-        val cb = object : MediaSession.Callback() {
-            // State-driven, not a blind toggle: each surface asks for the state it
-            // means (play or pause), and the command is idempotent, so a stale cached
-            // state or a double tap can never flip playback the wrong way (Ezzy's
-            // dead/inverting pause button was the old toggle guessing wrong).
-            override fun onPlay() { BMLog.i("session onPlay"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, false) } }
-            override fun onPause() { BMLog.i("session onPause"); run { Vlc.setPaused(store.host, store.vlcPort, store.vlcPassword, true) } }
-            override fun onRewind() { BMLog.i("session onRewind"); jump(store, -store.skipSecondarySec) }
-            override fun onFastForward() { BMLog.i("session onFastForward"); jump(store, store.skipMainSec) }
-            // The system media surface renders its two extra slots from these actions;
-            // they fire his two chosen skip intervals (main forward, secondary back).
-            // Headset/AVRCP fallbacks only - the advertised button set lives in
-            // pushSessionState (play/pause + the four custom actions).
-            override fun onSkipToPrevious() { jump(store, -store.skipSecondarySec) }
-            override fun onSkipToNext() { jump(store, store.skipMainSec) }
-            // Custom actions carry the full five-button set to EVERY system surface:
-            // stock's QS player reads the session (and ignores notification actions),
-            // One UI's pill reads the notification's actions - both must offer the
-            // same five, wired to the same handlers.
-            override fun onCustomAction(action: String, extras: android.os.Bundle?) {
-                BMLog.i("session custom: $action")
-                when (action) {
-                    ACTION_MEDIA_REWIND -> jump(store, -store.skipMainSec)
-                    ACTION_MEDIA_FAST_FORWARD -> jump(store, store.skipMainSec)
-                    ACTION_MEDIA_VOL_DOWN -> volumeBy(store, -Vlc.VOLUME_STEP)
-                    ACTION_MEDIA_VOL_UP -> volumeBy(store, Vlc.VOLUME_STEP)
-                }
-            }
-            // No onSeekTo and no ACTION_SEEK_TO: the bar shows the place but can't be dragged.
-        }
-        callback = cb
-        s.setCallback(cb)
-        s.setFlags(MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
-        // The system media surface opens the app from this (docs: must launch an activity).
-        s.setSessionActivity(
-            android.app.PendingIntent.getActivity(
-                this, 0,
-                Intent(this, MainActivity::class.java),
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
-            ),
-        )
-        session = s
-    }
-
-    private fun run(block: () -> Unit) {
-        scope.launch { try { block(); refreshNow() } catch (e: Exception) { BMLog.w("command FAILED: $e") } }
+        // A prior version's session is released when its process is replaced.
+        // No new session is created here, so the row cannot supply a media token.
     }
 
     /** One volume button step (5%). Same contract as the in-app volume row
@@ -175,10 +108,15 @@ class MediaControlsService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // CI screenshot state (debug builds only): seeded controls without a PC.
+        if (!MediaControls.allowed(this)) {
+            BMLog.w("controls unavailable: notification permission denied")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // Enter foreground immediately, before the first network poll.
+        postMediaNotification(lastPlaying, 0, 0, null)
         when (intent?.action) {
-            // The compact bar's skips both use his primary interval (Ezzy's design);
-            // the system media card keeps its own secondary-back / main-forward pair.
+            // Both skips use the primary interval, matching the in-app controls.
             ACTION_MEDIA_REWIND -> { BMLog.i("tap rewind"); jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_FAST_FORWARD -> { BMLog.i("tap forward"); jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
@@ -235,79 +173,30 @@ class MediaControlsService : Service() {
                 if (VlcAuthRepair.tryHealOnce(store)) { BMLog.w("poll auth FAILED - adopted the PC's current password"); return } // the next poll uses it
                 failures++
                 BMLog.w("poll auth FAILED ($failures)")
-                if (failures >= 5) { session?.isActive = false; BMLog.w("poll: session deactivated after $failures failures") }
+                if (failures >= 5) { BMLog.w("controls stopped after $failures poll failures"); stopSelf() }
                 return
             } catch (e: Exception) {
                 failures++
                 BMLog.w("poll FAILED ($failures): $e")
                 // VLC gone for good: drop the controls rather than pose over a dead player.
-                if (failures >= 5) { session?.isActive = false; BMLog.w("poll: session deactivated after $failures failures") }
+                if (failures >= 5) { BMLog.w("controls stopped after $failures poll failures"); stopSelf() }
                 return
             }
             failures = 0
-            val s = session ?: return
             val playing = st.playing
-            if (playing != lastPlaying) BMLog.i("poll: ${if (playing) "playing" else "paused"} ${fmtClockSec(st.timeSec)}/${fmtClockSec(st.lengthSec)}")
+            if (playing != lastPlaying) BMLog.i("poll: ${if (playing) "playing" else "paused"} ${st.timeSec}s/${st.lengthSec}s")
             lastPlaying = playing
-            pushSessionState(s, playing, store)
-            val meta = android.media.MediaMetadata.Builder()
-                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, st.title)
-                .build()
-            s.setMetadata(meta)
-            s.isActive = true
             postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
         } catch (t: Throwable) {
             BMLog.w("poll crashed, service stays up: $t")
         }
     }
 
-    // Session state for every surface: play/pause as the only STANDARD action plus
-    // the other four as custom actions with his labels, so stock's QS player (which
-    // reads the session, not the notification) and One UI's pill both offer the same
-    // five commands. No REWIND/FAST_FORWARD/SKIP standard actions: stock renders
-    // those with misleading labels ("Previous track") - and SKIP_TO_* has no handler.
-    // No position, no buffered end: the bar shows the place as text but can't be dragged.
-    private fun pushSessionState(s: MediaSession, playing: Boolean, store: Store) {
-        val skip = store.skipMainSec
-        val state = PlaybackState.Builder()
-            .setActions(
-                PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or
-                    PlaybackState.ACTION_PAUSE,
-            )
-            .addCustomAction(ACTION_MEDIA_REWIND, "Back $skip seconds", R.drawable.ic_bm_back)
-            .addCustomAction(ACTION_MEDIA_VOL_DOWN, "Volume down", R.drawable.ic_bm_vol_down)
-            .addCustomAction(ACTION_MEDIA_VOL_UP, "Volume up", R.drawable.ic_bm_vol_up)
-            .addCustomAction(ACTION_MEDIA_FAST_FORWARD, "Forward $skip seconds", R.drawable.ic_bm_fwd)
-            .setState(
-                if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-                if (playing) 1f else 0f,
-            )
-            .build()
-        s.setPlaybackState(state)
-    }
-
-    // CI screenshot state (debug builds only): the seeded session as it looks mid-movie.
+    // Debug-only visual seed; real button behavior is exercised against a stub PC.
     private fun seedDemo() {
-        val s = session ?: return
-        pushSessionState(s, true, Store(this))
-        s.setMetadata(
-            android.media.MediaMetadata.Builder()
-                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "demo.mkv")
-                .build(),
-        )
-        s.isActive = true
-        postMediaNotification(true, (34 * 60 + 12).toLong(), (110 * 60 + 24).toLong(), "demo.mkv")
+        postMediaNotification(true, 2052, 6624, "demo.mkv")
     }
 
-    // Ezzy's target is the compact media pill (the Unified Remote look): the SYSTEM
-    // renders the card from the session plus the action list - no custom view of ours.
-    // MediaStyle + the session token keeps it a media notification: the media surface
-    // hosts it and the Android 13 notification-permission exemption still applies.
-    // Posted NON-ongoing (1.12.4): an ongoing playing bar is what Samsung promoted
-    // into its big "Live notifications" card on his One UI 7 phone even with no
-    // position/duration published - and that card's taps reached nothing. The 2s
-    // poll re-posts the bar while playback lasts, so it survives a swipe anyway.
     private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -319,7 +208,6 @@ class MediaControlsService : Service() {
                 },
             )
         }
-        val s = session ?: return
         val store = Store(this)
         val openApp = android.app.PendingIntent.getActivity(
             this, 1, Intent(this, MainActivity::class.java),
@@ -332,26 +220,36 @@ class MediaControlsService : Service() {
         val dm = resources.displayMetrics.density
         fun px(dp: Int) = (dp * dm + 0.5f).toInt()
         val skipSec = store.skipMainSec
-        // The five buttons are notification actions rendered by the SYSTEM media card:
-        // One UI's compact pill shows them all, stock Android caps the compact view at
-        // three (platform limit, the same for every app including Unified Remote).
-        fun act(icon: android.graphics.Bitmap, label: String, intentAction: String) =
-            Notification.Action.Builder(android.graphics.drawable.Icon.createWithBitmap(icon), label, serviceIntent(intentAction)).build()
+        val row = android.widget.RemoteViews(packageName, R.layout.notification_controls)
+        val labels = listOf("Back $skipSec seconds", "Volume down", if (playing) "Pause" else "Play", "Volume up", "Forward $skipSec seconds")
+        val ids = listOf(R.id.btn_rewind, R.id.btn_vol_down, R.id.btn_play_pause, R.id.btn_vol_up, R.id.btn_forward)
+        val actions = listOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_UP, ACTION_MEDIA_FAST_FORWARD)
+        val icons = listOf(NotificationArt.skip(px(34), false, skipSec.toString()), NotificationArt.volumeDown(px(24)),
+            if (playing) NotificationArt.pause(px(36)) else NotificationArt.play(px(36)), NotificationArt.volumeUp(px(24)),
+            NotificationArt.skip(px(34), true, skipSec.toString()))
+        val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val tint = if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(38, 38, 45)
+        ids.indices.forEach { i ->
+            val bitmap = icons[i].copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+            val paint = android.graphics.Paint().apply {
+                colorFilter = android.graphics.PorterDuffColorFilter(tint, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
+            android.graphics.Canvas(bitmap).drawBitmap(icons[i], 0f, 0f, paint)
+            row.setImageViewBitmap(ids[i], bitmap)
+            row.setContentDescription(ids[i], labels[i])
+            row.setOnClickPendingIntent(ids[i], serviceIntent(actions[i]))
+        }
         val n = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(title?.ifBlank { null } ?: "Playing")
-            .setContentText("${fmtClockSec(timeSec)} of ${fmtClockSec(lengthSec)}")
+            .setContentText("Playback remote")
             .setContentIntent(openApp)
-            .setOngoing(false) // see the comment above: ongoing was Samsung's Live-card trigger
-            .addAction(act(NotificationArt.skip(px(24), forward = false, label = skipSec.toString()), "Back $skipSec seconds", ACTION_MEDIA_REWIND))
-            .addAction(act(NotificationArt.volumeDown(px(24)), "Volume down", ACTION_MEDIA_VOL_DOWN))
-            .addAction(act(if (playing) NotificationArt.pause(px(24)) else NotificationArt.play(px(24)), if (playing) "Pause" else "Play", ACTION_MEDIA_PLAY_PAUSE))
-            .addAction(act(NotificationArt.volumeUp(px(24)), "Volume up", ACTION_MEDIA_VOL_UP))
-            .addAction(act(NotificationArt.skip(px(24), forward = true, label = skipSec.toString()), "Forward $skipSec seconds", ACTION_MEDIA_FAST_FORWARD))
-            .setStyle(
-                Notification.MediaStyle().setMediaSession(s.sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2, 3, 4),
-            )
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+            .setOngoing(false)
+            .setCustomContentView(row)
+            .setCustomBigContentView(row)
+            .setStyle(Notification.DecoratedCustomViewStyle())
             .apply {
                 if (android.os.Build.VERSION.SDK_INT >= 36) {
                     // Android 16's promoted-ongoing ("Live Update") surface has an
@@ -365,7 +263,7 @@ class MediaControlsService : Service() {
             }
             .build()
         if (android.os.Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(NOTIF_ID, n)
         }
@@ -382,8 +280,6 @@ class MediaControlsService : Service() {
         BMLog.w("service destroy (bar torn down)")
         stopForeground(STOP_FOREGROUND_REMOVE)
         pollJob?.cancel()
-        session?.let { it.isActive = false; it.release() }
-        session = null
         super.onDestroy()
     }
 }
