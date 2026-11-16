@@ -33,6 +33,24 @@ jobs:
         run: pwsh -File scripts/helper-e2e.ps1
       - name: VLC control tests (real VLC, app request shapes)
         run: pwsh -File scripts/vlc-e2e.ps1
+      # rev20 (Instinct 2 round 3): the heartbeat snapshots are their own artifact,
+      # uploaded unconditionally - a step-timeout kill or a hung main can leave the
+      # newest snapshots in TEMP with the run log lost, so they never ride the log alone.
+      - name: Stage heartbeat snapshots
+        if: always()
+        run: |
+          $out = "$env:GITHUB_WORKSPACE\e2e-heartbeat"
+          New-Item -ItemType Directory $out -Force | Out-Null
+          Copy-Item "$env:TEMP\bm-e2e-heartbeat.log" $out\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:TEMP\bm-e2e-heartbeat.ps1" $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem $out | Select-Object Name, Length
+      - name: Upload heartbeat snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-heartbeat
+          path: e2e-heartbeat
+          if-no-files-found: warn
 
   # Fault-confirmation suite: Instinct 2's static review findings as runtime assertions.
   broker-faults:
