@@ -45,14 +45,19 @@ function Set-TaskState($name, $enabled) {
   if (-not (Wait-Job $job -Timeout 15)) { Write-Host "WARNING: schtasks /Change $name timed out" }
   Receive-Job $job | Out-Null; Remove-Job $job -Force -ErrorAction SilentlyContinue
 }
-function ListenerOwner {
-  $line = netstat -ano | Select-String ':8488\s' | Select-String 'LISTENING' | Select-Object -First 1
-  if (-not $line) { return $null }
-  $pid_ = [int]($line.ToString().Trim() -split '\s+')[-1]
-  $proc = Get-CimInstance Win32_Process -OperationTimeoutSec 15 -Filter "ProcessId=$pid_" -ErrorAction SilentlyContinue
-  if (-not $proc) { return [pscustomobject]@{ Pid = $pid_; User = '(gone)' } }
-  $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwner -OperationTimeoutSec 15
-  [pscustomobject]@{ Pid = $pid_; User = "$($owner.Domain)\$($owner.User)" }
+function ServingCopies {
+  # The helper listens through HTTP.sys (HttpListener), so netstat attributes the
+  # 8488 socket to PID 4 (System) and GetOwner on it returns nothing - the socket
+  # owner can NEVER identify the serving user. Identify the serving copy by the
+  # running process instead: BingeMote.exe instances at the installed path, with
+  # each one's real account. Callers assert on the account set; Wait-Listen has
+  # already proven 8488 is being served.
+  @(Get-CimInstance Win32_Process -OperationTimeoutSec 15 -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -eq $appExe } |
+    ForEach-Object {
+      $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner -OperationTimeoutSec 15
+      [pscustomobject]@{ Pid = $_.ProcessId; User = "$($owner.Domain)\$($owner.User)" }
+    })
 }
 
 try {
@@ -62,8 +67,8 @@ try {
   & $OldSetup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bm-old-install.log" | Out-Null
   Assert ($LASTEXITCODE -eq 0) "rev16 silent install exit 0 (got $LASTEXITCODE)"
   Assert (Wait-Listen 60) "rev16 build serves 8488 after install"
-  $o1 = ListenerOwner
-  Write-Host "post-install listener: $($o1 | ConvertTo-Json -Compress)"
+  $o1 = ServingCopies
+  Write-Host "post-install copies at the installed path: $($o1 | ConvertTo-Json -Compress)"
   # Restart under this script's env so the fixed pair code is honored (the installer's
   # own relaunch does not carry it), then pair.
   Stop-AllCopies
@@ -80,9 +85,10 @@ try {
   & $NewSetup /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$env:TEMP\bm-new-install.log" | Out-Null
   Assert ($LASTEXITCODE -eq 0) "round-3 silent upgrade exit 0 (got $LASTEXITCODE)"
   Assert (Wait-Listen 90) "upgraded build serves 8488 (silent install relaunches it as the original user)"
-  $o2 = ListenerOwner
-  Write-Host "post-upgrade listener: $($o2 | ConvertTo-Json -Compress)"
-  Assert ($o2.User -match [regex]::Escape($env:USERNAME)) "post-upgrade serving copy runs as the installing user ($env:USERNAME), not a foreign account (got $($o2.User))"
+  $o2 = ServingCopies
+  Write-Host "post-upgrade copies at the installed path: $($o2 | ConvertTo-Json -Compress)"
+  Assert (@($o2 | Where-Object { $_.User -match [regex]::Escape($env:USERNAME) }).Count -ge 1) "post-upgrade serving copy runs as the installing user ($env:USERNAME) (got $($o2 | ConvertTo-Json -Compress))"
+  Assert (@($o2 | Where-Object { $_.User -notmatch [regex]::Escape($env:USERNAME) }).Count -eq 0) "no foreign-account copy at the installed path after the silent upgrade (got $($o2 | ConvertTo-Json -Compress))"
   # The relaunched copy does not carry the harness env, but pairing must have
   # SURVIVED the upgrade: the old token must still authenticate.
   $r = Invoke-Helper '/ping' '{}' $token
@@ -110,9 +116,11 @@ try {
   if (-not (Wait-Job $run -Timeout 15)) { throw "schtasks /Run for the foreign-session copy timed out" }
   Receive-Job $run | Out-Null; Remove-Job $run -Force
   Assert (Wait-Listen 60) "foreign-session (SYSTEM) copy serves 8488"
-  $o3 = ListenerOwner
-  Write-Host "foreign-session listener: $($o3 | ConvertTo-Json -Compress)"
-  Assert ($o3.User -match 'SYSTEM') "the listener on 8488 is the foreign copy (got $($o3.User))"
+  $o3 = ServingCopies
+  Write-Host "foreign-session copies at the installed path: $($o3 | ConvertTo-Json -Compress)"
+  # 8488 is served (Wait-Listen above) and the user's own copy logs its bind
+  # failure below, so the serving copy is the foreign one.
+  Assert (@($o3 | Where-Object { $_.User -match 'SYSTEM' }).Count -ge 1) "the foreign copy is running at the installed path (got $($o3 | ConvertTo-Json -Compress))"
   # The user's own copy now cannot bind:
   Start-Process $appExe
   $bindFailed = $false
