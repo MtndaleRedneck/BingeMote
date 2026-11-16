@@ -1,0 +1,61 @@
+name: Android approved-base notification build
+on:
+  push:
+    branches: [fix/approved-base]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: new
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - name: Test and build signed diagnostic release
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          set -eu
+          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          (cd new && ./gradlew --no-daemon testDebugUnitTest assembleRelease assembleDebugAndroidTest)
+          mkdir -p old/app/build/outputs/apk/release
+          curl --fail --silent --show-error -L "https://github.com/MtndaleRedneck/BingeMote/releases/download/android-v1.12.2/BingeMote-Android-1.12.2.apk" -o old/app/build/outputs/apk/release/app-release.apk
+          echo '3e14059f22bc1a9065d0f2fd4895db5c387e84c6cef0181c40b5d06d955057fc  old/app/build/outputs/apk/release/app-release.apk' | sha256sum -c -
+          BT=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$BT" sign --ks "$KEYSTORE_FILE" --ks-key-alias bingemote --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out new-test.apk new/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          "$BT" verify --verbose --print-certs new/app/build/outputs/apk/release/app-release.apk
+          sha256sum old/app/build/outputs/apk/release/app-release.apk new/app/build/outputs/apk/release/app-release.apk new-test.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash new/scripts/upgrade-android.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-upgrade-evidence
+          path: evidence/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-approved129
+          path: new/app/build/outputs/apk/release/app-release.apk
+          retention-days: 1
