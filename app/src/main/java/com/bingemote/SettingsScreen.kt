@@ -179,8 +179,13 @@ fun SettingsScreen(
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics, haptics, buzzWhenEnabling = true) { haptics = it; store.haptics = it }
             Spacer(Modifier.height(9.dp))
+            Text("The compact playback row needs notification permission. No headset controls or system media card.", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
             ToggleRow("Controls on lock screen", lockControls, haptics) {
                 lockControls = it; store.lockScreenControls = it
+                if (it && !MediaControls.allowed(context)) {
+                    (context as? android.app.Activity)?.let(MediaControls::requestPermission)
+                }
                 MediaControls.sync(context, store)
             }
             Spacer(Modifier.height(9.dp))
