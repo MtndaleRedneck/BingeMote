@@ -168,6 +168,9 @@ class BarActionsTest {
             fire("Volume up")
             waitFor("volume up at stub", 10_000, { stub.requests.joinToString() }) { stub.requests.any { it.contains("command=volume&val=128") } }
             device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "compact-bar.png"))
+            device.pressHome()
+            Thread.sleep(500)
+            device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "status-bar-icon.png"))
             assertFalse("row must not create a media token", bar()!!.extras.containsKey("android.mediaSession"))
         } finally {
             ctx.stopService(Intent(ctx, MediaControlsService::class.java))
