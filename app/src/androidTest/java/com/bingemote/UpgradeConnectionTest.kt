@@ -117,12 +117,17 @@ class UpgradeConnectionTest {
     }
     @Test fun notificationSettingPermissionPopup() {
         val d=UiDevice.getInstance(inst);val s=Store(ctx)
+        d.pressHome()
         s.setupDone=true;s.lockScreenControls=false
         val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
         ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
         inst.runOnMainSync { ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         val settings=d.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.desc("Settings")),10_000)
-        assertNotNull(settings);settings.click()
+        if(settings==null) {
+            d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"settings-entry-failure.png"))
+            d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-entry-failure.xml"))
+        }
+        assertNotNull("Settings button after Home/activity launch",settings);settings.click()
         repeat(6) {
             if(!d.hasObject(androidx.test.uiautomator.By.text("Notification shade controls")))
                 d.swipe(d.displayWidth/2,d.displayHeight*3/4,d.displayWidth/2,d.displayHeight/3,25)

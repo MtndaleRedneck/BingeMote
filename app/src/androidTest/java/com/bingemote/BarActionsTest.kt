@@ -148,6 +148,7 @@ class BarActionsTest {
             waitFor("pl_forcepause at stub", 10_000) { stub.requests.any { it.contains("pl_forcepause") } }
             val tapToReceipt = android.os.SystemClock.elapsedRealtime() - lastTapStart
             println("BAR_LATENCY_MS=$tapToReceipt (status endpoint delayed1800ms)")
+            java.io.File(ctx.getExternalFilesDir(null),"bar-latency.txt").writeText("tap-to-command-ms=$tapToReceipt\nstatus-delay-ms=1800\n")
             if(tapToReceipt >= 1600) fail("tap waited on status poll: ${tapToReceipt}ms")
             stub.statusDelayMs = 0
             // The card must follow the PC's state: stub is paused, the label flips to Play.
