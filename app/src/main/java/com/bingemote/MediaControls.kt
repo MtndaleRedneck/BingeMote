@@ -55,7 +55,13 @@ private fun fmtClockSec(sec: Long): String {
 }
 
 private const val NOTIF_ID = 101
-private const val CHANNEL_ID = "playback"
+// 1.12.5: new channel id on purpose - Android keeps the FIRST-created channel's
+// importance, so the old "playback" channel is stuck at LOW on his phone forever.
+// LOW + non-ongoing made the bar invisible (no status icon, shade entry under the
+// fold) once 1.12.4 dropped the ongoing flag that Samsung's Live card key off:
+// "no notification at all" (Ezzy, Nov 15 2026). This channel is DEFAULT so the bar
+// gets a status icon and a normal shade slot, silenced so the 2s re-post never dings.
+private const val CHANNEL_ID = "playback_v2"
 private const val ACTION_MEDIA_REWIND = "com.bingemote.action.REWIND"
 private const val ACTION_MEDIA_FAST_FORWARD = "com.bingemote.action.FAST_FORWARD"
 private const val ACTION_MEDIA_PLAY_PAUSE = "com.bingemote.action.PLAY_PAUSE"
@@ -306,7 +312,11 @@ class MediaControlsService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL_ID, "Playback", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    setSound(null, null)
+                    enableVibration(false)
+                    setShowBadge(false)
+                },
             )
         }
         val s = session ?: return
