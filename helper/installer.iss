@@ -70,7 +70,13 @@ Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX
 ; already elevated, so the task is created without any extra prompt; the broker
 ; itself starts at the next sign-in.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-broker.ps1"""; Flags: runhidden waituntilterminated
-Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
+; The interactive install is elevated; without runasoriginaluser the postinstall
+; launch serves from the INSTALLING ADMIN's session and profile when a standard user
+; elevates with admin credentials: that copy is unpaired (pairing lives in the user's
+; own profile) and holds port 8488, so the user's own later launches cannot bind -
+; the phone "doesn't connect at all" (Ezzy, Nov 15 2026). The silent entry below
+; already had the flag; scripts/upgrade-e2e.ps1 phase 3 pins the failure signature.
+Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent runasoriginaluser
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
