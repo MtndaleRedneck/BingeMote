@@ -133,6 +133,14 @@ if (-not $wdOk) {
   throw "rev15: watchdog task not re-registered at the protected copy"
 }
 Write-Host "ok: watchdog task re-registered at the protected copy"
+# rev20b (run 43788656623: the 5-minute Watchdog fired mid-run at 01:55:01 and
+# launched an UNTRACKED --ensure-running UI copy; the rev17 second-launch section
+# then signaled that copy to show and its tray-tucked control failed - the second
+# time this race went red): registration is proven above, so park the Watchdog for
+# the rest of the run. The outer finally re-enables it unconditionally, and the
+# rev19 unidentified-holder test still pause/restores it locally.
+Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+Write-Host "ok: watchdog parked for the run (re-enabled in the outer finally)"
 
 # rev17: install/upgrade must leave the broker UP in the same session - no sign-out,
 # and the harness must not start the task itself here. Until rev16 the broker only
@@ -1269,8 +1277,9 @@ public static class BmWinEnum {
     Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" | Where-Object { $_.CommandLine -match '--input-broker|--broker-launcher' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Tracked $p
     # The 5-minute Watchdog would relaunch a SAME-NAMED UI copy mid-test and re-mask
-    # the unidentified holder; pause it for this test. It is re-enabled on the success
-    # path below AND in the outer finally, so a failure here never leaves it off.
+    # the unidentified holder; it is already parked for the whole run (rev20b), and
+    # this local disable keeps the test self-contained if the park is ever lifted.
+    # The outer finally re-enables it unconditionally, so it is never left off.
     Disable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
     Start-Sleep -Seconds 1
     $unDir = Join-Path $env:TEMP 'bingemote-unidentified'
@@ -1300,8 +1309,9 @@ public static class BmWinEnum {
     $holdResult = (Test-Path "$holdPidFile.result") ? (Get-Content "$holdPidFile.result" -Raw).Trim() : '(no result file)'
     Write-Host "holder side: $holdResult"
     Assert ($holdResult -eq 'no-quit-signal') "holder-observed truth: the quit event was never set"
-    # Restore the broker, the watchdog, and the running UI copy for the sections below.
-    Enable-ScheduledTask -TaskName 'BingeMote Watchdog' -ErrorAction SilentlyContinue | Out-Null
+    # Restore the broker and the running UI copy for the sections below. The
+    # Watchdog stays PARKED (rev20b: parked for the whole run after registration
+    # was proven; the outer finally re-enables it unconditionally).
     Start-ScheduledTask -TaskName 'BingeMote Input Broker'
     foreach ($i in 1..40) { if (Test-Path '\\.\pipe\BingeMoteInputBroker') { break }; Start-Sleep -Milliseconds 500 }
     $p = Start-Process $exe -PassThru
