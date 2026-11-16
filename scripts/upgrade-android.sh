@@ -24,3 +24,8 @@ for scenario in token refused vlc unreachable; do
   grep -q '^OK (1 test)' "evidence/diagnostic-$scenario.txt"
 done
 adb logcat -d > evidence/logcat.txt
+adb shell am force-stop com.bingemote
+adb shell pm grant com.bingemote android.permission.POST_NOTIFICATIONS
+adb shell am instrument -w -e class 'com.bingemote.BarActionsTest' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee evidence/bar-actions-release.txt
+grep -q '^OK (2 tests)' evidence/bar-actions-release.txt
+adb logcat -d >> evidence/logcat.txt
