@@ -64,11 +64,24 @@ fun SettingsScreen(
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var lockControls by remember { mutableStateOf(store.lockScreenControls) }
+    var permissionPopup by remember { mutableStateOf(false) }
     var showVolumeOnPc by remember { mutableStateOf(store.showVolumeOnPc) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
     var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
     var keepAwake by remember { mutableStateOf(store.keepAwake) }
+    if (permissionPopup) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { permissionPopup = false },
+            title = { Text("Enable notification controls?") },
+            text = { Text("Allow notifications to show the playback controls in your notification shade.") },
+            confirmButton = { TextButton(onClick = {
+                permissionPopup = false
+                (context as? android.app.Activity)?.let(MediaControls::requestOrOpenSettings)
+            }) { Text("Enable notifications") } },
+            dismissButton = { TextButton(onClick = { permissionPopup = false }) { Text("Not now") } },
+        )
+    }
     val configScope = rememberCoroutineScope()
     // The helper owns the real state: read it back so both toggles reflect the PC, not
     // just the phone's memory. Helpers without a key leave it absent and the phone-local
@@ -179,8 +192,9 @@ fun SettingsScreen(
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics, haptics, buzzWhenEnabling = true) { haptics = it; store.haptics = it }
             Spacer(Modifier.height(9.dp))
-            ToggleRow("Controls on lock screen", lockControls, haptics) {
+            ToggleRow("Notification shade controls", lockControls, haptics) {
                 lockControls = it; store.lockScreenControls = it
+                if (it && !MediaControls.allowed(context)) permissionPopup = true
                 MediaControls.sync(context, store)
             }
             Spacer(Modifier.height(9.dp))
