@@ -101,7 +101,10 @@ jobs:
     runs-on: windows-latest
     needs: helper
     steps:
+      # Full history: the upgrade-baseline build checks out the 1.7.11 ancestor below.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -122,11 +125,12 @@ jobs:
 
       # The real previous release, built from its own source with no hooks: the e2e
       # installs it first and then upgrades, so the upgrade path under test is the
-      # actual 1.7.11 -> 1.7.12 one, not simulated leftovers.
+      # actual 1.7.11 -> 1.7.12 one, not simulated leftovers. The baseline is the
+      # clean/pc-1711 commit, an ancestor of this branch (pinned sha; the branch
+      # itself is not kept on the remote).
       - name: Build the real 1.7.11 installer (upgrade baseline)
         run: |
-          git fetch --depth 1 origin clean/pc-1711
-          git worktree add old FETCH_HEAD
+          git worktree add old ef1fe62e008a821a09b364bd3877be0a92c7cdf3
           dotnet publish old/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o old/helper/out
           $v = Select-String -Path old/helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" old/helper/installer.iss
