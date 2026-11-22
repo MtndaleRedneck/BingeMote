@@ -76,6 +76,17 @@ internal sealed class HttpServer : IDisposable
                 }
 #endif
 
+#if BLOCK_NOTICE_HOOK
+                // CI-only (never in shipped builds): the input-blocked notice state, so
+                // the e2e can assert the title, state transitions and balloon throttle.
+                case "/ci/blockstate":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    Reply(res, 200, "{\"blocked\":" + (HelperWindow.BlockNoticeProbe.Blocked ? "true" : "false")
+                        + ",\"balloons\":" + HelperWindow.BlockNoticeProbe.Balloons
+                        + ",\"title\":" + JsonSerializer.Serialize(HelperWindow.BlockNoticeProbe.Title) + "}");
+                    return;
+#endif
+
                 // The live mouse connection (item 5): one always-open WebSocket for
                 // move/scroll/zoom/button frames, fire-and-forget. Same port, same token
                 // check; an old phone simply never opens it and stays on HTTP.

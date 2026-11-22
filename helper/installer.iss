@@ -45,10 +45,12 @@ Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMot
 Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=TCP localport=8488 profile=private"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
-; Listen permission for interactively signed-in users (S-1-5-4) instead of Everyone:
-; a service or another account can no longer squat the port and pose as the helper.
-; INTERACTIVE, not the installing account's SID, because a standard user elevating
-; with admin credentials still runs the helper as themselves, not as that admin.
+; HTTP.sys URL reservation for interactively signed-in users (S-1-5-4) instead of
+; Everyone. Partial hardening only: HTTP.sys will register the helper's URL for any
+; interactive user and BingeMote no longer grants it to non-interactive identities, but
+; another interactive user can still register the same URL, and raw TCP binding of the
+; port is unaffected. INTERACTIVE, not the installing account's SID, because a standard
+; user elevating with admin credentials still runs the helper as themselves.
 Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-5-4)"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).

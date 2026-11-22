@@ -892,7 +892,15 @@ internal sealed class HelperWindow : Form
             ContextMenuStrip = _menu,
         };
         _tray.DoubleClick += (_, _) => ShowFromTray();
-        _tray.BalloonTipClicked += (_, _) => { ShowFromTray(); StartUpdateDownload(); };
+        // Route by balloon purpose: only an update notification may start the updater.
+        // Any other balloon (e.g. the input-failure warning) just opens the window.
+        _tray.BalloonTipClicked += (_, _) =>
+        {
+            var which = _balloon;
+            _balloon = TrayBalloon.None;
+            ShowFromTray();
+            if (TrayClickStartsUpdate(which)) StartUpdateDownload();
+        };
 
         InputSender.BlockedStateChanged += OnInputBlockedState;
         Disposed += (_, _) => InputSender.BlockedStateChanged -= OnInputBlockedState;
@@ -1021,34 +1029,69 @@ internal sealed class HelperWindow : Form
     // Called from the HTTP listener thread when SendInput starts (or stops) coming back
     // short. The title carries the state for as long as it lasts; the balloon fires at
     // most once a minute so flapping input never spams. No cause is claimed: all the
-    // helper knows is that Windows did not play the input.
-    private DateTime _lastBlockBalloon = DateTime.MinValue;
+    // helper knows is that Windows did not play the input. Mouse AND keyboard share this
+    // Send path, so the wording says input, not mouse.
+    private long _lastBlockBalloonMs = long.MinValue;
+
+    // Which balloon the tray is currently showing, so a click does what THAT notice
+    // promises: an update notice downloads; anything else only opens the window.
+    internal enum TrayBalloon { None, UpdateAvailable, InputBlocked }
+    private TrayBalloon _balloon = TrayBalloon.None;
+
+    // Separate so the routing rule is unit-testable without a tray.
+    internal static bool TrayClickStartsUpdate(TrayBalloon kind) => kind == TrayBalloon.UpdateAvailable;
 
     private void OnInputBlockedState(bool blocked)
     {
+#if BLOCK_NOTICE_HOOK
+        // Mirrors the logical state even when the window handle does not exist yet
+        // (tray-hidden), where BeginInvoke would be swallowed. Title and Balloons are
+        // set on the UI path only, so they always reflect what the user could see.
+        BlockNoticeProbe.Blocked = blocked;
+#endif
         try
         {
             BeginInvoke(new Action(() =>
             {
                 if (blocked)
                 {
-                    if (DateTime.Now - _lastBlockBalloon > TimeSpan.FromMinutes(1))
+                    // Monotonic clock: wall-clock changes must not extend or reset the throttle.
+                    var nowMs = Environment.TickCount64;
+                    if (nowMs - _lastBlockBalloonMs > 60_000)
                     {
-                        _lastBlockBalloon = DateTime.Now;
+                        _lastBlockBalloonMs = nowMs;
+                        _balloon = TrayBalloon.InputBlocked;
                         _tray.BalloonTipTitle = "BingeMote";
-                        _tray.BalloonTipText = "Mouse control could not be sent. Check whether an administrator window is in front.";
+                        _tray.BalloonTipText = "Input could not be sent. Check whether an administrator window is in front.";
                         _tray.ShowBalloonTip(8000);
+#if BLOCK_NOTICE_HOOK
+                        BlockNoticeProbe.Balloons++;
+#endif
                     }
-                    Text = "BingeMote - mouse control could not be sent";
+                    Text = "BingeMote - input could not be sent";
                 }
                 else
                 {
                     Text = "BingeMote";
                 }
+#if BLOCK_NOTICE_HOOK
+                BlockNoticeProbe.Title = Text;
+#endif
             }));
         }
         catch { }
     }
+
+#if BLOCK_NOTICE_HOOK
+    // CI-only window into the notice state, so the e2e can assert title, state and
+    // balloon throttle without reading pixels.
+    internal static class BlockNoticeProbe
+    {
+        public static bool Blocked;
+        public static string Title = "";
+        public static int Balloons;
+    }
+#endif
 
     private void SetWifiStripVisible(bool show)
     {
@@ -1357,6 +1400,7 @@ internal sealed class HelperWindow : Form
         _updateAnnounced = true;
         var v = Program.AvailableUpdate.Value.Version;
         _menu.Items.Insert(0, new ToolStripMenuItem("Download update v" + v, null, (_, _) => { ShowFromTray(); StartUpdateDownload(); }));
+        _balloon = TrayBalloon.UpdateAvailable;
         _tray.BalloonTipTitle = "BingeMote update";
         _tray.BalloonTipText = "Version " + v + " is available. Click here to download it.";
         _tray.ShowBalloonTip(8000);
@@ -1624,6 +1668,9 @@ internal sealed class HelperWindow : Form
         // ("Do it INSIDE the box. Disappears once you type.").
         SendMessageW(_nameBox.Handle, EM_SETCUEBANNER, (IntPtr)1, "Type a name to pair");
         ActiveControl = _nameBox; // the name box is the obvious first step
+        // A block that started while the window handle did not exist (tray-hidden launch)
+        // was swallowed by BeginInvoke; replay the current state so the title shows it.
+        if (InputSender.IsBlocked) OnInputBlockedState(true);
     }
 
     private static Label Header(string text, int x, int y) => new()
