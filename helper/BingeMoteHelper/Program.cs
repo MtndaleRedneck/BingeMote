@@ -1036,10 +1036,10 @@ internal sealed class HelperWindow : Form
                     {
                         _lastBlockBalloon = DateTime.Now;
                         _tray.BalloonTipTitle = "BingeMote";
-                        _tray.BalloonTipText = "Windows is blocking mouse control right now. The app is fine.";
+                        _tray.BalloonTipText = "Mouse control could not be sent. Check whether an administrator window is in front.";
                         _tray.ShowBalloonTip(8000);
                     }
-                    Text = "BingeMote - Windows is blocking mouse control";
+                    Text = "BingeMote - mouse control could not be sent";
                 }
                 else
                 {

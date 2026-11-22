@@ -60,9 +60,10 @@ internal static class InputSender
         if (blocked != _blocked)
         {
             _blocked = blocked;
+            // Observed fact only: how many inputs Windows accepted. No cause is claimed.
             Program.Log(blocked
-                ? $"Windows is blocking mouse control: SendInput played {sent} of {inputs.Length} inputs. The app is fine."
-                : "Mouse control is working again.");
+                ? $"Mouse control could not be sent: SendInput played {sent} of {inputs.Length} inputs."
+                : "Mouse control is being sent again.");
             BlockedStateChanged?.Invoke(blocked);
         }
     }
