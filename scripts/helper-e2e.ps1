@@ -12,6 +12,14 @@ function Invoke-Helper($path, $body, $token) {
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+
+function Redact-Secrets([string]$text) {
+    # Never emit live auth material (pair token, VLC password) into CI logs; the
+    # values are per-run, but retained/shared logs must not carry them at all.
+    $text = $text -replace '"token":"[0-9a-f]{64}"', '"token":"<redacted>"'
+    $text = $text -replace '"(vlcPassword|password|adoptRequestId)":"[^"]+"', '"$1":"<redacted>"'
+    return $text
+}
 function Invoke-HelperGet($path, $token) {
     $headers = @{}
     if ($token) { $headers['X-BingeMote-Token'] = $token }
@@ -176,13 +184,13 @@ try {
     Assert ($r.code -eq 403) "pair with wrong code is 403"
 
     $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
-    Write-Host "right-code pair -> $($r.code): $($r.body)"
+    Write-Host "right-code pair -> $($r.code): $(Redact-Secrets $r.body)"
     if ($r.code -ne 200) {
         Get-Process | Where-Object { $_.ProcessName -like '*BingeMote*' } | ForEach-Object { Write-Host "process: $($_.ProcessName) pid=$($_.Id) path=$($_.Path)" }
         $logf = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
-        if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf }
+        if (Test-Path $logf) { Write-Host "== helper.log =="; Get-Content $logf | ForEach-Object { Redact-Secrets $_ } }
         $cfgf = Join-Path $env:LOCALAPPDATA 'BingeMote\config.json'
-        if (Test-Path $cfgf) { Write-Host "== config.json =="; Get-Content $cfgf -Raw }
+        if (Test-Path $cfgf) { Write-Host "== config.json =="; Write-Host (Redact-Secrets (Get-Content $cfgf -Raw)) }
     }
     Assert ($r.code -eq 200) "pair with right code is 200"
     $paired = $r.body | ConvertFrom-Json
@@ -214,7 +222,7 @@ try {
     # Paired phones get stored with a name; a code made outside the window pairs as "Phone N".
     $cfg = Join-Path $env:LOCALAPPDATA 'BingeMote/config.json'
     $cfgText = Get-Content $cfg -Raw
-    Assert ($cfgText -match '"name":"Phone 1"') "first paired phone gets a default name: $cfgText"
+    Assert ($cfgText -match '"name":"Phone 1"') "first paired phone gets a default name"
 
     $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
     Assert ($r.code -eq 403) "pairing code is single-use"
@@ -581,7 +589,7 @@ if (-not $ship) { throw "shipping installer artifact missing in helper/Shipping"
 $shipHash = (Get-FileHash $ship.FullName -Algorithm SHA256).Hash.ToLower()
 Write-Host "shipping installer: $($ship.FullName)"
 Write-Host "shipping installer sha256: $shipHash"
-Assert ($shipHash -eq 'c063406786594bc31e23af22dada8460d8841751d5f222c85188af28ec57483f') "shipping installer is not the TestLab draft 454319653 asset 778650981 bytes"
+Assert ($shipHash -eq 'c063406786594bc31e23af22dada8460d8841751d5f222c85188af28ec57483f') "shipping installer is the TestLab draft 454319653 asset 778650981 bytes"
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 & $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
@@ -710,7 +718,7 @@ if (-not $code) {
     Write-Host "shipping pairing diagnostics - child class :: text pairs:"
     [WinScan]::ChildDump('BingeMote') | ForEach-Object { Write-Host "  $_" }
     $logf3 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
-    if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $_" } }
+    if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $(Redact-Secrets $_)" } }
     # What the session actually shows, so window state is inspected directly.
     try {
         Add-Type -AssemblyName System.Windows.Forms
