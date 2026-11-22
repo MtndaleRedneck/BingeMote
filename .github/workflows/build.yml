@@ -156,17 +156,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run the scanner
-        run: pwsh -File helper/scanner/BingeMote-PC-Scan-1.0.0.ps1 | Tee-Object -FilePath scanner-report.txt
-      - name: Fail if the scan errored or found its own leftovers on the runner
-        run: |
-          if (Select-String -Path scanner-report.txt -Pattern 'FOUND:') { throw 'unexpected scanner findings on a clean runner' }
-          if (-not (Select-String -Path scanner-report.txt -Pattern 'look gone')) { throw 'scanner summary missing - script did not complete' }
-      - name: Upload the scanner test report
+      - name: Test the scanner (clean, fixture detection, mocked failure, launcher)
+        run: pwsh -File scripts/scanner-test.ps1
+      - name: Upload the scanner test reports
         uses: actions/upload-artifact@v4
         with:
           name: BingeMote-PC-scanner-test
-          path: scanner-report.txt
+          path: |
+            clean-report.txt
+            fixture-report.txt
+            mock-report.txt
+            launcher-report.txt
           if-no-files-found: error
 
   screenshots:
