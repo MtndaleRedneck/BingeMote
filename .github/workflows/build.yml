@@ -58,6 +58,12 @@ jobs:
           disable-animations: true
           script: ./gradlew --no-daemon connectedDebugAndroidTest
 
+      # The job log carries no device logcat, which made one instrumentation
+      # process-crash undiagnosable. Dump the full buffer after every leg.
+      - name: Dump device logcat
+        if: always()
+        run: adb logcat -d -v threadtime 2>&1 | tail -2000 || true
+
       - name: Name the APK
         run: |
           V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
