@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Principal;
 
 namespace BingeMoteHelper;
 
@@ -33,7 +34,10 @@ internal static class FirewallSetup
             try { File.WriteAllText(VlcInventoryPath(), InventoryVlcRules()); } catch { }
             // Let the helper (a normal, non-admin app) listen on its port.
             Run("netsh", "http delete urlacl url=http://+:" + Program.HttpPort + "/");
-            var acl = Run("netsh", "http add urlacl url=http://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;WD)");
+            // Grant the listen permission to this user only. The old Everyone grant let any
+            // local program squat the port and pose as the helper to the phone.
+            var sid = WindowsIdentity.GetCurrent().User!.Value;
+            var acl = Run("netsh", "http add urlacl url=http://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;" + sid + ")");
             if (acl != 0 || !UrlAclExists())
             {
                 Console.Error.WriteLine("The listen permission could not be added.");
@@ -130,7 +134,8 @@ internal static class FirewallSetup
     private static void AddRule(string protocol, int port)
     {
         Run("netsh", $"advfirewall firewall delete rule name=\"{Program.FirewallRule}\" protocol={protocol} localport={port}");
-        var code = Run("netsh", $"advfirewall firewall add rule name=\"{Program.FirewallRule}\" dir=in action=allow protocol={protocol} localport={port} profile=private");
+        // Same home network only: a wider rule also lets anything routed to this PC in.
+        var code = Run("netsh", $"advfirewall firewall add rule name=\"{Program.FirewallRule}\" dir=in action=allow protocol={protocol} localport={port} profile=private remoteip=localsubnet");
         if (code != 0) throw new InvalidOperationException($"netsh add rule exited {code}");
     }
 

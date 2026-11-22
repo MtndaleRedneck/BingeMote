@@ -43,7 +43,26 @@ internal static class InputSender
     // Two phones can tap at the same instant; keep one gesture's SendInput calls together.
     private static readonly object Gate = new();
 
-    private static void Send(params INPUT[] inputs) => SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    // SendInput returns how many inputs it actually played; a short count means Windows
+    // rejected the batch (almost always UIPI: an elevated app has the focus). Surface that
+    // once per episode instead of freezing silently: true = blocked, false = working again.
+    public static event Action<bool>? BlockedStateChanged;
+    private static bool _blocked;
+
+    private static void Send(params INPUT[] inputs)
+    {
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        var blocked = sent < inputs.Length;
+#if BLOCK_NOTICE_HOOK
+        // CI-only: pretend Windows rejected the input so the notice path can be tested.
+        if (File.Exists(Path.Combine(Program.DataDir, "fake-block"))) blocked = true;
+#endif
+        if (blocked != _blocked)
+        {
+            _blocked = blocked;
+            BlockedStateChanged?.Invoke(blocked);
+        }
+    }
 
     private static INPUT Mouse(uint flags, int dx = 0, int dy = 0, uint data = 0) =>
         new() { type = INPUT_MOUSE, U = new INPUTUNION { mi = new MOUSEINPUT { dx = dx, dy = dy, dwFlags = flags, mouseData = data } } };
