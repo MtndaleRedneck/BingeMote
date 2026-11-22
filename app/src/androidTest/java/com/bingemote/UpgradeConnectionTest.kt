@@ -88,11 +88,13 @@ class UpgradeConnectionTest {
         // NotificationManagerCompat.areNotificationsEnabled() is false. Establish that
         // predicate first: sdk>=33 has the runtime permission; below 33 the master
         // toggle is the POST_NOTIFICATION app op (no S). If neither lands, the
-        // denied-state branch is unexercised, not passed. Force-stop first: revoking a
-        // granted runtime permission SIGKILLs the running app (logcat: Zygote signal 9
-        // 1.5s after this test started), which aborts the whole instrumentation run.
+        // denied-state branch is unexercised, not passed. The workflow revokes the
+        // permission before the app is ever launched, so this in-test revoke is a
+        // no-op state-wise (revoking an already-denied permission changes nothing and
+        // kills nothing). Revoking a GRANTED runtime permission here instead SIGKILLs
+        // this very process - the tests run inside it - which is how one run aborted
+        // (logcat: Zygote signal 9, 1.5s after this test started).
         val sdk=android.os.Build.VERSION.SDK_INT
-        d.executeShellCommand("am force-stop com.bingemote")
         val revokeOut=if(sdk>=33)
             d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
         else

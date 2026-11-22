@@ -59,6 +59,12 @@ jobs:
           script: |
             adb logcat -c || true
             (adb logcat -v threadtime > /tmp/device-logcat.txt 2>&1 &)
+            # Denied-state setup BEFORE the app is ever launched: revoking a granted
+            # runtime permission while the app runs SIGKILLs it, and the instrumented
+            # tests run inside that process, so a revoke from a test kills its own
+            # runner (one run aborted exactly that way). Here nothing is running yet.
+            ./gradlew --no-daemon installDebug installDebugAndroidTest
+            adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS || true
             ./gradlew --no-daemon connectedDebugAndroidTest
             status=$?
             pkill -f 'adb logcat' || true
