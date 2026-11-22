@@ -30,16 +30,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download the exact draft bytes from the private TestLab draft release
+      - name: Download the exact draft bytes via the transient signed asset URL
         env:
-          TESTLAB_TOKEN: ${{ secrets.TESTLAB_DRAFT_READ_TOKEN }}
+          DRAFT_ASSET_URL: ${{ secrets.DRAFT_ASSET_URL }}
         run: |
           set -e
           mkdir -p /tmp/draft-smoke
-          curl -sfL -H "Authorization: Bearer $TESTLAB_TOKEN" \
-               -H "Accept: application/octet-stream" \
-               "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/$ASSET_ID" \
-               -o "/tmp/draft-smoke/$APK_NAME" || { echo "ASSERT FAIL: TestLab asset download failed"; exit 1; }
+          CODE=$(curl -sL -o "/tmp/draft-smoke/$APK_NAME" -w '%{http_code}' "$DRAFT_ASSET_URL") || true
+          echo "download http status: $CODE"
+          [ "$CODE" = 200 ] || { echo "ASSERT FAIL: signed asset URL download failed"; exit 1; }
       - name: Assert the bytes equal the pinned draft hash
         run: |
           APK="/tmp/draft-smoke/$APK_NAME"
