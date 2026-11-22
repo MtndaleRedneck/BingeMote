@@ -634,6 +634,15 @@ public static class WinScan {
         }, IntPtr.Zero);
         return found;
     }
+    public static List<string> ChildDump(string title) {
+        var r = new List<string>();
+        EnumWindows((h, l) => {
+            if (Text(h) == title)
+                EnumChildWindows(h, (c, l2) => { var b = new StringBuilder(128); GetClassName(c, b, 128); r.Add(b.ToString() + " :: '" + Text(c) + "'"); return true; }, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return r;
+    }
     public static List<string> ChildTexts(string title) {
         var r = new List<string>();
         EnumWindows((h, l) => {
@@ -651,22 +660,26 @@ public static class WinScan {
 # That button IS the supported way to create one: show the window (second-launch
 # signal), tap Pair (BM_CLICK - the button is a native BUTTON HWND), read the code.
 $code = $null
+$pairClicked = $false
 foreach ($i in 1..24) {
     foreach ($t in [WinScan]::ChildTexts('BingeMote')) {
         if ($t -match '^\d{6}$') { $code = $t; break }
     }
     if ($code) { break }
     if ($i -eq 3) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
-    if ($i -eq 8) {
+    if ($i -ge 8 -and -not $pairClicked) {
         # The Pair button starts disabled; typing a phone name enables it (the
         # TextBox is a native EDIT control: WM_SETTEXT fires TextChanged).
+        # Retry every poll: the 62eecdc run found the Pair button at i==8 but no
+        # EDIT-class child, so a one-shot attempt is not reliable.
         $edit = [WinScan]::FindChildByClass('BingeMote', '.EDIT.')
-        if ($edit -ne [IntPtr]::Zero) { [WinScan]::SendMessageText($edit, 0x000C, [IntPtr]::Zero, 'CI Phone') | Out-Null }
-        else { Write-Host "shipping pairing: name box HWND not found yet" }
-        Start-Sleep -Milliseconds 300
-        $btn = [WinScan]::FindChild('BingeMote', 'Pair')
-        if ($btn -ne [IntPtr]::Zero) { [WinScan]::SendMessage($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }
-        else { Write-Host "shipping pairing: Pair button HWND not found yet" }
+        if ($edit -ne [IntPtr]::Zero) {
+            [WinScan]::SendMessageText($edit, 0x000C, [IntPtr]::Zero, 'CI Phone') | Out-Null
+            Start-Sleep -Milliseconds 300
+            $btn = [WinScan]::FindChild('BingeMote', 'Pair')
+            if ($btn -ne [IntPtr]::Zero) { [WinScan]::SendMessage($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null; $pairClicked = $true; Write-Host "shipping pairing: name typed, Pair clicked (i=$i)" }
+            else { Write-Host "shipping pairing: Pair button HWND not found yet (i=$i)" }
+        } elseif (($i % 4) -eq 0) { Write-Host "shipping pairing: name box HWND not found yet (i=$i)" }
     }
     Start-Sleep -Milliseconds 500
 }
@@ -675,6 +688,8 @@ if (-not $code) {
     [WinScan]::TopTitles() | ForEach-Object { Write-Host "  '$_'" }
     Write-Host "shipping pairing diagnostics - BingeMote window child texts:"
     [WinScan]::ChildTexts('BingeMote') | ForEach-Object { Write-Host "  '$_'" }
+    Write-Host "shipping pairing diagnostics - child class :: text pairs:"
+    [WinScan]::ChildDump('BingeMote') | ForEach-Object { Write-Host "  $_" }
     $logf3 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $_" } }
     # What the session actually shows, so window state is inspected directly.
