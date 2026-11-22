@@ -101,7 +101,7 @@ if [ $s1 -ne 0 ]; then echo "FAIL: popup permission setup (force-stop=$s1)"; fai
 if [ "$API" -ge 33 ] && { [ $s2 -ne 0 ] || [ $s3 -ne 0 ]; }; then
   echo "FAIL: popup permission setup (revoke=$s2 clear-flags=$s3)"; fail=1
 elif [ "$API" -lt 33 ]; then
-  echo "SETUP note: api$API has no POST_NOTIFICATIONS runtime permission (revoke=$s2 clear-flags=$s3) - denied path unexercisable here"
+  echo "SETUP note: api$API has no POST_NOTIFICATIONS runtime permission (revoke=$s2 clear-flags=$s3) - denied path UNEXERCISED in this setup"
 fi
 if [ $status3 -ne 0 ]; then
   known=0

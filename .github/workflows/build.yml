@@ -34,6 +34,10 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+        with:
+          # tmp/* branches default to cache-read-only; writing the dependency
+          # cache is what keeps reruns off Maven Central (429, run 45030490223).
+          cache-read-only: false
 
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
@@ -199,6 +203,10 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+        with:
+          # tmp/* branches default to cache-read-only; writing the dependency
+          # cache is what keeps reruns off Maven Central (429, run 45030490223).
+          cache-read-only: false
       - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Enable KVM
         run: |
