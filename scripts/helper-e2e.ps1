@@ -5,25 +5,115 @@ $ErrorActionPreference = 'Stop'
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
-# --- Part 0: the installer owns the firewall rule now: silent install, verify, silent uninstall ---
-Write-Host "== installer firewall setup =="
+function Invoke-Helper($path, $body, $token) {
+    $headers = @{}
+    if ($token) { $headers['X-BingeMote-Token'] = $token }
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+    return @{ code = [int]$r.StatusCode; body = $r.Content }
+}
+function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
+function Invoke-HelperGet($path, $token) {
+    $headers = @{}
+    if ($token) { $headers['X-BingeMote-Token'] = $token }
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+    return @{ code = [int]$r.StatusCode; body = $r.Content }
+}
+
+# --- Part 0: the real upgrade path: install the actual 1.7.11 build (Everyone grant),
+# silent-upgrade to this build, pair the instance the installer launches, run the
+# blocked-input notice checks on that installed instance, then uninstall and verify ---
+Write-Host "== real 1.7.11 -> 1.7.12 upgrade =="
+# Set before any install so the app the installer relaunches inherits the fixed pair
+# code (the pair-code hook exists only in this CI build, never in shipping bytes).
+$env:BINGEMOTE_PAIR_CODE = '424242'
+$old = Get-ChildItem "helper/Output-old/BingeMote-PC-*.exe" | Select-Object -First 1
+if (-not $old) { throw "1.7.11 baseline installer missing in helper/Output-old" }
+& $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "1.7.11 baseline install failed with exit $LASTEXITCODE" }
+$acl = (netsh http show urlacl) | Out-String
+$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
+if (-not $aclBlock) { throw "1.7.11 did not add its listen permission" }
+if ($aclBlock -notmatch 'Everyone|S-1-1-0') { throw "1.7.11 baseline was expected to grant Everyone: $aclBlock" }
+Write-Host "ok: 1.7.11 baseline installed with the old Everyone grant"
+
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
-# Simulate upgrade leftovers from 1.7.11: an Everyone-granted URLACL and the plain rule.
-# The install must replace both, then bind and pair normally (checked in Part 2).
-netsh http add urlacl 'url=http://+:8488/' 'sddl=D:(A;;GX;;;WD)' | Out-Null
-netsh advfirewall firewall add rule name="BingeMote" dir=in action=allow protocol=TCP localport=8488 profile=private | Out-Null
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
+if ($LASTEXITCODE -ne 0) { throw "silent upgrade failed with exit $LASTEXITCODE" }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
-if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
+if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
 $acl = (netsh http show urlacl) | Out-String
 # The grant lives on the SDDL/User lines under the Reserved URL line; match the whole block.
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
-if (-not $aclBlock) { throw "installer did not add the listen permission" }
-if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission still grants Everyone after upgrade-leftover replacement: $aclBlock" }
-if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users: $aclBlock" }
-Write-Host "ok: installer added the firewall rule and listen permission (interactive users only)"
+if (-not $aclBlock) { throw "upgrade did not add the listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission still grants Everyone after the real upgrade: $aclBlock" }
+if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
+Write-Host "ok: real upgrade replaced the Everyone grant with the interactive-users grant"
+
+# Pair the instance the installer relaunched, under the retained installer-created state.
+$up = $false
+foreach ($i in 1..40) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $up) { throw "installer-launched helper did not start listening on 8488" }
+$r = Invoke-Helper '/ping' '{}' $null
+Assert ($r.code -eq 401) "installed instance: ping without token is 401"
+$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+Assert ($r.code -eq 403) "installed instance: pair with wrong code is 403"
+$r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+Assert ($r.code -eq 200) "installed instance pairs under the installer-created state"
+$instToken = ($r.body | ConvertFrom-Json).token
+
+# Blocked-input notice on the installed instance. The hook fakes a full SendInput
+# rejection (played 0 of N), so the log accounting is exact; /ci/blockstate reports the
+# title and the balloon throttle. This exercises the same notice code the shipping build
+# has; the fake rejection stands in for a real UIPI block, which CI cannot produce.
+$logf2 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+$logOffset = 0
+if (Test-Path $logf2) { $logOffset = (Get-Content $logf2 -Raw).Length }
+$marker = Join-Path $env:LOCALAPPDATA 'BingeMote\fake-block'
+New-Item -ItemType File -Path $marker -Force | Out-Null
+try {
+    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
+    Assert ($r.code -eq 200) "installed instance: mouse/move while input is blocked"
+    $state = $null
+    foreach ($i in 1..20) {
+        $s = Invoke-HelperGet '/ci/blockstate' $instToken
+        if ($s.code -eq 200 -and ($s.body | ConvertFrom-Json).blocked) { $state = ($s.body | ConvertFrom-Json); break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert ($null -ne $state) "installed instance reports the blocked state"
+    Assert ($state.title -match 'could not be sent') "window title carries the notice: $($state.title)"
+    Assert ($state.balloons -ge 1) "balloon shown for the first block"
+    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
+    Assert ($r.code -eq 200) "second blocked move"
+    Start-Sleep -Milliseconds 750
+    $state2 = (Invoke-HelperGet '/ci/blockstate' $instToken).body | ConvertFrom-Json
+    Assert ($state2.balloons -eq $state.balloons) "balloon throttled: count stays $($state.balloons)"
+    $newLog = (Get-Content $logf2 -Raw).Substring($logOffset)
+    Assert ($newLog -match 'played 0 of 1') "log records the exact rejection (played 0 of 1)"
+    Remove-Item $marker -Force
+    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
+    Assert ($r.code -eq 200) "mouse/move after the block lifts"
+    $recovered = $false
+    foreach ($i in 1..20) {
+        $s = Invoke-HelperGet '/ci/blockstate' $instToken
+        if ($s.code -eq 200 -and -not (($s.body | ConvertFrom-Json).blocked)) { $recovered = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert $recovered "installed instance reports the recovery"
+    $newLog = (Get-Content $logf2 -Raw).Substring($logOffset)
+    Assert ($newLog -match 'being sent again') "recovery notice appears in helper.log"
+} finally {
+    Remove-Item $marker -Force -ErrorAction SilentlyContinue
+}
+
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null
 Start-Sleep -Seconds 3
@@ -32,6 +122,9 @@ if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8488/') { throw "uninstaller left the listen permission behind" }
 Write-Host "ok: uninstaller removed the firewall rule and listen permission"
+# The installed-instance pairing above survives the uninstall (config.json is user data);
+# clear it so the standalone runtime tests below pair fresh and see Phone 1.
+Remove-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\config.json') -Force -ErrorAction SilentlyContinue
 
 # A silent install now reopens the app on purpose (an update must come back up for him),
 # and the silent uninstall can miss that brand-new process. Nothing from the
@@ -69,20 +162,6 @@ try {
     }
     if (-not $up) { throw "helper did not start listening on 8488" }
     Write-Host "helper is listening"
-
-    function Invoke-Helper($path, $body, $token) {
-        $headers = @{}
-        if ($token) { $headers['X-BingeMote-Token'] = $token }
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-        return @{ code = [int]$r.StatusCode; body = $r.Content }
-    }
-    function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
-    function Invoke-HelperGet($path, $token) {
-        $headers = @{}
-        if ($token) { $headers['X-BingeMote-Token'] = $token }
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
-        return @{ code = [int]$r.StatusCode; body = $r.Content }
-    }
 
     $r = Invoke-Helper '/ping' '{}' $null
     Assert ($r.code -eq 401) "ping without token is 401"
@@ -155,33 +234,8 @@ try {
     $r = Invoke-Helper '/type' '{"text":"hi"}' $token
     Assert ($r.code -eq 200) "type"
 
-    # Blocked-input notice: when Windows rejects SendInput (usually an admin app has
-    # focus), the helper must say so instead of freezing silently. The hook build fakes
-    # the rejection with a marker file so the path runs on an unblocked CI session.
-    $marker = Join-Path $env:LOCALAPPDATA 'BingeMote\fake-block'
-    New-Item -ItemType File -Path $marker -Force | Out-Null
-    try {
-        $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $token
-        Assert ($r.code -eq 200) "mouse/move while input is blocked"
-        $logf2 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
-        $noticed = $false
-        foreach ($i in 1..20) {
-            if ((Get-Content $logf2 -Raw) -match 'could not be sent') { $noticed = $true; break }
-            Start-Sleep -Milliseconds 250
-        }
-        Assert $noticed "blocked-input notice appears in helper.log"
-        Remove-Item $marker -Force
-        $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $token
-        Assert ($r.code -eq 200) "mouse/move after the block lifts"
-        $recovered = $false
-        foreach ($i in 1..20) {
-            if ((Get-Content $logf2 -Raw) -match 'being sent again') { $recovered = $true; break }
-            Start-Sleep -Milliseconds 250
-        }
-        Assert $recovered "recovery notice appears in helper.log"
-    } finally {
-        Remove-Item $marker -Force -ErrorAction SilentlyContinue
-    }
+    # (The blocked-input notice test moved to Part 0: it now runs on the
+    # installer-launched instance after the real upgrade.)
     # Keep-awake hold, watched at the OS level: engaging it must add a SYSTEM power
     # request for the helper (visible in powercfg /requests), releasing must remove it.
     # The endpoint runs on a listener pool thread, so this also proves the
@@ -504,3 +558,36 @@ try {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
     netsh advfirewall firewall delete rule name="BingeMote" | Out-Null
 }
+
+# --- Part 3: the exact shipping bytes (no CI hooks): install the published installer
+# artifact and smoke it. Boundary: every section above ran the hook build. This section
+# runs the same no-hook installer that ships, and checks only what works without hooks:
+# binds, 401 without a token, 403 on a wrong pair code, clean uninstall. Pairing and the
+# blocked-input notice are NOT exercised here; their coverage above used the hook build. ---
+Write-Host "== shipping-bytes smoke =="
+$ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" | Select-Object -First 1
+if (-not $ship) { throw "shipping installer artifact missing in helper/Shipping" }
+& $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
+$up = $false
+foreach ($i in 1..40) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $up) { throw "shipping helper did not start listening on 8488" }
+$r = Invoke-Helper '/ping' '{}' $null
+Assert ($r.code -eq 401) "shipping bytes: ping without token is 401"
+$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+Assert ($r.code -eq 403) "shipping bytes: pair with wrong code is 403"
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+& $unins /VERYSILENT /NORESTART | Out-Null
+Start-Sleep -Seconds 3
+try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
+if ($rule -match 'BingeMote') { throw "shipping uninstall left the firewall rule behind" }
+try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
+if ($acl -match ':8488/') { throw "shipping uninstall left the listen permission behind" }
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls, uninstall clean"

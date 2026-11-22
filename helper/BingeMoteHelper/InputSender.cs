@@ -48,22 +48,25 @@ internal static class InputSender
     // true = not played, false = played again. The count is all we know - no cause claimed.
     public static event Action<bool>? BlockedStateChanged;
     private static bool _blocked;
+    /// <summary>Current blocked state, so a late-created window can replay the notice.</summary>
+    public static bool IsBlocked => _blocked;
 
     private static void Send(params INPUT[] inputs)
     {
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         var blocked = sent < inputs.Length;
 #if BLOCK_NOTICE_HOOK
-        // CI-only: pretend Windows rejected the input so the notice path can be tested.
-        if (File.Exists(Path.Combine(Program.DataDir, "fake-block"))) blocked = true;
+        // CI-only: pretend Windows rejected the whole batch (sent=0 keeps the log's
+        // counts exact) so the notice path can be tested.
+        if (File.Exists(Path.Combine(Program.DataDir, "fake-block"))) { sent = 0; blocked = true; }
 #endif
         if (blocked != _blocked)
         {
             _blocked = blocked;
             // Observed fact only: how many inputs Windows accepted. No cause is claimed.
             Program.Log(blocked
-                ? $"Mouse control could not be sent: SendInput played {sent} of {inputs.Length} inputs."
-                : "Mouse control is being sent again.");
+                ? $"Input could not be sent: SendInput played {sent} of {inputs.Length} inputs."
+                : "Input is being sent again.");
             BlockedStateChanged?.Invoke(blocked);
         }
     }

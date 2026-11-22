@@ -33,11 +33,17 @@ internal static class FirewallSetup
             try { File.WriteAllText(VlcInventoryPath(), InventoryVlcRules()); } catch { }
             // Let the helper (a normal, non-admin app) listen on its port.
             Run("netsh", "http delete urlacl url=http://+:" + Program.HttpPort + "/");
-            // Grant the listen permission to interactively signed-in users (S-1-5-4), not
-            // Everyone: a service or another account can no longer squat the port and pose
-            // as the helper to the phone. INTERACTIVE rather than this (elevated) account's
-            // SID: a standard user elevating with admin credentials still runs the helper
-            // as themselves, and a per-account grant would lock their helper out.
+            // Grant the HTTP.sys URL reservation to interactively signed-in users
+            // (S-1-5-4) instead of Everyone. What this actually does: HTTP.sys will
+            // register this URL for any interactive user, so the helper (a normal,
+            // non-admin app) may listen. Non-interactive identities (services, other
+            // accounts' processes) are no longer granted THIS reservation by BingeMote -
+            // that is partial hardening, not exclusive ownership: another interactive user
+            // can still register the same URL, and anyone can still bind the raw TCP
+            // port when the helper is not listening (URLACL governs HTTP.sys only).
+            // INTERACTIVE rather than this (elevated) account's SID: a standard user
+            // elevating with admin credentials still runs the helper as themselves, and a
+            // per-account grant would lock their helper out.
             var acl = Run("netsh", "http add urlacl url=http://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;S-1-5-4)");
             if (acl != 0 || !UrlAclExists())
             {
