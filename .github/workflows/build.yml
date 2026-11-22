@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, clean/pc-1711]
+    branches: [tmp/pc-1712]
   workflow_dispatch:
     inputs:
       publish:
