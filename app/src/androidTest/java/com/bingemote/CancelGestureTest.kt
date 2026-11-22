@@ -160,8 +160,12 @@ class CancelGestureTest {
         val log = bmSeekLog("releaseInside-$style")
         assertFalse("release inside the circle issued a seek: $log", log.contains("seekTo"))
         assertFalse("release inside the circle toggled play/pause: $log", log.contains("togglePause"))
-        // Seed-return is asserted by the shell: pixel compare of the counter
-        // regions against the baseline (bm-cancel-pixels-$style-*.png).
+        // Seed-return is asserted OUTSIDE this job: the screenshots job
+        // (scripts/screenshots.sh) reruns this class, extracts the bounds lines
+        // from logcat, pulls bm-cancel-pixels-*.png with per-file signature
+        // checks, and pixel-compares the counter regions against the baseline
+        // (loud ASSERT FAIL). A pass of this class here does not include that
+        // pixel assertion.
     }
 
     @Test
@@ -368,13 +372,18 @@ class CancelGestureTest {
         gesture.join()
         Thread.sleep(1000)
         val log = bmSeekLog("injectedCancel")
-        val rawAfterDrag = log.lines().map { it.trim() }
-            .filter { Regex("raw action=\\d+").containsMatchIn(it) }
-        // A DOWN must be there from the gesture start; the diagnostic is the
-        // tail AFTER the drag went live (what the cancel became).
-        assertTrue("no raw DOWN/UP/CANCEL reached MainActivity at all: $log",
-            rawAfterDrag.isNotEmpty())
-        val tail = rawAfterDrag.last()
+        // The terminal event AFTER the drag went live is the evidence: a raw DOWN
+        // from the gesture start must not satisfy this test's own rule (a swallowed
+        // terminal cancel is an inconclusive FAILURE with evidence, not a pass).
+        val lines = log.lines()
+        val lastDragIdx = lines.indexOfLast { it.contains("drag sec=") }
+        assertTrue("no drag lines although the preview went live: $log", lastDragIdx >= 0)
+        val terminal = lines.drop(lastDragIdx + 1).map { it.trim() }
+            .firstOrNull { Regex("raw action=[13]").containsMatchIn(it) }
+        assertTrue("injected cancel swallowed by the dispatcher - no terminal raw " +
+            "action=1/3 after the drag went live; inconclusive by this test's own rule: $log",
+            terminal != null)
+        val tail = terminal!!
         assertFalse("injected cancel led to a seek (raw tail=$tail): $log",
             log.contains("seekTo"))
         assertFalse("injected cancel toggled play/pause (raw tail=$tail): $log",

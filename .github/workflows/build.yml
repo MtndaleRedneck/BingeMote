@@ -79,7 +79,11 @@ jobs:
         run: |
           V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           echo "VERSION=$V" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
+          APK=app/build/outputs/apk/release/app-release.apk
+          # No KEYSTORE_FILE in the matrix jobs: AGP then emits app-release-unsigned.apk
+          # (run 45023344665: assembleRelease green, cp could not stat app-release.apk).
+          [ -f "$APK" ] || APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          cp "$APK" BingeMote-Android-$V.apk
 
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.publish == true

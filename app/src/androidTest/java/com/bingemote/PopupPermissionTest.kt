@@ -57,9 +57,9 @@ class PopupPermissionTest {
         scroll.scrollUntil(androidx.test.uiautomator.Direction.DOWN,androidx.test.uiautomator.Until.findObject(target))
         d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again-sdk$sdk.png"))
         d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again-sdk$sdk.xml"))
-        assertFalse(d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
+        assertFalse("settings list shows the 'No headset controls' hint (pair state leaked across legs?)",d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
         assertFalse("toggle must start OFF",Store(ctx).lockScreenControls)
-        val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull(toggle);toggle.click()
+        val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull("toggle row 'Notification shade controls' not found after scrolling to it",toggle);toggle.click()
         val popupUp=d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000)
         val flipped=Store(ctx).lockScreenControls
         assertTrue("toggle click did not flip the stored setting",flipped)
@@ -72,7 +72,7 @@ class PopupPermissionTest {
                 android.util.Log.i("BMSeek","popup missing with gate satisfied: allowedPre=$allowedPre focus=$focus")
             }
             assertTrue("popup missing although gate held at click: allowedPre=false (hierarchy+shot dumped)",popupUp)
-            assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again-sdk$sdk.png")))
+            assertTrue("popup screenshot write failed",d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again-sdk$sdk.png")))
             d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
             // Production helper: below 33 always app notification settings; sdk>=33 asks
             // once (permission controller) and opens settings when asked before.
@@ -95,7 +95,14 @@ class PopupPermissionTest {
     // the test (shell user can read the app dir and write there) before that.
     @org.junit.After fun stashDiag() {
         val dir = ctx.getExternalFilesDir(null) ?: return
-        UiDevice.getInstance(inst).executeShellCommand(
-            "mkdir -p /sdcard/Download/bm-diag && cp -r " + dir.absolutePath + "/. /sdcard/Download/bm-diag/")
+        val d2 = UiDevice.getInstance(inst)
+        // Two plain commands, no shell compounds: executeShellCommand in this rig
+        // does not interpret shell operators (documented in CancelGestureTest),
+        // so a compound mkdir&&copy could silently do nothing. The copy output is
+        // logged so a silent stash failure is visible in the run log.
+        d2.executeShellCommand("mkdir -p /sdcard/Download/bm-diag")
+        val out = d2.executeShellCommand("cp -r " + dir.absolutePath + "/. /sdcard/Download/bm-diag/")
+        val ls = d2.executeShellCommand("ls /sdcard/Download/bm-diag")
+        android.util.Log.i("BMSeek", "popup-test diag stash: cp='${out.trim()}' files='${ls.trim()}'")
     }
 }
