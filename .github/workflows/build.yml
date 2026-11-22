@@ -50,6 +50,12 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
+          # Explicit image coordinates: the action's defaults (x86/default) resolve to a
+          # system image Google no longer serves. These match the screenshots job.
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
           script: ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Name the APK
