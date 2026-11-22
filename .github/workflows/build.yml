@@ -149,6 +149,26 @@ jobs:
         run: pwsh -File scripts/vlc-e2e.ps1
 
 
+  scanner-test:
+    # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
+    # (syntax, every section, summary) and uploads its report. The runner has no
+    # BingeMote, so a clean "nothing found" run is the expected result.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the scanner
+        run: pwsh -File helper/scanner/BingeMote-PC-Scan-1.0.0.ps1 | Tee-Object -FilePath scanner-report.txt
+      - name: Fail if the scan errored or found its own leftovers on the runner
+        run: |
+          if (Select-String -Path scanner-report.txt -Pattern 'FOUND:') { throw 'unexpected scanner findings on a clean runner' }
+          if (-not (Select-String -Path scanner-report.txt -Pattern 'look gone')) { throw 'scanner summary missing - script did not complete' }
+      - name: Upload the scanner test report
+        uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-PC-scanner-test
+          path: scanner-report.txt
+          if-no-files-found: error
+
   screenshots:
     runs-on: ubuntu-latest
     steps:
