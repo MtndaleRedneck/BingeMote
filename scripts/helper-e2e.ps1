@@ -613,6 +613,16 @@ public static class WinScan {
         EnumWindows((h, l) => { r.Add((IsWindowVisible(h) ? "[vis] " : "[hid] ") + Text(h)); return true; }, IntPtr.Zero);
         return r;
     }
+    [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    public static IntPtr FindChild(string title, string childText) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            if (Text(h) == title)
+                EnumChildWindows(h, (c, l2) => { if (Text(c) == childText) { found = c; return false; } return true; }, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
     public static List<string> ChildTexts(string title) {
         var r = new List<string>();
         EnumWindows((h, l) => {
@@ -624,22 +634,35 @@ public static class WinScan {
     }
 }
 '@
+# The pairing state here is inherited from the earlier legs (they pair several phones
+# and their config.json survives), so the instance starts tucked in the tray with no
+# live code - a code exists only while unpaired or after the window's Pair button.
+# That button IS the supported way to create one: show the window (second-launch
+# signal), tap Pair (BM_CLICK - the button is a native BUTTON HWND), read the code.
 $code = $null
-foreach ($i in 1..20) {
+foreach ($i in 1..24) {
     foreach ($t in [WinScan]::ChildTexts('BingeMote')) {
         if ($t -match '^\d{6}$') { $code = $t; break }
     }
     if ($code) { break }
-    if ($i -eq 5) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
+    if ($i -eq 3) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
+    if ($i -eq 8) {
+        $btn = [WinScan]::FindChild('BingeMote', 'Pair')
+        if ($btn -ne [IntPtr]::Zero) { [WinScan]::SendMessage($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }
+        else { Write-Host "shipping pairing: Pair button HWND not found yet" }
+    }
     Start-Sleep -Milliseconds 500
 }
 if (-not $code) {
     Write-Host "shipping pairing diagnostics - top-level windows:"
     [WinScan]::TopTitles() | ForEach-Object { Write-Host "  '$_'" }
+    Write-Host "shipping pairing diagnostics - BingeMote window child texts:"
+    [WinScan]::ChildTexts('BingeMote') | ForEach-Object { Write-Host "  '$_'" }
     $logf3 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $_" } }
     # What the session actually shows, so window state is inspected directly.
     try {
+        Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
         $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
         $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
