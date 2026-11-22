@@ -87,10 +87,15 @@ jobs:
       # The raw shipped single-file exe, for the binary-level CI-hook absence proof:
       # the installer compresses its payload, so only the raw exe can be string-scanned.
       - uses: actions/upload-artifact@v4
+        # Binary uploads are publish-path only: artifacts on a public repo are
+        # publicly downloadable, and withheld builds must never publish (run
+        # 45029656665's helper job exposed the installer until deleted).
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
         with:
           name: BingeMote-PC-raw
           path: helper/out/BingeMote.exe
           if-no-files-found: error
+          retention-days: 1
 
       - name: Build the installer (Inno Setup)
         run: |
@@ -99,9 +104,12 @@ jobs:
           Move-Item helper/Output/BingeMote-PC-*.exe .
 
       - uses: actions/upload-artifact@v4
+        # Publish-path only (see BingeMote-PC-raw gate above).
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
         with:
           name: BingeMote-PC
           path: BingeMote-PC-*.exe
+          retention-days: 1
 
   helper-e2e:
     runs-on: windows-latest
