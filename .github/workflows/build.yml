@@ -68,21 +68,41 @@ jobs:
             # its own needs, so the denied state for the popup test must be set up
             # AFTER the main suite, from outside the app process - a revoke while the
             # app runs SIGKILLs it, and instrumented tests run inside that process.
+            # The injection-path probe is isolated too: it is RED by design on api31
+            # (documented unresolved anomaly) and must not be conflated with product
+            # suite status. It runs as its own leg and is reported separately.
             ./gradlew --no-daemon installDebug installDebugAndroidTest
-            ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.bingemote.PopupPermissionTest
+            install_status=$?
+            echo "STAGE install: exit=$install_status"
+            ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.bingemote.PopupPermissionTest,com.bingemote.InjectionPathProbeTest
             status=$?
-            adb shell am force-stop com.bingemote || true
-            adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS || true
-            adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed || true
+            echo "STAGE product-suite: exit=$status"
+            adb shell am force-stop com.bingemote; s1=$?
+            adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS; s2=$?
+            adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed; s3=$?
+            echo "STAGE popup-setup: force-stop=$s1 revoke=$s2 clear-flags=$s3"
+            # Setup evidence for the denied state, independent of the test's own logcat line.
+            adb shell dumpsys package com.bingemote | grep -i 'POST_NOTIFICATIONS' | head -3
             ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.bingemote.PopupPermissionTest
             status2=$?
+            echo "STAGE popup: exit=$status2"
+            ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.bingemote.InjectionPathProbeTest
+            status3=$?
+            echo "STAGE probe: exit=$status3 (api${{ matrix.api }}; RED is the documented expected state on api31 only)"
             pkill -f 'adb logcat' || true
             # Decisive UI evidence for selector failures: the popup test dumps
             # screenshots/hierarchies into the app's external files dir. Pull them
             # while the emulator is still alive; the upload step runs on the host.
             timeout 60 adb pull /sdcard/Android/data/com.bingemote/files/ /tmp/bm-diag/ || true
-            if [ $status -ne 0 ]; then exit $status; fi
-            exit $status2
+            fail=0
+            if [ $install_status -ne 0 ]; then echo "FAIL: install stage"; fail=1; fi
+            if [ $status -ne 0 ]; then echo "FAIL: product suite"; fail=1; fi
+            if [ $status2 -ne 0 ]; then echo "FAIL: popup stage"; fail=1; fi
+            if [ $s1 -ne 0 ] || [ $s2 -ne 0 ] || [ $s3 -ne 0 ]; then echo "FAIL: popup permission setup (force-stop=$s1 revoke=$s2 clear-flags=$s3)"; fail=1; fi
+            if [ $status3 -ne 0 ]; then
+              if [ ${{ matrix.api }} -eq 31 ]; then echo "PROBE: red on api31 as documented (not a job failure)"; else echo "FAIL: probe red on api${{ matrix.api }}"; fail=1; fi
+            fi
+            exit $fail
 
       # The job log carries no device logcat, which made one instrumentation
       # process-crash undiagnosable. Capture runs during the tests (above) so a
