@@ -56,13 +56,20 @@ jobs:
           target: google_apis
           profile: pixel_6
           disable-animations: true
-          script: ./gradlew --no-daemon connectedDebugAndroidTest
+          script: |
+            adb logcat -c || true
+            (adb logcat -v threadtime > /tmp/device-logcat.txt 2>&1 &)
+            ./gradlew --no-daemon connectedDebugAndroidTest
+            status=$?
+            pkill -f 'adb logcat' || true
+            exit $status
 
       # The job log carries no device logcat, which made one instrumentation
-      # process-crash undiagnosable. Dump the full buffer after every leg.
-      - name: Dump device logcat
+      # process-crash undiagnosable. Capture runs during the tests (above) so a
+      # dead emulator still leaves its buffer; print it after every leg.
+      - name: Print device logcat
         if: always()
-        run: adb logcat -d -v threadtime 2>&1 | tail -2000 || true
+        run: tail -2000 /tmp/device-logcat.txt || true
 
       - name: Name the APK
         run: |
