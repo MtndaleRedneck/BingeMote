@@ -238,9 +238,13 @@ class MediaControlsService : Service() {
         val labels = listOf("Back $skipSec seconds", "Volume down", if (playing) "Pause" else "Play", "Volume up", "Forward $skipSec seconds")
         val ids = listOf(R.id.btn_rewind, R.id.btn_vol_down, R.id.btn_play_pause, R.id.btn_vol_up, R.id.btn_forward)
         val actions = listOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_UP, ACTION_MEDIA_FAST_FORWARD)
-        val icons = listOf(NotificationArt.skip(px(34), false, skipSec.toString()), NotificationArt.volumeDown(px(24)),
-            if (playing) NotificationArt.pause(px(36)) else NotificationArt.play(px(36)), NotificationArt.volumeUp(px(24)),
-            NotificationArt.skip(px(34), true, skipSec.toString()))
+        // One shared content box per glyph (NotificationArt.forBar) keeps the edge
+        // gaps between buttons perfectly even in the equal-weight slots.
+        val big = px(48)
+        val barPx = px(36)
+        val icons = listOf(NotificationArt.forBar(NotificationArt.skip(big, false, skipSec.toString()), barPx), NotificationArt.forBar(NotificationArt.volumeDown(big), barPx),
+            NotificationArt.forBar(if (playing) NotificationArt.pause(big) else NotificationArt.play(big), barPx), NotificationArt.forBar(NotificationArt.volumeUp(big), barPx),
+            NotificationArt.forBar(NotificationArt.skip(big, true, skipSec.toString()), barPx))
         val dark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val tint = if (dark) android.graphics.Color.WHITE else android.graphics.Color.rgb(38, 38, 45)
         ids.indices.forEach { i ->

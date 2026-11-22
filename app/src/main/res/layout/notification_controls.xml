@@ -35,7 +35,7 @@
         android:layout_weight="1"
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:scaleType="centerInside"
-        android:padding="6dp" />
+        android:padding="8dp" />
 
     <ImageButton
         android:id="@+id/btn_vol_up"

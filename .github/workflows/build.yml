@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/notif-bar-spacing]
   workflow_dispatch:
     inputs:
       publish:
@@ -44,6 +44,17 @@ jobs:
           export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           ./gradlew --no-daemon assembleRelease assembleDebug
           rm -f "$RUNNER_TEMP/release.keystore"
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Instrumented tests on an emulator (bar actions, update survival, bar spacing)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          script: ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Name the APK
         run: |

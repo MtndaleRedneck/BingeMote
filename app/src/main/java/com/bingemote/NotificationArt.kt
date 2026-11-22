@@ -24,6 +24,50 @@ object NotificationArt {
         return b
     }
 
+
+    /** Content bounding box (alpha > 8) of a drawn icon bitmap; (0,0,0,0) when empty. */
+    fun contentBounds(b: Bitmap): android.graphics.Rect {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h)
+        b.getPixels(px, 0, w, 0, 0, w, h)
+        var l = w; var t = h; var r = -1; var bot = -1
+        for (y in 0 until h) {
+            val off = y * w
+            for (x in 0 until w) {
+                if ((px[off + x] ushr 24) > 8) {
+                    if (x < l) l = x
+                    if (x > r) r = x
+                    if (y < t) t = y
+                    if (y > bot) bot = y
+                }
+            }
+        }
+        return if (r < 0) android.graphics.Rect(0, 0, 0, 0) else android.graphics.Rect(l, t, r + 1, bot + 1)
+    }
+
+    /**
+     * Normalize a bar glyph so all five share ONE centered content box. the bar
+     * measured uneven edge gaps (65/97/68/63 px between glyph edges) because each
+     * glyph carried its own size and margins (the play triangle alone had a 12dp
+     * left margin). With one shared content width and centered placement, the equal
+     * notification slots give perfectly even edge gaps. boxH only caps unusually
+     * tall art. Render the source large (48dp) for quality.
+     */
+    private const val BAR_BOX_W = 24f / 36f
+    private const val BAR_BOX_H = 32.8f / 36f
+    fun forBar(src: Bitmap, outPx: Int): Bitmap {
+        val r = contentBounds(src)
+        val out = Bitmap.createBitmap(outPx, outPx, Bitmap.Config.ARGB_8888)
+        if (r.width() <= 0 || r.height() <= 0) return out
+        val scale = minOf(outPx * BAR_BOX_W / r.width(), outPx * BAR_BOX_H / r.height())
+        val dw = r.width() * scale
+        val dh = r.height() * scale
+        val dst = RectF((outPx - dw) / 2f, (outPx - dh) / 2f, (outPx + dw) / 2f, (outPx + dh) / 2f)
+        Canvas(out).drawBitmap(src, android.graphics.Rect(r.left, r.top, r.right, r.bottom), dst,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true })
+        return out
+    }
+
     /** Play triangle (Icons.kt PlayIcon). */
     fun play(sizePx: Int): Bitmap = bitmap(sizePx) { c, p ->
         val w = sizePx.toFloat(); val h = w
