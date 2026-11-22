@@ -593,28 +593,53 @@ Assert ($r.code -eq 403) "shipping bytes: pair with wrong code is 403"
 # Genuine no-hook first-run pairing: Part 0 deleted config.json, so the shipping
 # instance starts unpaired and shows the pairing window with a live code - the
 # first-run path a user takes. The code is read from the window's own label via
-# UI Automation; a second launch of the exe (the supported single-instance show
-# signal) is the fallback when the window is not up.
-Add-Type -AssemblyName UIAutomationClient
-$ae = [System.Windows.Automation.AutomationElement]
-$root = $ae::RootElement
-$winCond = New-Object System.Windows.Automation.AndCondition(
-    (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'BingeMote')),
-    (New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)))
-$txtCond = New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+# Win32 window enumeration (WinForms labels are HWNDs; this is the text the user
+# sees); a second launch of the exe (the supported single-instance show signal)
+# is the fallback when the window is not up.
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Collections.Generic;
+public static class WinScan {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    static string Text(IntPtr h) { var b = new StringBuilder(256); GetWindowText(h, b, 256); return b.ToString(); }
+    public static List<string> TopTitles() {
+        var r = new List<string>();
+        EnumWindows((h, l) => { r.Add((IsWindowVisible(h) ? "[vis] " : "[hid] ") + Text(h)); return true; }, IntPtr.Zero);
+        return r;
+    }
+    public static List<string> ChildTexts(string title) {
+        var r = new List<string>();
+        EnumWindows((h, l) => {
+            if (Text(h) == title)
+                EnumChildWindows(h, (c, l2) => { var t = Text(c); if (t.Length > 0) r.Add(t); return true; }, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return r;
+    }
+}
+'@
 $code = $null
 foreach ($i in 1..20) {
-    foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $winCond)) {
-        foreach ($t in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $txtCond)) {
-            if ($t.Current.Name -match '^\d{6}$') { $code = $t.Current.Name; break }
-        }
-        if ($code) { break }
+    foreach ($t in [WinScan]::ChildTexts('BingeMote')) {
+        if ($t -match '^\d{6}$') { $code = $t; break }
     }
     if ($code) { break }
     if ($i -eq 5) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
     Start-Sleep -Milliseconds 500
 }
-if (-not $code) { throw "shipping pairing: no 6-digit code label found in any BingeMote window" }
+if (-not $code) {
+    Write-Host "shipping pairing diagnostics - top-level windows:"
+    [WinScan]::TopTitles() | ForEach-Object { Write-Host "  '$_'" }
+    $logf3 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $_" } }
+    throw "shipping pairing: no 6-digit code label found in any BingeMote window"
+}
 $r = Invoke-Helper '/pair' (@{ code = $code } | ConvertTo-Json -Compress) $null
 Assert ($r.code -eq 200) "shipping bytes: pairing succeeds with the code shown in the window"
 $shipToken2 = ($r.body | ConvertFrom-Json).token
