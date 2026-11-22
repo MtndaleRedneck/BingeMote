@@ -638,6 +638,17 @@ if (-not $code) {
     [WinScan]::TopTitles() | ForEach-Object { Write-Host "  '$_'" }
     $logf3 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
     if (Test-Path $logf3) { Write-Host "helper.log tail:"; Get-Content $logf3 -Tail 15 | ForEach-Object { Write-Host "  $_" } }
+    # What the session actually shows, so window state is inspected directly.
+    try {
+        Add-Type -AssemblyName System.Drawing
+        $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+        New-Item -ItemType Directory -Force 'helper/e2e-diag' | Out-Null
+        $bmp.Save('helper/e2e-diag/shipping-pairing-screen.png')
+        Write-Host "screen captured to helper/e2e-diag/shipping-pairing-screen.png"
+    } catch { Write-Host "screen capture failed: $($_.Exception.Message)" }
     throw "shipping pairing: no 6-digit code label found in any BingeMote window"
 }
 $r = Invoke-Helper '/pair' (@{ code = $code } | ConvertTo-Json -Compress) $null
