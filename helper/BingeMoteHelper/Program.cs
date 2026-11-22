@@ -1350,16 +1350,10 @@ internal sealed class HelperWindow : Form
         Font = new Font("Segoe UI", 8.5f),
     };
 
-    internal static bool IsDarkMode()
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return ((int)(key?.GetValue("AppsUseLightTheme") ?? 1)) == 0;
-        }
-        catch { return true; }
-    }
+    // Ezzy, 3:09 AM Nov 22 2026: "Just get rid of light." The helper is dark-only,
+    // even when Windows itself is in light mode. The light palette and the live
+    // theme watcher stay in the code so the decision is trivially reversible.
+    internal static bool IsDarkMode() => true;
 
     private void ApplyTheme()
     {
