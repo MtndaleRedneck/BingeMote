@@ -159,6 +159,7 @@ jobs:
       - name: Test the scanner (clean, fixture detection, mocked failure, launcher)
         run: pwsh -File scripts/scanner-test.ps1
       - name: Upload the scanner test reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BingeMote-PC-scanner-test

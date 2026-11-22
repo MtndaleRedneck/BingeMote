@@ -15,7 +15,7 @@ Assert ($clean -notmatch 'COULD NOT READ') 'clean run has no unreadable sections
 Assert ($clean -notmatch 'FOUND:') 'clean run finds nothing on a fresh runner'
 
 # --- Test 2: fixtures must be detected (positive path) ---
-$act = New-ScheduledTaskAction -Execute 'C:\Windows\System32\notepad.exe' -Arguments '-fixture'
+$act = New-ScheduledTaskAction -Execute 'C:\Windows\System32\notepad.exe' -Argument '-fixture'
 Register-ScheduledTask -TaskName 'BingeMoteFixtureScanTest' -Action $act -Force | Out-Null
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\BingeMote" | Out-Null
 Copy-Item C:\Windows\System32\notepad.exe "$env:LOCALAPPDATA\BingeMote\BingeMoteFixture.exe"
@@ -62,5 +62,8 @@ cmd /c "helper\scanner\BingeMote-PC-Scan-1.0.1.cmd < NUL" | Out-File launcher-re
 $ln = Get-Content launcher-report.txt -Raw
 Assert ($ln -match 'BingeMote PC Scan 1\.0\.1') 'launcher .cmd runs the delivered script and keeps open (pause consumed)'
 
+foreach ($r in 'clean-report.txt','fixture-report.txt','mock-report.txt','launcher-report.txt') {
+    if (Test-Path $r) { Write-Host "===== $r ====="; Get-Content $r | Write-Host }
+}
 if ($script:fail -gt 0) { throw "$($script:fail) scanner test assertion(s) failed" }
 Write-Host 'ALL SCANNER TESTS PASSED'
