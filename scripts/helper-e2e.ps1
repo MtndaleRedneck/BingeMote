@@ -17,11 +17,12 @@ netsh advfirewall firewall add rule name="BingeMote" dir=in action=allow protoco
 if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
-$acl = netsh http show urlacl
-$aclLine = $acl | Select-String ':8488/'
-if (-not $aclLine) { throw "installer did not add the listen permission" }
-if ($aclLine | Select-String 'Everyone') { throw "listen permission still grants Everyone after upgrade-leftover replacement: $aclLine" }
-if (-not ($aclLine | Select-String 'INTERACTIVE')) { throw "listen permission not scoped to interactive users: $aclLine" }
+$acl = (netsh http show urlacl) | Out-String
+# The grant lives on the SDDL/User lines under the Reserved URL line; match the whole block.
+$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
+if (-not $aclBlock) { throw "installer did not add the listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission still grants Everyone after upgrade-leftover replacement: $aclBlock" }
+if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users: $aclBlock" }
 Write-Host "ok: installer added the firewall rule and listen permission (interactive users only)"
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null
@@ -49,9 +50,10 @@ $aclOut = netsh http show urlacl
 $aclOut | Select-String '8488'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
 if (-not ($aclOut | Select-String ':8488/')) { throw "URL ACL for port 8488 missing after setup" }
-$aclLine2 = $aclOut | Select-String ':8488/'
-if ($aclLine2 | Select-String 'Everyone') { throw "helper setup still grants Everyone: $aclLine2" }
-if (-not ($aclLine2 | Select-String 'INTERACTIVE')) { throw "helper setup did not scope the listen permission to interactive users: $aclLine2" }
+$aclText2 = ($aclOut | Out-String)
+$aclBlock2 = [regex]::Match($aclText2, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
+if ($aclBlock2 -match 'Everyone|S-1-1-0') { throw "helper setup still grants Everyone: $aclBlock2" }
+if ($aclBlock2 -notmatch 'S-1-5-4|INTERACTIVE') { throw "helper setup did not scope the listen permission to interactive users: $aclBlock2" }
 
 # --- Part 2: run the helper and drive its HTTP API over loopback ---
 Write-Host "== helper runtime =="
