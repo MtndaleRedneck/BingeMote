@@ -567,9 +567,11 @@ try {
 
 # --- Part 3: the exact shipping bytes (no CI hooks): install the published installer
 # artifact and smoke it. Boundary: every section above ran the hook build. This section
-# runs the same no-hook installer that ships, and checks only what works without hooks:
-# binds, 401 without a token, 403 on a wrong pair code, clean uninstall. Pairing and the
-# blocked-input notice are NOT exercised here; their coverage above used the hook build. ---
+# runs the same no-hook installer that ships. Coverage: binds, 401 without a token, 403
+# on a wrong pair code, the retained Part 0 pairing on shipping bytes, a full no-hook
+# pairing (code read from the window the user reads, via UI Automation), a shipping
+# install-over upgrade keeping the pairing, and clean uninstall. The blocked-input
+# notice is NOT exercised here; its coverage above used the hook build. ---
 Write-Host "== shipping-bytes smoke =="
 $ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $ship) { throw "shipping installer artifact missing in helper/Shipping" }
@@ -587,6 +589,64 @@ $r = Invoke-Helper '/ping' '{}' $null
 Assert ($r.code -eq 401) "shipping bytes: ping without token is 401"
 $r = Invoke-Helper '/pair' '{"code":"000000"}' $null
 Assert ($r.code -eq 403) "shipping bytes: pair with wrong code is 403"
+
+# The Part 0 pairing survived its uninstall (config.json is user data), so these
+# shipping bytes start paired: an authenticated call on the no-hook build.
+$r = Invoke-Helper '/ping' '{}' $instToken
+Assert ($r.code -eq 200) "shipping bytes: the retained Part 0 token authenticates (no hook)"
+
+# Genuine no-hook pairing: a second launch of the same exe asks the running copy to
+# show its window (the supported single-instance path), the Pair button creates a
+# code, and the code is read from the window's own label - the text the user reads.
+& (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe')
+Add-Type -AssemblyName UIAutomationClient
+$ae = [System.Windows.Automation.AutomationElement]
+$root = $ae::RootElement
+$winCond = New-Object System.Windows.Automation.AndCondition(
+    (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'BingeMote')),
+    (New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)))
+$btnCond = New-Object System.Windows.Automation.AndCondition(
+    (New-Object System.Windows.Automation.PropertyCondition($ae::NameProperty, 'Pair')),
+    (New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))
+$win = $null; $btn = $null
+foreach ($i in 1..20) {
+    foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $winCond)) {
+        $b = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
+        if ($b) { $win = $w; $btn = $b; break }
+    }
+    if ($btn) { break }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $btn) { throw "shipping pairing: no BingeMote window with a Pair button appeared" }
+$btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+Start-Sleep -Seconds 1
+$txtCond = New-Object System.Windows.Automation.PropertyCondition($ae::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+$code = $null
+foreach ($t in $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $txtCond)) {
+    if ($t.Current.Name -match '^\d{6}$') { $code = $t.Current.Name; break }
+}
+if (-not $code) { throw "shipping pairing: no 6-digit code label in the helper window" }
+$r = Invoke-Helper '/pair' (@{ code = $code } | ConvertTo-Json -Compress) $null
+Assert ($r.code -eq 200) "shipping bytes: pairing succeeds with the code shown in the window"
+$shipToken2 = ($r.body | ConvertFrom-Json).token
+$r = Invoke-Helper '/ping' '{}' $shipToken2
+Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
+
+# Shipping upgrade: install the same shipping bytes over the paired state.
+& $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "shipping install-over failed with exit $LASTEXITCODE" }
+$up = $false
+foreach ($i in 1..40) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $up) { throw "shipping install-over: helper did not start listening on 8488" }
+$r = Invoke-Helper '/ping' '{}' $shipToken2
+Assert ($r.code -eq 200) "shipping upgrade: the window-paired token survives install-over"
+$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+Assert ($r.code -eq 403) "shipping upgrade: no live pair code after install-over (paired state retained)"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 & $unins /VERYSILENT /NORESTART | Out-Null
