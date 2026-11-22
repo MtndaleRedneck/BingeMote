@@ -87,6 +87,7 @@ try {
     $anyRun = $false
     foreach ($k in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
                      'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run')) {
+        if (-not (Test-Path $k)) { continue }  # an absent key is no entries, not a read failure
         $props = Get-ItemProperty $k -ErrorAction Stop
         if ($props) {
             foreach ($p in $props.PSObject.Properties) {
@@ -96,7 +97,9 @@ try {
             }
         }
     }
-    $startup = @(Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup" -ErrorAction Stop | Where-Object { $_.Name -match 'BingeMote' })
+    $startupDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+    $startup = @()
+    if (Test-Path $startupDir) { $startup = @(Get-ChildItem $startupDir -ErrorAction Stop | Where-Object { $_.Name -match 'BingeMote' }) }
     foreach ($f in $startup) { $anyRun = $true; Found ("Startup folder: $($f.FullName)") }
     if (-not $anyRun) { CleanLine 'no BingeMote auto-start entries' }
     Section-Result 'Auto-start' $true ''
@@ -104,9 +107,10 @@ try {
 
 Write-Section '5. Installed-program entries mentioning BingeMote'
 try {
-    $apps = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-                             'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-                             'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction Stop |
+    $roots = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+               'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+               'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall') | Where-Object { Test-Path $_ }
+    $apps = @($roots | ForEach-Object { Get-ItemProperty "$_\*" -ErrorAction Stop } |
               Where-Object { $_.DisplayName -match 'BingeMote' })
     if ($apps.Count -eq 0) { CleanLine 'no installed-program entries mention BingeMote' }
     foreach ($a in $apps) { Found ("installed entry: $($a.DisplayName) $($a.DisplayVersion)") }
@@ -123,7 +127,7 @@ try {
     }
     Section-Result 'Port 8488 listeners' $true ''
 } catch {
-    if ($_.Exception.Message -match 'No MSFT_NetTCPConnection objects found') {
+    if ($_.Exception.Message -match 'No (matching )?MSFT_NetTCPConnection objects found') {
         CleanLine 'nothing is listening on port 8488 right now (normal if the helper is not running)'
         Section-Result 'Port 8488 listeners' $true ''
     } else { Section-Result 'Port 8488 listeners' $false $_.Exception.Message }
