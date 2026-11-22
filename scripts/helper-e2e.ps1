@@ -683,7 +683,7 @@ foreach ($i in 1..24) {
         # TextBox is a native EDIT control: WM_SETTEXT fires TextChanged).
         # Retry every poll: the 62eecdc run found the Pair button at i==8 but no
         # EDIT-class child, so a one-shot attempt is not reliable.
-        $edit = [WinScan]::FindChildByClass('BingeMote', '.EDIT.')
+        $edit = [WinScan]::FindChildByClass('BingeMote', '.Edit.')
         if ($edit -ne [IntPtr]::Zero) {
             [WinScan]::SendMessageText($edit, 0x000C, [IntPtr]::Zero, 'CI Phone') | Out-Null
             Start-Sleep -Milliseconds 300
