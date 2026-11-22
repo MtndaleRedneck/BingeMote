@@ -1041,6 +1041,12 @@ internal sealed class HelperWindow : Form
     // Separate so the routing rule is unit-testable without a tray.
     internal static bool TrayClickStartsUpdate(TrayBalloon kind) => kind == TrayBalloon.UpdateAvailable;
 
+    // Throttle decision, extracted so the first-fire path is unit-testable. The sentinel
+    // must be checked BEFORE the subtraction: TickCount64 - long.MinValue overflows.
+    // Once set, lastMs <= nowMs (same monotonic session), so the difference cannot wrap.
+    internal static bool BalloonDue(long lastMs, long nowMs) =>
+        lastMs == long.MinValue || nowMs - lastMs > 60_000;
+
     private void OnInputBlockedState(bool blocked)
     {
 #if BLOCK_NOTICE_HOOK
@@ -1057,7 +1063,7 @@ internal sealed class HelperWindow : Form
                 {
                     // Monotonic clock: wall-clock changes must not extend or reset the throttle.
                     var nowMs = Environment.TickCount64;
-                    if (nowMs - _lastBlockBalloonMs > 60_000)
+                    if (BalloonDue(_lastBlockBalloonMs, nowMs))
                     {
                         _lastBlockBalloonMs = nowMs;
                         _balloon = TrayBalloon.InputBlocked;
