@@ -60,24 +60,19 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          # Every line runs as its own sh -c under this action: no variables,
+          # no set -e, no multi-line if. Each line must be self-contained.
           script: |
-            set -e
-            APK="/tmp/draft-smoke/BingeMote-Android-1.12.12.apk"
-            adb install -r "$APK"
+            adb install -r "/tmp/draft-smoke/BingeMote-Android-1.12.12.apk"
             echo "== installed draft; package metadata =="
             adb shell dumpsys package com.bingemote | grep -E 'versionName|versionCode|firstInstallTime|lastUpdateTime' | head -4
             echo "== launch =="
             adb shell am start -n com.bingemote/.MainActivity
             sleep 8
-            adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3
+            adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3 || true
             adb shell uiautomator dump /sdcard/draft-smoke-ui.xml
             adb pull /sdcard/draft-smoke-ui.xml /tmp/draft-smoke-ui.xml
-            if grep -q 'Set up BingeMote' /tmp/draft-smoke-ui.xml; then
-              echo "ok: draft bytes render the unpaired setup screen (Set up BingeMote)"
-            else
-              echo "ASSERT FAIL: expected setup screen text on fresh emulator"
-              exit 1
-            fi
+            if grep -q 'Set up BingeMote' /tmp/draft-smoke-ui.xml; then echo "ok: draft bytes render the unpaired setup screen (Set up BingeMote)"; else echo "ASSERT FAIL: expected setup screen text on fresh emulator"; exit 1; fi
             adb shell screencap -p /sdcard/draft-smoke.png
             adb pull /sdcard/draft-smoke.png /tmp/draft-smoke.png
             file /tmp/draft-smoke.png
