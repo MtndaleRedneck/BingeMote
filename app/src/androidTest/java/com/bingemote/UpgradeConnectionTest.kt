@@ -86,8 +86,11 @@ class UpgradeConnectionTest {
         d.pressHome()
         // Self-contained: the orchestrated workflow revokes this before driving the
         // test; a plain suite run must not inherit a grant from an earlier test.
-        d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS")
-        android.util.Log.i("BMSeek", "popup-test allowedAtStart=" + MediaControls.allowed(ctx))
+        val revokeOut=d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
+        val allowedAtStart=MediaControls.allowed(ctx)
+        val selfPerm=androidx.core.content.ContextCompat.checkSelfPermission(ctx,
+            android.Manifest.permission.POST_NOTIFICATIONS)
+        android.util.Log.i("BMSeek", "popup-test allowedAtStart=$allowedAtStart selfPerm=$selfPerm revokeOut=$revokeOut")
         s.setupDone=true;s.lockScreenControls=false
         val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
         ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
@@ -119,7 +122,8 @@ class UpgradeConnectionTest {
             d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.png"))
             android.util.Log.i("BMSeek", "popup missing: flipped=$flipped allowedNow=$allowedNow focus=$focus")
         }
-        assertTrue("popup missing: flipped=${Store(ctx).lockScreenControls} allowedNow=${MediaControls.allowed(ctx)} (hierarchy+shot dumped)",popupUp)
+        assertTrue("popup missing: flipped=${Store(ctx).lockScreenControls} allowedNow=${MediaControls.allowed(ctx)} " +
+            "allowedAtStart=$allowedAtStart selfPerm=$selfPerm revokeOut='$revokeOut' (hierarchy+shot dumped)",popupUp)
         assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again.png")))
         d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
         if(again) assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.android.settings")),8_000))
