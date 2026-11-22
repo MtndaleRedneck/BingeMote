@@ -846,17 +846,16 @@ internal sealed class HelperWindow : Form
         // card clipped inside it, both cut by pixel regions).
         _wifiBorder = new RoundedPanel
         {
-            Left = margin, Top = margin, Width = contentW, Height = 84,
+            Left = margin, Top = margin, Width = contentW, Height = 62,
             Radius = 8, BorderColor = Orange, Visible = false,
         };
         var wifiText = new Label
         {
-            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone. The button marks it as a private home network. Undo: Windows Settings > Network & internet > Wi-Fi.",
+            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone.",
             Font = new Font("Segoe UI", 9f),
-            UseMnemonic = false,
-            Left = 13, Top = 12, Width = contentW - 12 - 160 - 20, Height = 84 - 20,
+            Left = 13, Top = 9, Width = contentW - 12 - 160 - 16, Height = 62 - 16,
         };
-        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 14, 160);
+        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 7 + 1, 160);
         _wifiBtn.Height = 28;
         StylePrimary(_wifiBtn);
         _wifiBtn.Click += (_, _) => FixHomeWifi();
@@ -865,7 +864,7 @@ internal sealed class HelperWindow : Form
             Text = "(Windows will ask for permission)",
             Font = new Font("Segoe UI", 7.5f),
             Width = 160, TextAlign = ContentAlignment.TopCenter,
-            Left = contentW - 160 - 10 + 1, Top = 48, Height = 16,
+            Left = contentW - 160 - 10 + 1, Top = 40 + 1, Height = 16,
         };
         _wifiBorder.Controls.Add(wifiText);
         _wifiBorder.Controls.Add(_wifiBtn);
@@ -981,7 +980,7 @@ internal sealed class HelperWindow : Form
         if (Visible) { TickStatus(); _timer.Start(); }
     }
 
-    private const int StripH = 96;
+    private const int StripH = 74;
 
     /// <summary>Base layout + the optional blocks (Wi-Fi strip on top, first-run line
     /// under the pair header, pairing code under the name row): everything below a
@@ -1555,15 +1554,15 @@ internal sealed class HelperWindow : Form
         protected override void OnPaint(PaintEventArgs e)
         {
             var fill = BackColor;
-            // Disabled reads disabled but stays legible: the fill leans most of the way
-            // toward whatever is behind the button, the text keeps real contrast on it.
-            if (!Enabled) fill = Mix(BackColor, Parent?.BackColor ?? BackColor, 0.78f);
+            // Disabled reads disabled: the fill leans halfway toward whatever is behind the
+            // button and the text halfway toward that.
+            if (!Enabled) fill = Mix(BackColor, Parent?.BackColor ?? BackColor, 0.5f);
             // Hover/pressed lean toward the text color: lighter on dark grey, deeper on orange.
             else if (_pressed) fill = Mix(BackColor, ForeColor, 0.16f);
             else if (_hover) fill = Mix(BackColor, ForeColor, 0.08f);
             var border = FlatAppearance.BorderSize > 0 ? FlatAppearance.BorderColor : Color.Empty;
             PaintRounded(e.Graphics, this, fill, border, _radius);
-            var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.12f);
+            var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.5f);
             TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, fg, fill,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
@@ -1591,8 +1590,9 @@ internal sealed class HelperWindow : Form
         base.OnLoad(e);
         RefreshPhones();
         // In-box hint via EM_SETCUEBANNER with wParam=1: the cue stays visible even while
-        // the box is focused-but-empty, and vanishes the instant typing starts. No auto-focus either way.
+        // the box is focused-but-empty, and vanishes the instant typing starts.
         SendMessageW(_nameBox.Handle, EM_SETCUEBANNER, (IntPtr)1, "Type a name to pair");
+        ActiveControl = _nameBox; // the name box is the obvious first step
     }
 
     private static Label Header(string text, int x, int y) => new()
