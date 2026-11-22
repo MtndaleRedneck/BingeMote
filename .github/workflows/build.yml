@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, feat/notif-bar-spacing]
+    branches: [main, bundle/1.12.12]
   workflow_dispatch:
     inputs:
       publish:
@@ -32,18 +32,8 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 
-      - name: Build APKs
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: bingemote
-        run: |
-          if [ -z "$KEYSTORE_B64" ]; then echo "No signing secrets set"; exit 1; fi
-          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
-          ./gradlew --no-daemon assembleRelease assembleDebug
-          rm -f "$RUNNER_TEMP/release.keystore"
+      - name: Build (unsigned - validation only on TestLab; signed bundle builds elsewhere)
+        run: ./gradlew --no-daemon assembleDebug
 
       - name: Enable KVM for the emulator
         run: |
