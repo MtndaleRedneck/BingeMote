@@ -575,6 +575,14 @@ try {
 Write-Host "== shipping-bytes smoke =="
 $ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $ship) { throw "shipping installer artifact missing in helper/Shipping" }
+# Tested-to-distributed identity is an ASSERTION, not an attestation: the workflow
+# downloads the exact artifact (run 45010240309) whose bytes are the hidden TestLab
+# draft 454319653 asset 778650981, and this run proves it is testing those bytes.
+$shipHash = (Get-FileHash $ship.FullName -Algorithm SHA256).Hash.ToLower()
+Write-Host "shipping installer: $($ship.FullName)"
+Write-Host "shipping installer sha256: $shipHash"
+Assert ($shipHash -eq 'c063406786594bc31e23af22dada8460d8841751d5f222c85188af28ec57483f') "shipping installer is not the TestLab draft 454319653 asset 778650981 bytes"
+Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 & $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
 $up = $false

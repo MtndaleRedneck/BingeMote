@@ -14,12 +14,18 @@ on:
         type: choice
         options: [app, helper]
         default: helper
+      only:
+        description: Limit the run (pc-e2e skips the android/scanner/screenshot jobs)
+        type: choice
+        options: [all, pc-e2e]
+        default: all
 
 permissions:
   contents: read
 
 jobs:
   android:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -138,13 +144,19 @@ jobs:
           New-Item -ItemType Directory -Force helper/Output-old | Out-Null
           Copy-Item old/helper/Output/BingeMote-PC-*.exe helper/Output-old/
 
-      # The exact shipping installer (no hooks) from the helper job, for the
-      # shipping-bytes smoke at the end of the e2e.
-      - name: Download the shipping installer
+      # The exact shipping installer (no hooks), pinned to the artifact of run
+      # 45010240309 - those bytes ARE the hidden TestLab draft 454319653 asset
+      # 778650981 (sha256 verified against the draft), so the e2e shipping leg
+      # tests the distributed bytes themselves, and the e2e script asserts the
+      # installer hash before installing.
+      - name: Download the shipping installer (exact TestLab draft bytes)
         uses: actions/download-artifact@v4
         with:
           name: BingeMote-PC
           path: helper/Shipping
+          repository: MtndaleRedneck/BingeMote
+          run-id: 45010240309
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Render the window for layout review (CI only)
         run: |
@@ -185,6 +197,7 @@ jobs:
 
 
   scanner-test:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
     # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
     # (syntax, every section, summary) and uploads its report. The runner has no
     # BingeMote, so a clean "nothing found" run is the expected result.
@@ -206,6 +219,7 @@ jobs:
           if-no-files-found: error
 
   screenshots:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
