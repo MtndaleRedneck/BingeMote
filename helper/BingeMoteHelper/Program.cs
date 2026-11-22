@@ -636,7 +636,6 @@ internal sealed class HelperWindow : Form
     private readonly Label _code;
     private readonly Label _codeNote;
     private readonly Button _cancelPair;
-    private readonly Label _pairHint;
     private bool _codeExpired;
     private readonly Label _phonesHeader;
     private readonly FlowLayoutPanel _phoneList;
@@ -709,25 +708,18 @@ internal sealed class HelperWindow : Form
         // One anti-aliased rounded frame, exactly the Pair button's top and height, with a
         // borderless TextBox centered inside it (no docking: a single-line TextBox keeps
         // its own height, which left a grey slab under it).
-        // While Pair is greyed, a hint next to it says why; typing a name swaps it for the button.
-        _pairHint = new Label
-        {
-            Text = "Type a name to pair",
-            Font = new Font("Segoe UI", 8f),
-            AutoSize = true, Top = y + 9,
-        };
-        var hintW = _pairHint.PreferredWidth + 10;
-        _pairHint.Left = margin + contentW - 60 - 12 - hintW;
+        // The "type a name" hint lives INSIDE the box as placeholder text (Ezzy, 2:00 AM):
+        // it disappears the moment he types, and nothing sits beside the box.
         _nameBoxPanel = new RoundedPanel
         {
-            Left = margin, Top = y, Width = contentW - 60 - 12 - hintW, Height = 32,
+            Left = margin, Top = y, Width = contentW - 60 - 12, Height = 32,
             Radius = 4, Cursor = Cursors.IBeam,
         };
         _nameBox = new TextBox
         {
             BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 10),
-            PlaceholderText = "Phone name",
+            PlaceholderText = "Type a name to pair",
         };
         _nameBoxPanel.Controls.Add(_nameBox);
         _nameBoxPanel.Layout += (_, _) =>
@@ -745,7 +737,6 @@ internal sealed class HelperWindow : Form
         _nameBox.TextChanged += (_, _) =>
         {
             _pair.Enabled = _nameBox.Text.Trim().Length > 0;
-            _pairHint.Visible = !_pair.Enabled;
         };
         y += 32 + 12;
         _codeCaption = new Label
@@ -857,16 +848,16 @@ internal sealed class HelperWindow : Form
         // card clipped inside it, both cut by pixel regions).
         _wifiBorder = new RoundedPanel
         {
-            Left = margin, Top = margin, Width = contentW, Height = 62,
+            Left = margin, Top = margin, Width = contentW, Height = 84,
             Radius = 8, BorderColor = Orange, Visible = false,
         };
         var wifiText = new Label
         {
-            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone.",
+            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone. The button marks it as a private home network so your phone can connect. Undo any time: Windows Settings > Network & internet > Wi-Fi.",
             Font = new Font("Segoe UI", 9f),
-            Left = 13, Top = 9, Width = contentW - 12 - 160 - 16, Height = 62 - 16,
+            Left = 13, Top = 12, Width = contentW - 12 - 160 - 20, Height = 84 - 20,
         };
-        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 7 + 1, 160);
+        _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 14, 160);
         _wifiBtn.Height = 28;
         StylePrimary(_wifiBtn);
         _wifiBtn.Click += (_, _) => FixHomeWifi();
@@ -875,7 +866,7 @@ internal sealed class HelperWindow : Form
             Text = "(Windows will ask for permission)",
             Font = new Font("Segoe UI", 7.5f),
             Width = 160, TextAlign = ContentAlignment.TopCenter,
-            Left = contentW - 160 - 10 + 1, Top = 40 + 1, Height = 16,
+            Left = contentW - 160 - 10 + 1, Top = 48, Height = 16,
         };
         _wifiBorder.Controls.Add(wifiText);
         _wifiBorder.Controls.Add(_wifiBtn);
@@ -884,7 +875,7 @@ internal sealed class HelperWindow : Form
         Controls.AddRange(new Control[]
         {
             _wifiBorder,
-            _pairHeader, _firstRun, _nameBoxPanel, _pairHint, _pair, _codeCaption, _code, _cancelPair, _codeNote,
+            _pairHeader, _firstRun, _nameBoxPanel, _pair, _codeCaption, _code, _cancelPair, _codeNote,
             _phonesHeader, _phoneList, _removeAll,
             _aboutHeader, _feedbackCard, _updatesCard,
         });
@@ -991,7 +982,7 @@ internal sealed class HelperWindow : Form
         if (Visible) { TickStatus(); _timer.Start(); }
     }
 
-    private const int StripH = 74;
+    private const int StripH = 96;
 
     /// <summary>Base layout + the optional blocks (Wi-Fi strip on top, first-run line
     /// under the pair header, pairing code under the name row): everything below a
@@ -1390,8 +1381,6 @@ internal sealed class HelperWindow : Form
         _codeCaption.ForeColor = text;
         _code.ForeColor = Orange;
         _codeNote.ForeColor = text;
-        _pairHint.ForeColor = muted;
-        _pairHint.BackColor = bg;
         _phoneList.BackColor = bg;
         _firstRun.BackColor = bg;
         _firstRun.ForeColor = text;
@@ -1564,15 +1553,15 @@ internal sealed class HelperWindow : Form
         protected override void OnPaint(PaintEventArgs e)
         {
             var fill = BackColor;
-            // Disabled reads disabled: the fill leans halfway toward whatever is behind the
-            // button and the text halfway toward that.
-            if (!Enabled) fill = Mix(BackColor, Parent?.BackColor ?? BackColor, 0.5f);
+            // Disabled reads disabled but stays legible: the fill leans most of the way
+            // toward whatever is behind the button, the text keeps real contrast on it.
+            if (!Enabled) fill = Mix(BackColor, Parent?.BackColor ?? BackColor, 0.78f);
             // Hover/pressed lean toward the text color: lighter on dark grey, deeper on orange.
             else if (_pressed) fill = Mix(BackColor, ForeColor, 0.16f);
             else if (_hover) fill = Mix(BackColor, ForeColor, 0.08f);
             var border = FlatAppearance.BorderSize > 0 ? FlatAppearance.BorderColor : Color.Empty;
             PaintRounded(e.Graphics, this, fill, border, _radius);
-            var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.5f);
+            var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.12f);
             TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, fg, fill,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
