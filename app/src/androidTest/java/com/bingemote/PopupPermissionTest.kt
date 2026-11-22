@@ -78,11 +78,13 @@ class PopupPermissionTest {
             // once (permission controller) and opens settings when asked before.
             val expectPermissionController=sdk>=33 && !again
             val pkg=if(expectPermissionController) "com.google.android.permissioncontroller" else "com.android.settings"
-            assertTrue("expected $pkg after Enable notifications (sdk=$sdk again=$again)",
-                d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(pkg)),8_000))
+            val destReached=d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(pkg)),8_000)
+            android.util.Log.i("BMSeek","popup-test destination=$pkg reached=$destReached (sdk=$sdk again=$again)")
+            assertTrue("expected $pkg after Enable notifications (sdk=$sdk again=$again)",destReached)
         } else {
             // Notifications enabled at the click: production suppresses the popup; the
             // toggle transition above is the behavior under test in this case.
+            android.util.Log.i("BMSeek","popup-test destination=suppressed popupUp=$popupUp (sdk=$sdk again=$again)")
             assertFalse("popup shown although notifications were enabled at the click (allowedPre=true)",popupUp)
         }
         s.lockScreenControls=false

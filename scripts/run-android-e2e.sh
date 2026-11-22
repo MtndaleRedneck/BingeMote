@@ -34,9 +34,14 @@ status=$?
 echo "STAGE product-suite: exit=$status"
 
 adb shell am force-stop com.bingemote; s1=$?
-adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS; s2=$?
-adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed; s3=$?
-echo "STAGE popup-setup: force-stop=$s1 revoke=$s2 clear-flags=$s3"
+if [ "$API" -ge 33 ]; then
+  adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS; s2=$?
+  adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed; s3=$?
+else
+  # No POST_NOTIFICATIONS below sdk33: skip both (see popup-again-setup note).
+  s2=0; s3=0
+fi
+echo "STAGE popup-setup: force-stop=$s1 revoke=$s2 clear-flags=$s3 (revoke/clear-flags run only on sdk>=33)"
 # Denied-state evidence in the job log itself, independent of the test's own
 # logcat line.
 adb shell dumpsys package com.bingemote | grep -i 'POST_NOTIFICATIONS' | head -3
@@ -47,11 +52,17 @@ echo "STAGE popup: exit=$status2"
 
 # Returning-user leg: asked=yes routes the denied-state popup's destination to
 # the app notification settings instead of the permission controller. Same
-denied-state setup from outside the process first.
+# denied-state setup from outside the process first.
 adb shell am force-stop com.bingemote; s4=$?
-adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS; s5=$?
-adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed; s6=$?
-echo "STAGE popup-again-setup: force-stop=$s4 revoke=$s5 clear-flags=$s6"
+if [ "$API" -ge 33 ]; then
+  adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS; s5=$?
+  adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed; s6=$?
+else
+  # No POST_NOTIFICATIONS below sdk33: revoke is meaningless and
+  # clear-permission-flags is an unknown command (255) - skip both by design.
+  s5=0; s6=0
+fi
+echo "STAGE popup-again-setup: force-stop=$s4 revoke=$s5 clear-flags=$s6 (revoke/clear-flags run only on sdk>=33)"
 ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.bingemote.PopupPermissionTest -Pandroid.testInstrumentationRunnerArguments.again=yes
 status4=$?
 echo "STAGE popup-again: exit=$status4"

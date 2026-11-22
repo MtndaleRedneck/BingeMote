@@ -83,6 +83,7 @@ jobs:
           # No KEYSTORE_FILE in the matrix jobs: AGP then emits app-release-unsigned.apk
           # (run 45023344665: assembleRelease green, cp could not stat app-release.apk).
           [ -f "$APK" ] || APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          echo "APK selected: $APK -> BingeMote-Android-$V.apk (packaging output; unsigned when CI has no KEYSTORE_FILE)"
           cp "$APK" BingeMote-Android-$V.apk
 
       - uses: actions/upload-artifact@v4
