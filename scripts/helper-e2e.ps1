@@ -75,38 +75,44 @@ $logf2 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
 $logOffset = 0
 if (Test-Path $logf2) { $logOffset = (Get-Content $logf2 -Raw).Length }
 $marker = Join-Path $env:LOCALAPPDATA 'BingeMote\fake-block'
+function Wait-BlockState($token, [bool]$wantBlocked, [bool]$wantTitle) {
+    foreach ($i in 1..20) {
+        $s = Invoke-HelperGet '/ci/blockstate' $token
+        if ($s.code -eq 200) {
+            $j = ($s.body | ConvertFrom-Json)
+            # Title and balloon count live on the UI path; the blocked flag mirrors the
+            # logical state earlier. Waiting for both avoids racing the UI callback.
+            if ($j.blocked -eq $wantBlocked -and (-not $wantTitle -or $j.title)) { return $j }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $null
+}
 New-Item -ItemType File -Path $marker -Force | Out-Null
 try {
     $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
     Assert ($r.code -eq 200) "installed instance: mouse/move while input is blocked"
-    $state = $null
-    foreach ($i in 1..20) {
-        $s = Invoke-HelperGet '/ci/blockstate' $instToken
-        if ($s.code -eq 200 -and ($s.body | ConvertFrom-Json).blocked) { $state = ($s.body | ConvertFrom-Json); break }
-        Start-Sleep -Milliseconds 250
-    }
-    Assert ($null -ne $state) "installed instance reports the blocked state"
+    $state = Wait-BlockState $instToken $true $true
+    Assert ($null -ne $state) "installed instance reports the blocked state with the notice title"
     Assert ($state.title -match 'could not be sent') "window title carries the notice: $($state.title)"
     Assert ($state.balloons -ge 1) "balloon shown for the first block"
-    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
-    Assert ($r.code -eq 200) "second blocked move"
-    Start-Sleep -Milliseconds 750
-    $state2 = (Invoke-HelperGet '/ci/blockstate' $instToken).body | ConvertFrom-Json
-    Assert ($state2.balloons -eq $state.balloons) "balloon throttled: count stays $($state.balloons)"
     $newLog = (Get-Content $logf2 -Raw).Substring($logOffset)
     Assert ($newLog -match 'played 0 of 1') "log records the exact rejection (played 0 of 1)"
+    # Throttle: a SECOND block inside the same minute must not raise the balloon count.
+    # The state event is change-only, so lift the block first, then re-block.
     Remove-Item $marker -Force
     $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
     Assert ($r.code -eq 200) "mouse/move after the block lifts"
-    $recovered = $false
-    foreach ($i in 1..20) {
-        $s = Invoke-HelperGet '/ci/blockstate' $instToken
-        if ($s.code -eq 200 -and -not (($s.body | ConvertFrom-Json).blocked)) { $recovered = $true; break }
-        Start-Sleep -Milliseconds 250
-    }
-    Assert $recovered "installed instance reports the recovery"
+    $clear = Wait-BlockState $instToken $false $false
+    Assert ($null -ne $clear) "installed instance reports the recovery"
     $newLog = (Get-Content $logf2 -Raw).Substring($logOffset)
     Assert ($newLog -match 'being sent again') "recovery notice appears in helper.log"
+    New-Item -ItemType File -Path $marker -Force | Out-Null
+    $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $instToken
+    Assert ($r.code -eq 200) "second block inside the throttle window"
+    $state2 = Wait-BlockState $instToken $true $true
+    Assert ($null -ne $state2) "second block is noticed (title), even while throttled"
+    Assert ($state2.balloons -eq $state.balloons) "balloon throttled: count stays $($state.balloons) on the second block"
 } finally {
     Remove-Item $marker -Force -ErrorAction SilentlyContinue
 }
