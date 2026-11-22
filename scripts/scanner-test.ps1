@@ -19,6 +19,8 @@ $act = New-ScheduledTaskAction -Execute 'C:\Windows\System32\notepad.exe' -Argum
 Register-ScheduledTask -TaskName 'BingeMoteFixtureScanTest' -Action $act -Force | Out-Null
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\BingeMote" | Out-Null
 Copy-Item C:\Windows\System32\notepad.exe "$env:LOCALAPPDATA\BingeMote\BingeMoteFixture.exe"
+# Fresh CI users have no Run key yet; create it before adding the fixture value.
+New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force | Out-Null
 New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'BingeMoteFixture' -Value 'C:\fixture\BingeMote.exe' -Force | Out-Null
 New-NetFirewallRule -DisplayName 'BingeMoteFixtureRule' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8488 | Out-Null
 netsh http add urlacl 'url=http://+:8488/bingemotefixture' user=Everyone | Out-Null
