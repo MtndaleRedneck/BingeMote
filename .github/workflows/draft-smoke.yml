@@ -1,0 +1,69 @@
+name: draft-smoke
+# Exact-signed-draft-byte smoke: install the ACTUAL TestLab draft APK bytes on an
+# emulator (hash-asserted, never rebuilt or re-signed) and run external/UI checks.
+# The debug instrumentation suite cannot attach to a release build
+# (android:debuggable=false, release signing), so coverage here is shell-level:
+# install, version metadata, launch, focus, rendered-UI text, screenshot. The
+# tree-level debug suite in build.yml remains the separate evidence track.
+on:
+  # workflow_dispatch needs this file on the default branch; the ferry-branch
+  # push trigger is what fires the validation while it lives on tmp/* only.
+  push:
+    branches: ['tmp/draft-ferry-*']
+  workflow_dispatch:
+    inputs:
+      apk_path:
+        description: 'Repo-relative path of the draft APK bytes (ferry branch copy)'
+        default: 'draft/BingeMote-Android-1.12.12.apk'
+      expected_sha256:
+        description: 'SHA-256 of the TestLab draft asset these bytes must equal'
+        default: 'd73d029d2577617037d55a1c62d86aa04b971eb877708d24411cc8da8e8201af'
+jobs:
+  draft-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert the checked-out bytes ARE the TestLab draft bytes
+        run: |
+          APK="${{ inputs.apk_path || 'draft/BingeMote-Android-1.12.12.apk' }}"
+          ls -la "$APK"
+          H=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "draft smoke apk: $APK"
+          echo "draft smoke apk sha256: $H"
+          echo "draft smoke apk bytes: $(stat -c%s "$APK")"
+          [ "$H" = "${{ inputs.expected_sha256 || 'd73d029d2577617037d55a1c62d86aa04b971eb877708d24411cc8da8e8201af' }}" ] || { echo "ASSERT FAIL: draft APK hash mismatch"; exit 1; }
+          echo "ok: draft smoke bytes equal the pinned TestLab draft hash"
+      - name: Install and smoke the exact draft bytes on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            set -e
+            APK="${{ inputs.apk_path || 'draft/BingeMote-Android-1.12.12.apk' }}"
+            adb install -r "$APK"
+            echo "== installed draft; package metadata =="
+            adb shell dumpsys package com.bingemote | grep -E 'versionName|versionCode|firstInstallTime|lastUpdateTime' | head -4
+            echo "== launch =="
+            adb shell am start -n com.bingemote/.MainActivity
+            sleep 8
+            adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | head -3
+            adb shell uiautomator dump /sdcard/draft-smoke-ui.xml
+            adb pull /sdcard/draft-smoke-ui.xml /tmp/draft-smoke-ui.xml
+            if grep -q 'Set up BingeMote' /tmp/draft-smoke-ui.xml; then
+              echo "ok: draft bytes render the unpaired setup screen (Set up BingeMote)"
+            else
+              echo "ASSERT FAIL: expected setup screen text on fresh emulator"
+              exit 1
+            fi
+            adb shell screencap -p /sdcard/draft-smoke.png
+            adb pull /sdcard/draft-smoke.png /tmp/draft-smoke.png
+            file /tmp/draft-smoke.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: draft-smoke-evidence
+          path: /tmp/draft-smoke*
+          if-no-files-found: warn
