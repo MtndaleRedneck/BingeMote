@@ -57,6 +57,11 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
+            # GitHub's default shell is bash -e: a failing gradlew aborts the script
+            # before the status capture below runs (seen on api31: main suite failed
+            # and the force-stop/revoke/popup stage never ran). Collect statuses
+            # explicitly instead.
+            set +e
             adb logcat -c || true
             (adb logcat -v threadtime > /tmp/device-logcat.txt 2>&1 &)
             # The popup test is isolated: BarActionsTest grants POST_NOTIFICATIONS for
@@ -72,6 +77,10 @@ jobs:
             ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.bingemote.PopupPermissionTest
             status2=$?
             pkill -f 'adb logcat' || true
+            # Decisive UI evidence for selector failures: the popup test dumps
+            # screenshots/hierarchies into the app's external files dir. Pull them
+            # while the emulator is still alive; the upload step runs on the host.
+            timeout 60 adb pull /sdcard/Android/data/com.bingemote/files/ /tmp/bm-diag/ || true
             if [ $status -ne 0 ]; then exit $status; fi
             exit $status2
 
@@ -81,6 +90,13 @@ jobs:
       - name: Print device logcat
         if: always()
         run: tail -2000 /tmp/device-logcat.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-diag-api${{ matrix.api }}
+          path: /tmp/bm-diag/
+          if-no-files-found: ignore
 
       - name: Name the APK
         run: |
