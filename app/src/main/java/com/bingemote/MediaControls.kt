@@ -254,7 +254,7 @@ class MediaControlsService : Service() {
             row.setOnClickPendingIntent(ids[i], serviceIntent(actions[i]))
         }
         val n = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_bingemote)
+            .setSmallIcon(R.drawable.ic_stat_bingemote)
             .setContentTitle(title?.ifBlank { null } ?: "Playing")
             .setContentText("Playback remote")
             .setContentIntent(openApp)
