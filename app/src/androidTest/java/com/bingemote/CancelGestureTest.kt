@@ -116,12 +116,15 @@ class CancelGestureTest {
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
-                val ua = instrumentation.uiAutomation
                 val t0 = SystemClock.uptimeMillis()
+                // Injection via sendPointerSync: the same event stream through
+                // uiAutomation.injectInputEvent was queue-accepted but never started a
+                // drag on the api-31 emulator (works on api 34; sendPointerSync works on
+                // both). That path difference is UNRESOLVED - see InjectionPathProbeTest,
+                // which keeps the injectInputEvent reproducer red on api 31 on purpose.
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    val ok = ua.injectInputEvent(ev, true)
-                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
+                    instrumentation.sendPointerSync(ev)
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -177,12 +180,15 @@ class CancelGestureTest {
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
-                val ua = instrumentation.uiAutomation
                 val t0 = SystemClock.uptimeMillis()
+                // Injection via sendPointerSync: the same event stream through
+                // uiAutomation.injectInputEvent was queue-accepted but never started a
+                // drag on the api-31 emulator (works on api 34; sendPointerSync works on
+                // both). That path difference is UNRESOLVED - see InjectionPathProbeTest,
+                // which keeps the injectInputEvent reproducer red on api 31 on purpose.
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    val ok = ua.injectInputEvent(ev, true)
-                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
+                    instrumentation.sendPointerSync(ev)
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -257,12 +263,15 @@ class CancelGestureTest {
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
-                val ua = instrumentation.uiAutomation
                 val t0 = SystemClock.uptimeMillis()
+                // Injection via sendPointerSync: the same event stream through
+                // uiAutomation.injectInputEvent was queue-accepted but never started a
+                // drag on the api-31 emulator (works on api 34; sendPointerSync works on
+                // both). That path difference is UNRESOLVED - see InjectionPathProbeTest,
+                // which keeps the injectInputEvent reproducer red on api 31 on purpose.
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    val ok = ua.injectInputEvent(ev, true)
-                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
+                    instrumentation.sendPointerSync(ev)
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -322,12 +331,15 @@ class CancelGestureTest {
         var gestureError: Throwable? = null
         val gesture = thread {
             try {
-                val ua = instrumentation.uiAutomation
                 val t0 = SystemClock.uptimeMillis()
+                // Injection via sendPointerSync: the same event stream through
+                // uiAutomation.injectInputEvent was queue-accepted but never started a
+                // drag on the api-31 emulator (works on api 34; sendPointerSync works on
+                // both). That path difference is UNRESOLVED - see InjectionPathProbeTest,
+                // which keeps the injectInputEvent reproducer red on api 31 on purpose.
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    val ok = ua.injectInputEvent(ev, true)
-                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
+                    instrumentation.sendPointerSync(ev)
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
