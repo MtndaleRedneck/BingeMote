@@ -11,7 +11,7 @@ $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First
 if (-not $setup) { throw "installer exe missing in helper/Output" }
 # Simulate upgrade leftovers from 1.7.11: an Everyone-granted URLACL and the plain rule.
 # The install must replace both, then bind and pair normally (checked in Part 2).
-netsh http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;WD) | Out-Null
+netsh http add urlacl 'url=http://+:8488/' 'sddl=D:(A;;GX;;;WD)' | Out-Null
 netsh advfirewall firewall add rule name="BingeMote" dir=in action=allow protocol=TCP localport=8488 profile=private | Out-Null
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
