@@ -86,11 +86,14 @@ class UpgradeConnectionTest {
         d.pressHome()
         // The production gate is the toggle turning on while
         // NotificationManagerCompat.areNotificationsEnabled() is false. Establish that
-        // predicate where a runtime permission exists (sdk>=33); below 33 there is none
-        // and the device state stands - the suppression branch is then the expectation.
+        // predicate first: sdk>=33 has the runtime permission; below 33 the master
+        // toggle is the POST_NOTIFICATION app op (no S). If neither lands, the
+        // denied-state branch is unexercised, not passed.
         val sdk=android.os.Build.VERSION.SDK_INT
-        var revokeOut="n/a (sdk<33)"
-        if(sdk>=33) revokeOut=d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
+        val revokeOut=if(sdk>=33)
+            d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
+        else
+            d.executeShellCommand("cmd appops set com.bingemote POST_NOTIFICATION ignore").trim()
         s.setupDone=true;s.lockScreenControls=false
         val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
         ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
@@ -98,6 +101,8 @@ class UpgradeConnectionTest {
         android.util.Log.i("BMSeek","popup-test sdk=$sdk allowedPre=$allowedPre revokeOut='$revokeOut'")
         assertFalse("setup: notifications still enabled after revoke on sdk$sdk revokeOut='$revokeOut'",
             sdk>=33 && allowedPre)
+        if(sdk<33 && allowedPre)
+            android.util.Log.i("BMSeek","popup-test sdk$sdk denied-state popup path UNEXERCISED: appops could not disable notifications")
         inst.runOnMainSync { ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         val settings=d.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.desc("Settings")),10_000)
         if(settings==null) {
@@ -142,6 +147,7 @@ class UpgradeConnectionTest {
             assertFalse("popup shown although notifications were enabled at the click (allowedPre=true)",popupUp)
         }
         s.lockScreenControls=false
+        if(sdk<33) d.executeShellCommand("cmd appops set com.bingemote POST_NOTIFICATION allow")
         d.pressBack();d.pressHome()
     }
 
