@@ -614,6 +614,17 @@ public static class WinScan {
         return r;
     }
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+    public struct RECT { public int Left, Top, Right, Bottom; }
+    // Class-agnostic click: Pair is a ReadableButton with ControlStyles.UserPaint,
+    // so BM_CLICK (a native-BUTTON-only message) is not grounded. Real mouse-down/up
+    // at the client center is what WinForms turns into Click for any control.
+    public static void Click(IntPtr h) {
+        RECT r; GetClientRect(h, out r);
+        IntPtr lp = (IntPtr)((((r.Bottom - r.Top) / 2) << 16) | (((r.Right - r.Left) / 2) & 0xFFFF));
+        SendMessage(h, 0x0201, (IntPtr)1, lp);
+        SendMessage(h, 0x0202, IntPtr.Zero, lp);
+    }
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint msg, IntPtr w, string l);
     [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     public static IntPtr FindChildByClass(string title, string fragment) {
@@ -677,7 +688,7 @@ foreach ($i in 1..24) {
             [WinScan]::SendMessageText($edit, 0x000C, [IntPtr]::Zero, 'CI Phone') | Out-Null
             Start-Sleep -Milliseconds 300
             $btn = [WinScan]::FindChild('BingeMote', 'Pair')
-            if ($btn -ne [IntPtr]::Zero) { [WinScan]::SendMessage($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null; $pairClicked = $true; Write-Host "shipping pairing: name typed, Pair clicked (i=$i)" }
+            if ($btn -ne [IntPtr]::Zero) { [WinScan]::Click($btn); $pairClicked = $true; Write-Host "shipping pairing: name typed, Pair clicked (i=$i)" }
             else { Write-Host "shipping pairing: Pair button HWND not found yet (i=$i)" }
         } elseif (($i % 4) -eq 0) { Write-Host "shipping pairing: name box HWND not found yet (i=$i)" }
     }
