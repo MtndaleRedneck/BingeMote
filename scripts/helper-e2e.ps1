@@ -15,7 +15,13 @@ $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
 $acl = netsh http show urlacl
 if (-not ($acl | Select-String ':8488/')) { throw "installer did not add the listen permission" }
-Write-Host "ok: installer added the firewall rule and listen permission"
+$mySid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$aclLine = $acl | Select-String ':8488/'
+if (-not ($aclLine | Select-String $mySid)) { throw "listen permission not scoped to the installing user ($mySid): $aclLine" }
+if ($aclLine | Select-String 'Everyone') { throw "listen permission still grants Everyone: $aclLine" }
+$ruleV = netsh advfirewall firewall show rule name="BingeMote" verbose
+if (-not (($ruleV | Select-String 'RemoteIP') -match 'LocalSubnet')) { throw "firewall rule not scoped to the local subnet" }
+Write-Host "ok: installer added the firewall rule and listen permission (user-scoped, local subnet)"
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null
 Start-Sleep -Seconds 3
@@ -42,6 +48,8 @@ $aclOut = netsh http show urlacl
 $aclOut | Select-String '8488'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
 if (-not ($aclOut | Select-String ':8488/')) { throw "URL ACL for port 8488 missing after setup" }
+$aclLine2 = $aclOut | Select-String ':8488/'
+if (-not ($aclLine2 | Select-String $mySid)) { throw "helper setup did not scope the listen permission to the current user: $aclLine2" }
 
 # --- Part 2: run the helper and drive its HTTP API over loopback ---
 Write-Host "== helper runtime =="
@@ -142,6 +150,34 @@ try {
     Assert ($r.code -eq 200) "key"
     $r = Invoke-Helper '/type' '{"text":"hi"}' $token
     Assert ($r.code -eq 200) "type"
+
+    # Blocked-input notice: when Windows rejects SendInput (usually an admin app has
+    # focus), the helper must say so instead of freezing silently. The hook build fakes
+    # the rejection with a marker file so the path runs on an unblocked CI session.
+    $marker = Join-Path $env:LOCALAPPDATA 'BingeMote\fake-block'
+    New-Item -ItemType File -Path $marker -Force | Out-Null
+    try {
+        $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $token
+        Assert ($r.code -eq 200) "mouse/move while input is blocked"
+        $logf2 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+        $noticed = $false
+        foreach ($i in 1..20) {
+            if ((Get-Content $logf2 -Raw) -match 'blocking mouse control') { $noticed = $true; break }
+            Start-Sleep -Milliseconds 250
+        }
+        Assert $noticed "blocked-input notice appears in helper.log"
+        Remove-Item $marker -Force
+        $r = Invoke-Helper '/mouse/move' '{"dx":10,"dy":5}' $token
+        Assert ($r.code -eq 200) "mouse/move after the block lifts"
+        $recovered = $false
+        foreach ($i in 1..20) {
+            if ((Get-Content $logf2 -Raw) -match 'working again') { $recovered = $true; break }
+            Start-Sleep -Milliseconds 250
+        }
+        Assert $recovered "recovery notice appears in helper.log"
+    } finally {
+        Remove-Item $marker -Force -ErrorAction SilentlyContinue
+    }
     # Keep-awake hold, watched at the OS level: engaging it must add a SYSTEM power
     # request for the helper (visible in powercfg /requests), releasing must remove it.
     # The endpoint runs on a listener pool thread, so this also proves the

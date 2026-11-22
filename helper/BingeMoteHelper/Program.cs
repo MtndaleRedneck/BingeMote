@@ -894,6 +894,9 @@ internal sealed class HelperWindow : Form
         _tray.DoubleClick += (_, _) => ShowFromTray();
         _tray.BalloonTipClicked += (_, _) => { ShowFromTray(); StartUpdateDownload(); };
 
+        InputSender.BlockedStateChanged += OnInputBlockedState;
+        Disposed += (_, _) => InputSender.BlockedStateChanged -= OnInputBlockedState;
+
         // The server adds and drops phones off-thread; repaint the list when that happens.
         Program.PhonesChanged = () =>
         {
@@ -1013,6 +1016,33 @@ internal sealed class HelperWindow : Form
         }
         _phoneList.Height = _listH;
         ClientSize = new Size(490, _baseHeight + stripDy + firstRunDy + codeDy + listDy + removeDy);
+    }
+
+    // Called from the HTTP listener thread when Windows starts (or stops) rejecting
+    // SendInput. Say it out loud: a balloon once per episode, and the title carries the
+    // state for as long as it lasts, so a silent freeze reads as Windows, not the app.
+    private void OnInputBlockedState(bool blocked)
+    {
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (blocked)
+                {
+                    Program.Log("Windows is blocking mouse control (SendInput rejected input - usually an admin app has focus). The app is fine.");
+                    _tray.BalloonTipTitle = "BingeMote";
+                    _tray.BalloonTipText = "Windows is blocking mouse control right now - usually an admin app has focus. The app is fine.";
+                    _tray.ShowBalloonTip(8000);
+                    Text = "BingeMote - Windows is blocking mouse control";
+                }
+                else
+                {
+                    Program.Log("Mouse control is working again.");
+                    Text = "BingeMote";
+                }
+            }));
+        }
+        catch { }
     }
 
     private void SetWifiStripVisible(bool show)
