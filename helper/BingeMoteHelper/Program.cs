@@ -718,7 +718,6 @@ internal sealed class HelperWindow : Form
         {
             BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 10),
-            PlaceholderText = "Type a name to pair",
         };
         _nameBoxPanel.Controls.Add(_nameBox);
         _nameBoxPanel.Layout += (_, _) =>
@@ -1089,6 +1088,9 @@ internal sealed class HelperWindow : Form
 
     /// <summary>CI-only: show the window offscreen, let layout settle, and save a PNG of it.
     /// DrawToBitmap renders in memory, so no visible desktop is needed.</summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr SendMessageW(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+    private const int EM_SETCUEBANNER = 0x1501;
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 
@@ -1587,9 +1589,9 @@ internal sealed class HelperWindow : Form
     {
         base.OnLoad(e);
         RefreshPhones();
-        // No auto-focus on the name box: a focused TextBox hides its PlaceholderText,
-        // and the in-box hint ("Type a name to pair") must be visible when the window
-        // opens. One click into the box starts typing; the hint disappears as promised.
+        // In-box hint via EM_SETCUEBANNER with wParam=1: the cue stays visible even while
+        // the box is focused-but-empty, and vanishes the instant typing starts. No auto-focus either way.
+        SendMessageW(_nameBox.Handle, EM_SETCUEBANNER, (IntPtr)1, "Type a name to pair");
     }
 
     private static Label Header(string text, int x, int y) => new()
