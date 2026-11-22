@@ -853,6 +853,7 @@ internal sealed class HelperWindow : Form
         {
             Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone. The button marks it as a private home network. Undo: Windows Settings > Network & internet > Wi-Fi.",
             Font = new Font("Segoe UI", 9f),
+            UseMnemonic = false,
             Left = 13, Top = 12, Width = contentW - 12 - 160 - 20, Height = 84 - 20,
         };
         _wifiBtn = MakeButton("This is my home Wi-Fi", contentW - 160 - 10 + 1, 14, 160);
