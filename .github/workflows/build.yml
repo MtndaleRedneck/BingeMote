@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, bundle/1.12.12]
+    branches: [main, bundle/1.12.12, tmp/phone-test-tooling]
   workflow_dispatch:
     inputs:
       publish:
@@ -21,6 +21,12 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both configs tonight's failures could not be attributed between (the
+        # failing run's own config was deleted with its run).
+        api: [31, 34]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -43,7 +49,7 @@ jobs:
       - name: Instrumented tests on an emulator (bar actions, update survival, bar spacing)
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 31
+          api-level: ${{ matrix.api }}
           script: ./gradlew --no-daemon connectedDebugAndroidTest
 
       - name: Name the APK

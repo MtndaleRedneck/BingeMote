@@ -84,6 +84,10 @@ class UpgradeConnectionTest {
     @Test fun notificationSettingPermissionPopup() {
         val d=UiDevice.getInstance(inst);val s=Store(ctx)
         d.pressHome()
+        // Self-contained: the orchestrated workflow revokes this before driving the
+        // test; a plain suite run must not inherit a grant from an earlier test.
+        d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS")
+        android.util.Log.i("BMSeek", "popup-test allowedAtStart=" + MediaControls.allowed(ctx))
         s.setupDone=true;s.lockScreenControls=false
         val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
         ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
@@ -104,7 +108,18 @@ class UpgradeConnectionTest {
         d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again.xml"))
         assertFalse(d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
         val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull(toggle);toggle.click()
-        assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000))
+        val popupUp=d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000)
+        if(!popupUp) {
+            // Discriminating evidence: did the click flip the stored toggle, is the
+            // permission unexpectedly granted, and what has focus now?
+            val flipped=Store(ctx).lockScreenControls
+            val allowedNow=MediaControls.allowed(ctx)
+            val focus=d.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.xml"))
+            d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.png"))
+            android.util.Log.i("BMSeek", "popup missing: flipped=$flipped allowedNow=$allowedNow focus=$focus")
+        }
+        assertTrue("popup missing (see BMSeek popup-missing line: toggle state, permission state, focus)",popupUp)
         assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again.png")))
         d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
         if(again) assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.android.settings")),8_000))

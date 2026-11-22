@@ -80,7 +80,8 @@ class SeekGestureTest {
                 val t0 = SystemClock.uptimeMillis()
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    ua.injectInputEvent(ev, true)
+                    val ok = ua.injectInputEvent(ev, true)
+                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=${ev.actionMasked}")
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)

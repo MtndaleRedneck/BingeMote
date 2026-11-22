@@ -159,7 +159,15 @@ class MouseCadenceTest {
     }
 
     private fun report(label: String, frames: List<Frame>) {
-        assertTrue("$label: NO FRAMES CAPTURED - pass invalid, rig broken", frames.isNotEmpty())
+        if (frames.isEmpty()) {
+            // Discriminating evidence for a zero-frame pass: did injection reach
+            // a focused app window at all? (Zero frames means the fake helper saw
+            // no /mouse/move, i.e. the drag never produced app-side emissions.)
+            val dev = androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            val focus = dev.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+            val top = dev.executeShellCommand("dumpsys activity lru | head -5")
+            org.junit.Assert.fail("$label: NO FRAMES CAPTURED - pass invalid, rig broken. focus=[$focus] top=[$top]")
+        }
         val gaps = frames.zipWithNext { a, b -> (b.atNanos - a.atNanos) / 1_000_000.0 }
         val steps = frames.map { kotlin.math.abs(it.dx) }
         val sortedSteps = steps.sorted()

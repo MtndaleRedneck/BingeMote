@@ -120,7 +120,8 @@ class CancelGestureTest {
                 val t0 = SystemClock.uptimeMillis()
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    ua.injectInputEvent(ev, true)
+                    val ok = ua.injectInputEvent(ev, true)
+                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -180,7 +181,8 @@ class CancelGestureTest {
                 val t0 = SystemClock.uptimeMillis()
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    ua.injectInputEvent(ev, true)
+                    val ok = ua.injectInputEvent(ev, true)
+                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -259,7 +261,8 @@ class CancelGestureTest {
                 val t0 = SystemClock.uptimeMillis()
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    ua.injectInputEvent(ev, true)
+                    val ok = ua.injectInputEvent(ev, true)
+                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
@@ -323,7 +326,8 @@ class CancelGestureTest {
                 val t0 = SystemClock.uptimeMillis()
                 fun inject(action: Int, x: Float, y: Float) {
                     val ev = MotionEvent.obtain(t0, SystemClock.uptimeMillis(), action, x, y, 0)
-                    ua.injectInputEvent(ev, true)
+                    val ok = ua.injectInputEvent(ev, true)
+                    if (!ok) android.util.Log.i("BMSeek", "inject FAILED action=$action x=$x y=$y")
                     ev.recycle()
                 }
                 inject(MotionEvent.ACTION_DOWN, sx, sy)
