@@ -172,6 +172,14 @@ jobs:
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
         run: pwsh -File scripts/helper-e2e.ps1
 
+      - name: Upload e2e failure diagnostics
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: BingeMote-PC-e2e-diag
+          path: helper/e2e-diag/
+          if-no-files-found: ignore
+
       - name: VLC control tests (real VLC, app request shapes)
         run: pwsh -File scripts/vlc-e2e.ps1
 
