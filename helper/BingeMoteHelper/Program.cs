@@ -853,7 +853,7 @@ internal sealed class HelperWindow : Form
         };
         var wifiText = new Label
         {
-            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone. The button marks it as a private home network so your phone can connect. Undo any time: Windows Settings > Network & internet > Wi-Fi.",
+            Text = "Windows is treating this Wi-Fi as public, so it's blocking your phone. The button marks it as a private home network. Undo: Windows Settings > Network & internet > Wi-Fi.",
             Font = new Font("Segoe UI", 9f),
             Left = 13, Top = 12, Width = contentW - 12 - 160 - 20, Height = 84 - 20,
         };
@@ -1588,7 +1588,9 @@ internal sealed class HelperWindow : Form
     {
         base.OnLoad(e);
         RefreshPhones();
-        ActiveControl = _nameBox; // the name box is the obvious first step
+        // No auto-focus on the name box: a focused TextBox hides its PlaceholderText,
+        // and the in-box hint ("Type a name to pair") must be visible when the window
+        // opens. One click into the box starts typing; the hint disappears as promised.
     }
 
     private static Label Header(string text, int x, int y) => new()
