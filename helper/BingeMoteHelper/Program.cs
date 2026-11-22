@@ -1017,9 +1017,12 @@ internal sealed class HelperWindow : Form
         ClientSize = new Size(490, _baseHeight + stripDy + firstRunDy + codeDy + listDy + removeDy);
     }
 
-    // Called from the HTTP listener thread when Windows starts (or stops) rejecting
-    // SendInput. Say it out loud: a balloon once per episode, and the title carries the
-    // state for as long as it lasts, so a silent freeze reads as Windows, not the app.
+    // Called from the HTTP listener thread when SendInput starts (or stops) coming back
+    // short. The title carries the state for as long as it lasts; the balloon fires at
+    // most once a minute so flapping input never spams. No cause is claimed: all the
+    // helper knows is that Windows did not play the input.
+    private DateTime _lastBlockBalloon = DateTime.MinValue;
+
     private void OnInputBlockedState(bool blocked)
     {
         try
@@ -1028,15 +1031,17 @@ internal sealed class HelperWindow : Form
             {
                 if (blocked)
                 {
-                    Program.Log("Windows is blocking mouse control (SendInput rejected input - usually an admin app has focus). The app is fine.");
-                    _tray.BalloonTipTitle = "BingeMote";
-                    _tray.BalloonTipText = "Windows is blocking mouse control right now - usually an admin app has focus. The app is fine.";
-                    _tray.ShowBalloonTip(8000);
+                    if (DateTime.Now - _lastBlockBalloon > TimeSpan.FromMinutes(1))
+                    {
+                        _lastBlockBalloon = DateTime.Now;
+                        _tray.BalloonTipTitle = "BingeMote";
+                        _tray.BalloonTipText = "Windows is blocking mouse control right now. The app is fine.";
+                        _tray.ShowBalloonTip(8000);
+                    }
                     Text = "BingeMote - Windows is blocking mouse control";
                 }
                 else
                 {
-                    Program.Log("Mouse control is working again.");
                     Text = "BingeMote";
                 }
             }));

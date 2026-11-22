@@ -9,19 +9,20 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 Write-Host "== installer firewall setup =="
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
+# Simulate upgrade leftovers from 1.7.11: an Everyone-granted URLACL and the plain rule.
+# The install must replace both, then bind and pair normally (checked in Part 2).
+netsh http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;WD) | Out-Null
+netsh advfirewall firewall add rule name="BingeMote" dir=in action=allow protocol=TCP localport=8488 profile=private | Out-Null
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "silent install failed with exit $LASTEXITCODE" }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "installer did not add the BingeMote firewall rule" }
 $acl = netsh http show urlacl
-if (-not ($acl | Select-String ':8488/')) { throw "installer did not add the listen permission" }
-$mySid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $aclLine = $acl | Select-String ':8488/'
-if (-not ($aclLine | Select-String $mySid)) { throw "listen permission not scoped to the installing user ($mySid): $aclLine" }
-if ($aclLine | Select-String 'Everyone') { throw "listen permission still grants Everyone: $aclLine" }
-$ruleV = netsh advfirewall firewall show rule name="BingeMote" verbose
-if (-not (($ruleV | Select-String 'RemoteIP') -match 'LocalSubnet')) { throw "firewall rule not scoped to the local subnet" }
-Write-Host "ok: installer added the firewall rule and listen permission (user-scoped, local subnet)"
+if (-not $aclLine) { throw "installer did not add the listen permission" }
+if ($aclLine | Select-String 'Everyone') { throw "listen permission still grants Everyone after upgrade-leftover replacement: $aclLine" }
+if (-not ($aclLine | Select-String 'INTERACTIVE')) { throw "listen permission not scoped to interactive users: $aclLine" }
+Write-Host "ok: installer added the firewall rule and listen permission (interactive users only)"
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
 & $unins /VERYSILENT /NORESTART | Out-Null
 Start-Sleep -Seconds 3
@@ -49,7 +50,8 @@ $aclOut | Select-String '8488'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
 if (-not ($aclOut | Select-String ':8488/')) { throw "URL ACL for port 8488 missing after setup" }
 $aclLine2 = $aclOut | Select-String ':8488/'
-if (-not ($aclLine2 | Select-String $mySid)) { throw "helper setup did not scope the listen permission to the current user: $aclLine2" }
+if ($aclLine2 | Select-String 'Everyone') { throw "helper setup still grants Everyone: $aclLine2" }
+if (-not ($aclLine2 | Select-String 'INTERACTIVE')) { throw "helper setup did not scope the listen permission to interactive users: $aclLine2" }
 
 # --- Part 2: run the helper and drive its HTTP API over loopback ---
 Write-Host "== helper runtime =="

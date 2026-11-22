@@ -44,8 +44,8 @@ internal static class InputSender
     private static readonly object Gate = new();
 
     // SendInput returns how many inputs it actually played; a short count means Windows
-    // rejected the batch (almost always UIPI: an elevated app has the focus). Surface that
-    // once per episode instead of freezing silently: true = blocked, false = working again.
+    // did not play the batch. Surface that once per episode instead of freezing silently:
+    // true = not played, false = played again. The count is all we know - no cause claimed.
     public static event Action<bool>? BlockedStateChanged;
     private static bool _blocked;
 
@@ -60,6 +60,9 @@ internal static class InputSender
         if (blocked != _blocked)
         {
             _blocked = blocked;
+            Program.Log(blocked
+                ? $"Windows is blocking mouse control: SendInput played {sent} of {inputs.Length} inputs. The app is fine."
+                : "Mouse control is working again.");
             BlockedStateChanged?.Invoke(blocked);
         }
     }
