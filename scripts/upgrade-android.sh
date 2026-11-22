@@ -28,7 +28,7 @@ for again in no yes; do
   adb shell am force-stop com.bingemote
   adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS
   adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed
-  adb shell am instrument -w -e again "$again" -e class 'com.bingemote.UpgradeConnectionTest#notificationSettingPermissionPopup' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee "evidence/permission-$again.txt"
+  adb shell am instrument -w -e again "$again" -e class 'com.bingemote.PopupPermissionTest#notificationSettingPermissionPopup' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee "evidence/permission-$again.txt"
   adb pull /sdcard/Android/data/com.bingemote/files/ evidence/settings-files
   grep -q '^OK (1 test)' "evidence/permission-$again.txt"
 done

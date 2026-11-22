@@ -59,16 +59,21 @@ jobs:
           script: |
             adb logcat -c || true
             (adb logcat -v threadtime > /tmp/device-logcat.txt 2>&1 &)
-            # Denied-state setup BEFORE the app is ever launched: revoking a granted
-            # runtime permission while the app runs SIGKILLs it, and the instrumented
-            # tests run inside that process, so a revoke from a test kills its own
-            # runner (one run aborted exactly that way). Here nothing is running yet.
+            # The popup test is isolated: BarActionsTest grants POST_NOTIFICATIONS for
+            # its own needs, so the denied state for the popup test must be set up
+            # AFTER the main suite, from outside the app process - a revoke while the
+            # app runs SIGKILLs it, and instrumented tests run inside that process.
             ./gradlew --no-daemon installDebug installDebugAndroidTest
-            adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS || true
-            ./gradlew --no-daemon connectedDebugAndroidTest
+            ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=com.bingemote.PopupPermissionTest
             status=$?
+            adb shell am force-stop com.bingemote || true
+            adb shell pm revoke com.bingemote android.permission.POST_NOTIFICATIONS || true
+            adb shell pm clear-permission-flags com.bingemote android.permission.POST_NOTIFICATIONS user-set user-fixed || true
+            ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.bingemote.PopupPermissionTest
+            status2=$?
             pkill -f 'adb logcat' || true
-            exit $status
+            if [ $status -ne 0 ]; then exit $status; fi
+            exit $status2
 
       # The job log carries no device logcat, which made one instrumentation
       # process-crash undiagnosable. Capture runs during the tests (above) so a
