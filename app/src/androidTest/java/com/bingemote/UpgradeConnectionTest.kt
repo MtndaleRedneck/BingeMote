@@ -119,7 +119,7 @@ class UpgradeConnectionTest {
             d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.png"))
             android.util.Log.i("BMSeek", "popup missing: flipped=$flipped allowedNow=$allowedNow focus=$focus")
         }
-        assertTrue("popup missing (see BMSeek popup-missing line: toggle state, permission state, focus)",popupUp)
+        assertTrue("popup missing: flipped=${Store(ctx).lockScreenControls} allowedNow=${MediaControls.allowed(ctx)} (hierarchy+shot dumped)",popupUp)
         assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again.png")))
         d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
         if(again) assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.android.settings")),8_000))
