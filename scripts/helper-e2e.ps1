@@ -614,6 +614,17 @@ public static class WinScan {
         return r;
     }
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint msg, IntPtr w, string l);
+    [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    public static IntPtr FindChildByClass(string title, string fragment) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            if (Text(h) == title)
+                EnumChildWindows(h, (c, l2) => { var b = new StringBuilder(128); GetClassName(c, b, 128); if (b.ToString().Contains(fragment)) { found = c; return false; } return true; }, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
     public static IntPtr FindChild(string title, string childText) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((h, l) => {
@@ -647,6 +658,12 @@ foreach ($i in 1..24) {
     if ($code) { break }
     if ($i -eq 3) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
     if ($i -eq 8) {
+        # The Pair button starts disabled; typing a phone name enables it (the
+        # TextBox is a native EDIT control: WM_SETTEXT fires TextChanged).
+        $edit = [WinScan]::FindChildByClass('BingeMote', '.EDIT.')
+        if ($edit -ne [IntPtr]::Zero) { [WinScan]::SendMessageText($edit, 0x000C, [IntPtr]::Zero, 'CI Phone') | Out-Null }
+        else { Write-Host "shipping pairing: name box HWND not found yet" }
+        Start-Sleep -Milliseconds 300
         $btn = [WinScan]::FindChild('BingeMote', 'Pair')
         if ($btn -ne [IntPtr]::Zero) { [WinScan]::SendMessage($btn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }
         else { Write-Host "shipping pairing: Pair button HWND not found yet" }
