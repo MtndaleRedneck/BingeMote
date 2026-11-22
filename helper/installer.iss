@@ -42,13 +42,14 @@ Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 ; permission: no surprise admin prompt on first run. Old 1.x rule name removed too.
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote Helper"""; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=TCP localport=8488 profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=TCP localport=8488 profile=private"; Flags: runhidden waituntilterminated
+Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private"; Flags: runhidden waituntilterminated
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
-; Listen permission for the installing user only (the old Everyone grant let any local
-; program squat the port). The installer is elevated as the user who consented, which is
-; the same profile {localappdata} installs into.
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; netsh http add urlacl url=http://+:8488/ sddl=('D:(A;;GX;;;' + $sid + ')')"""; Flags: runhidden waituntilterminated
+; Listen permission for interactively signed-in users (S-1-5-4) instead of Everyone:
+; a service or another account can no longer squat the port and pose as the helper.
+; INTERACTIVE, not the installing account's SID, because a standard user elevating
+; with admin credentials still runs the helper as themselves, not as that admin.
+Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-5-4)"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
