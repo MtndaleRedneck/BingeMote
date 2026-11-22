@@ -88,4 +88,14 @@ class PopupPermissionTest {
         s.lockScreenControls=false
         d.pressBack();d.pressHome()
     }
+
+    // AGP uninstalls the app when each connectedDebugAndroidTest leg ends, wiping
+    // getExternalFilesDir - a workflow-side pull after the leg finds nothing (seen
+    // in run 45021496277: adb stat error). Stash the dumps to public Download from
+    // the test (shell user can read the app dir and write there) before that.
+    @org.junit.After fun stashDiag() {
+        val dir = ctx.getExternalFilesDir(null) ?: return
+        UiDevice.getInstance(inst).executeShellCommand(
+            "mkdir -p /sdcard/Download/bm-diag && cp -r " + dir.absolutePath + "/. /sdcard/Download/bm-diag/")
+    }
 }

@@ -14,7 +14,10 @@ API="$1"
 adb logcat -c || true
 (adb logcat -v threadtime > /tmp/device-logcat.txt 2>&1 &)
 
-./gradlew --no-daemon installDebug installDebugAndroidTest
+# The workflow's 'Name the APK' step expects a release APK; the original workflow
+# built it (assembleRelease) and the staging work dropped that leg, so the first
+# run whose tests all passed failed on the missing APK (run 45021496277).
+./gradlew --no-daemon assembleRelease installDebug installDebugAndroidTest
 install_status=$?
 echo "STAGE install: exit=$install_status"
 
@@ -52,9 +55,10 @@ echo "STAGE probe: exit=$status3 (api$API; RED is the documented expected state 
 pkill -f 'adb logcat -v threadtime' || true
 
 # Decisive UI evidence for selector failures: the popup test dumps
-# screenshots/hierarchies into the app's external files dir. Pull them while
-# the emulator is still alive; the upload step runs on the host.
-timeout 60 adb pull /sdcard/Android/data/com.bingemote/files/ /tmp/bm-diag/ || true
+# screenshots/hierarchies into the app's external files dir, then stashes them
+# to public Download (@After) because AGP uninstalls the app at each leg's end
+# and wipes that dir. Pull while the emulator is alive; the upload runs on the host.
+timeout 60 adb pull /sdcard/Download/bm-diag/ /tmp/bm-diag/ || true
 
 fail=0
 if [ $install_status -ne 0 ]; then echo "FAIL: install stage"; fail=1; fi
