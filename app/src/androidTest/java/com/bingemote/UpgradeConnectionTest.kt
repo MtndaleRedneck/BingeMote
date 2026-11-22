@@ -84,16 +84,20 @@ class UpgradeConnectionTest {
     @Test fun notificationSettingPermissionPopup() {
         val d=UiDevice.getInstance(inst);val s=Store(ctx)
         d.pressHome()
-        // Self-contained: the orchestrated workflow revokes this before driving the
-        // test; a plain suite run must not inherit a grant from an earlier test.
-        val revokeOut=d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
-        val allowedAtStart=MediaControls.allowed(ctx)
-        val selfPerm=androidx.core.content.ContextCompat.checkSelfPermission(ctx,
-            android.Manifest.permission.POST_NOTIFICATIONS)
-        android.util.Log.i("BMSeek", "popup-test allowedAtStart=$allowedAtStart selfPerm=$selfPerm revokeOut=$revokeOut")
+        // The production gate is the toggle turning on while
+        // NotificationManagerCompat.areNotificationsEnabled() is false. Establish that
+        // predicate where a runtime permission exists (sdk>=33); below 33 there is none
+        // and the device state stands - the suppression branch is then the expectation.
+        val sdk=android.os.Build.VERSION.SDK_INT
+        var revokeOut="n/a (sdk<33)"
+        if(sdk>=33) revokeOut=d.executeShellCommand("pm revoke com.bingemote android.permission.POST_NOTIFICATIONS").trim()
         s.setupDone=true;s.lockScreenControls=false
         val again=InstrumentationRegistry.getArguments().getString("again")=="yes"
         ctx.getSharedPreferences("notification_permission",0).edit().putBoolean("asked",again).commit()
+        val allowedPre=MediaControls.allowed(ctx)
+        android.util.Log.i("BMSeek","popup-test sdk=$sdk allowedPre=$allowedPre revokeOut='$revokeOut'")
+        assertFalse("setup: notifications still enabled after revoke on sdk$sdk revokeOut='$revokeOut'",
+            sdk>=33 && allowedPre)
         inst.runOnMainSync { ctx.startActivity(Intent(ctx,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         val settings=d.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.desc("Settings")),10_000)
         if(settings==null) {
@@ -110,24 +114,34 @@ class UpgradeConnectionTest {
         d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again.png"))
         d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-labels-$again.xml"))
         assertFalse(d.hasObject(androidx.test.uiautomator.By.textContains("No headset controls")))
+        assertFalse("toggle must start OFF",Store(ctx).lockScreenControls)
         val toggle=d.findObject(androidx.test.uiautomator.By.text("Notification shade controls"));assertNotNull(toggle);toggle.click()
         val popupUp=d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.text("Enable notification controls?")),5_000)
-        if(!popupUp) {
-            // Discriminating evidence: did the click flip the stored toggle, is the
-            // permission unexpectedly granted, and what has focus now?
-            val flipped=Store(ctx).lockScreenControls
-            val allowedNow=MediaControls.allowed(ctx)
-            val focus=d.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
-            d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.xml"))
-            d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again.png"))
-            android.util.Log.i("BMSeek", "popup missing: flipped=$flipped allowedNow=$allowedNow focus=$focus")
+        val flipped=Store(ctx).lockScreenControls
+        assertTrue("toggle click did not flip the stored setting",flipped)
+        if(!allowedPre) {
+            // Gate conditions held at the click: toggle on + notifications off -> popup required.
+            if(!popupUp) {
+                val focus=d.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+                d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again-sdk$sdk.xml"))
+                d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"popup-failure-$again-sdk$sdk.png"))
+                android.util.Log.i("BMSeek","popup missing with gate satisfied: allowedPre=$allowedPre focus=$focus")
+            }
+            assertTrue("popup missing although gate held at click: allowedPre=false (hierarchy+shot dumped)",popupUp)
+            assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again-sdk$sdk.png")))
+            d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
+            // Production helper: below 33 always app notification settings; sdk>=33 asks
+            // once (permission controller) and opens settings when asked before.
+            val expectPermissionController=sdk>=33 && !again
+            val pkg=if(expectPermissionController) "com.google.android.permissioncontroller" else "com.android.settings"
+            assertTrue("expected $pkg after Enable notifications (sdk=$sdk again=$again)",
+                d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg(pkg)),8_000))
+        } else {
+            // Notifications enabled at the click: production suppresses the popup; the
+            // toggle transition above is the behavior under test in this case.
+            assertFalse("popup shown although notifications were enabled at the click (allowedPre=true)",popupUp)
         }
-        assertTrue("popup missing: flipped=${Store(ctx).lockScreenControls} allowedNow=${MediaControls.allowed(ctx)} " +
-            "allowedAtStart=$allowedAtStart selfPerm=$selfPerm revokeOut='$revokeOut' (hierarchy+shot dumped)",popupUp)
-        assertTrue(d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"notification-permission-$again.png")))
-        d.findObject(androidx.test.uiautomator.By.text("Enable notifications")).click()
-        if(again) assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.android.settings")),8_000))
-        else assertTrue(d.wait(androidx.test.uiautomator.Until.hasObject(androidx.test.uiautomator.By.pkg("com.google.android.permissioncontroller")),8_000))
+        s.lockScreenControls=false
         d.pressBack();d.pressHome()
     }
 
