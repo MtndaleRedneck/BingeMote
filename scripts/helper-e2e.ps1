@@ -164,7 +164,7 @@ try {
         $logf2 = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
         $noticed = $false
         foreach ($i in 1..20) {
-            if ((Get-Content $logf2 -Raw) -match 'blocking mouse control') { $noticed = $true; break }
+            if ((Get-Content $logf2 -Raw) -match 'could not be sent') { $noticed = $true; break }
             Start-Sleep -Milliseconds 250
         }
         Assert $noticed "blocked-input notice appears in helper.log"
@@ -173,7 +173,7 @@ try {
         Assert ($r.code -eq 200) "mouse/move after the block lifts"
         $recovered = $false
         foreach ($i in 1..20) {
-            if ((Get-Content $logf2 -Raw) -match 'working again') { $recovered = $true; break }
+            if ((Get-Content $logf2 -Raw) -match 'being sent again') { $recovered = $true; break }
             Start-Sleep -Milliseconds 250
         }
         Assert $recovered "recovery notice appears in helper.log"
