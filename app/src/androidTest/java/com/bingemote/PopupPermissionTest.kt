@@ -43,9 +43,15 @@ class PopupPermissionTest {
             d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-entry-failure.xml"))
         }
         assertNotNull("Settings button after Home/activity launch",settings);settings.click()
-        d.waitForIdle()
-        val scroll=d.findObject(androidx.test.uiautomator.By.scrollable(true))
-        assertNotNull("Settings scroll container",scroll)
+        // Bounded wait, not a bare findObject: waitForIdle can return during the
+        // activity transition, and this assert has failed with no container while
+        // other runs reached the label or passed (runs 45019910407 vs 45018522227).
+        val scroll=d.wait(androidx.test.uiautomator.Until.findObject(androidx.test.uiautomator.By.scrollable(true)),10_000)
+        if(scroll==null) {
+            d.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null),"settings-scroll-failure-$again-sdk$sdk.png"))
+            d.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null),"settings-scroll-failure-$again-sdk$sdk.xml"))
+        }
+        assertNotNull("Settings scroll container (hierarchy+shot dumped)",scroll)
         val target=androidx.test.uiautomator.By.text("Notification shade controls")
         scroll.setGestureMargin(d.displayWidth/8)
         scroll.scrollUntil(androidx.test.uiautomator.Direction.DOWN,androidx.test.uiautomator.Until.findObject(target))

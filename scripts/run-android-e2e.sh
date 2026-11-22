@@ -60,8 +60,15 @@ fail=0
 if [ $install_status -ne 0 ]; then echo "FAIL: install stage"; fail=1; fi
 if [ $status -ne 0 ]; then echo "FAIL: product suite"; fail=1; fi
 if [ $status2 -ne 0 ]; then echo "FAIL: popup stage"; fail=1; fi
-if [ $s1 -ne 0 ] || [ $s2 -ne 0 ] || [ $s3 -ne 0 ]; then
-  echo "FAIL: popup permission setup (force-stop=$s1 revoke=$s2 clear-flags=$s3)"; fail=1
+# POST_NOTIFICATIONS exists only on sdk>=33: below that, revoke is a no-op and
+# clear-permission-flags exits 255 (run 45019910407, api31). Only sdk>=33 setup
+# failures are real setup failures; on older APIs the popup test's suppression
+# branch is the exercisable path by design.
+if [ $s1 -ne 0 ]; then echo "FAIL: popup permission setup (force-stop=$s1)"; fail=1; fi
+if [ "$API" -ge 33 ] && { [ $s2 -ne 0 ] || [ $s3 -ne 0 ]; }; then
+  echo "FAIL: popup permission setup (revoke=$s2 clear-flags=$s3)"; fail=1
+elif [ "$API" -lt 33 ]; then
+  echo "SETUP note: api$API has no POST_NOTIFICATIONS runtime permission (revoke=$s2 clear-flags=$s3) - denied path unexercisable here"
 fi
 if [ $status3 -ne 0 ]; then
   if [ "$API" = "31" ]; then
