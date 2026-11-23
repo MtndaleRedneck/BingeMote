@@ -672,6 +672,21 @@ public static class WinScan {
     }
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint msg, IntPtr w, string l);
     [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint tid, ref GUIINFO g);
+    [StructLayout(LayoutKind.Sequential)] struct GUIINFO {
+        public int cbSize; public uint flags;
+        public IntPtr active, focus, capture, menuOwner, moveSize, caret;
+        public RECT caretRect;
+    }
+    public static string FocusText(IntPtr window) {
+        uint pid; uint tid = GetWindowThreadProcessId(window, out pid);
+        var g = new GUIINFO { cbSize = Marshal.SizeOf(typeof(GUIINFO)) };
+        if (!GetGUIThreadInfo(tid, ref g)) throw new Exception("GetGUIThreadInfo failed");
+        return Text(g.focus);
+    }
     public static IntPtr FindChildByClass(string title, string fragment) {
         IntPtr found = IntPtr.Zero;
         EnumWindows((h, l) => {
@@ -767,6 +782,32 @@ Assert ($r.code -eq 200) "shipping bytes: pairing succeeds with the code shown i
 $shipToken2 = ($r.body | ConvertFrom-Json).token
 $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
+
+# Exercise the actual installed shipping confirmation, on the disposable CI
+# phone just paired above. Cancel must have initial native focus, and physical
+# Enter/Esc must both leave the fixture's token valid.
+Add-Type -AssemblyName System.Windows.Forms
+foreach ($key in @('{ENTER}', '{ESC}')) {
+    & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe')
+    Start-Sleep -Milliseconds 800
+    $remove = [WinScan]::FindChild('BingeMote', 'Remove')
+    Assert ($remove -ne [IntPtr]::Zero) "shipping confirmation fixture Remove button missing"
+    [WinScan]::Click($remove)
+    Start-Sleep -Milliseconds 500
+    $cancel = [WinScan]::FindChild('BingeMote', 'Cancel')
+    Assert ($cancel -ne [IntPtr]::Zero) "shipping confirmation did not open"
+    $dialog = [WinScan]::GetParent($cancel)
+    $focusText = [WinScan]::FocusText($dialog)
+    Write-Host "exact shipping dialog initial focus: $focusText; key=$key"
+    Assert ($focusText -eq 'Cancel') "exact shipping confirmation initial focus is not Cancel"
+    [WinScan]::SetForegroundWindow($dialog) | Out-Null
+    [System.Windows.Forms.SendKeys]::SendWait($key)
+    Start-Sleep -Milliseconds 500
+    Assert ([WinScan]::FindChild('BingeMote', 'Cancel') -eq [IntPtr]::Zero) "shipping key did not close confirmation"
+    $r = Invoke-Helper '/ping' '{}' $shipToken2
+    Assert ($r.code -eq 200) "shipping initial Enter/Esc removed harmless CI fixture phone"
+    Write-Host "exact shipping $key returned Cancel; disposable paired phone retained"
+}
 
 # Shipping upgrade: install the same shipping bytes over the paired state.
 & $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
