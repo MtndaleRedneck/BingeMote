@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
             screen = current
             // Scroll positions live above the screen switch so leaving a screen and
             // coming back lands you where you were instead of back at the top.
-            val settingsScroll = rememberScrollState()
+            val settingsScroll = rememberScrollState(initial = if (BuildConfig.DEBUG && intent.hasExtra("updateResult")) Int.MAX_VALUE else 0)
             val setupScroll = rememberScrollState()
             val yourpcScroll = rememberScrollState()
             val feedbackScroll = rememberScrollState()
