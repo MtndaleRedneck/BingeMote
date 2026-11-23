@@ -2,6 +2,9 @@ package com.bingemote
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -53,7 +56,7 @@ fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Un
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (unreachable) "Reconnecting in the background."
+                if (unreachable) "Attempting to reconnect in the background"
                 else "Everything is set up. Nothing to do here.",
                 color = Muted, fontSize = 13.sp, lineHeight = 18.sp,
             )
@@ -63,8 +66,9 @@ fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Un
         SettingsSection("") {
             PressTile(
                 onTap = onPairAgain,
-                background = CardGradient,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                background = Brush.verticalGradient(listOf(Color(0xFF36363F), Color(0xFF36363F))),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+                    .border(0.7.dp, Color(0xFFA2A2AD), RoundedCornerShape(14.dp)),
                 corner = 14.dp,
             ) {
                 Text("Pair again", color = TextC, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)

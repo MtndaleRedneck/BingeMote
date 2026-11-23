@@ -161,7 +161,7 @@ class CancelGestureTest {
     }
 
     @Test
-    fun releaseInsideCancelsRingOnly() = releaseInsideCancels("ring")
+    fun releaseInsideCancelsAfterRetiredRingExtra() = releaseInsideCancels("ring")
 
     @Test
     fun releaseInsideCancelsFillsIn() = releaseInsideCancels("fills")
