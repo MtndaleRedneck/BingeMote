@@ -81,3 +81,68 @@ jobs:
           name: PC-subtitle-test-evidence
           path: helper/BingeMoteHelper.Tests/TestResults/*.trx
           retention-days: 3
+
+  retain-private:
+    needs: [verify, pc-subtitles]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - name: Build exact signed Android artifact
+        shell: pwsh
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'release.keystore'
+          try {
+            [IO.File]::WriteAllBytes($key,[Convert]::FromBase64String($env:KEYSTORE_B64))
+            $env:KEYSTORE_FILE=$key
+            .\gradlew.bat --no-daemon assembleRelease
+            if ($LASTEXITCODE -ne 0) { throw 'Android build failed' }
+            Copy-Item app/build/outputs/apk/release/app-release.apk BingeMote-Android-1.12.15.apk
+            & "$env:ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs BingeMote-Android-1.12.15.apk
+            if ($LASTEXITCODE -ne 0) { throw 'Signature verification failed' }
+          } finally { Remove-Item $key -ErrorAction SilentlyContinue }
+      - name: Build production PC installer
+        shell: pwsh
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+          if ($LASTEXITCODE -ne 0) { throw 'PC build failed' }
+          choco install innosetup --no-progress -y
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' /DMyAppVersion=1.7.15 helper/installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer failed' }
+          Copy-Item helper/Output/BingeMote-PC-1.7.15.exe .
+      - name: Retain only in private TestLab drafts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.TESTLAB_PAT }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' }
+          $repo = Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/MtndaleRedneck/TestLab'
+          if (-not $repo.private) { throw 'Refusing non-private artifact destination' }
+          foreach ($item in @(@('android-v1.12.15','BingeMote-Android-1.12.15.apk'),@('pc-v1.7.15','BingeMote-PC-1.7.15.exe'))) {
+            $tag=$item[0]; $file=$item[1]
+            $releases=Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/MtndaleRedneck/TestLab/releases?per_page=100'
+            $release=$releases | Where-Object { $_.tag_name -eq $tag } | Select-Object -First 1
+            if ($release -and -not $release.draft) { throw 'Existing visible version cannot be overwritten' }
+            if (-not $release) {
+              $body=@{tag_name=$tag;name=$tag;draft=$true;body="Private review staging only. Source $env:GITHUB_SHA, run $env:GITHUB_RUN_ID. Not cleared for installation or release."}|ConvertTo-Json
+              $release=Invoke-RestMethod -Method Post -Headers $headers -ContentType application/json -Body $body 'https://api.github.com/repos/MtndaleRedneck/TestLab/releases'
+            }
+            if ($release.assets | Where-Object {$_.name -eq $file}) { throw 'Existing asset: do not silently replace review bytes' }
+            $upload=$release.upload_url -replace '\{\?name,label\}',''
+            $asset=Invoke-RestMethod -Method Post -Headers $headers -ContentType application/octet-stream -InFile $file "$($upload)?name=$file"
+            $hash=(Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            Write-Host "RETAINED $tag asset=$($asset.id) sha256=$hash bytes=$($asset.size) source=$env:GITHUB_SHA release=$($release.html_url)"
+          }
