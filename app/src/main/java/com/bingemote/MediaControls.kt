@@ -263,7 +263,7 @@ class MediaControlsService : Service() {
         internal var pollCommitted: (() -> Unit)? = null
     }
 
-    private var activePollObserver: (() -> Unit)? = null
+    @Volatile private var activePollObserver: (() -> Unit)? = null
     private suspend fun pollOnce() = pollMutex.withLock {
         activePollObserver = if (BuildConfig.DEBUG) afterPollAttempt else null
         try { pollBody() } finally {
