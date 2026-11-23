@@ -1,6 +1,6 @@
 ## v1.12.13
 
-- Pairs with the PC's new 4-digit codes, and still works with 6-digit codes from an older PC
+- Pairs with the PC's new 4-digit codes, and still works with 6-digit codes from an older BingeMote
 - One orange everywhere in Settings - the chips, toggles and pills had drifted into slightly different shades
 - Sharper circles: the settings toggle ball and the play/pause ring now render cleanly at every screen density
 - Feedback screen tidied: the extra explanation lines and the Done button are gone (Back still works)

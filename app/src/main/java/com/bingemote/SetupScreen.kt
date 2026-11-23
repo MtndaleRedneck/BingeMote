@@ -113,7 +113,7 @@ fun SetupScreen(
             else DiscoveredHelper(manual, HelperClient.DEFAULT_PORT, "PC")
         }
         if (target.host.isBlank()) { say("Enter your PC's address or pick it above.", true); return }
-        if (code.length != 4 && code.length != 6) { say("Enter the code BingeMote is showing on your PC - 4 digits, or 6 on an older PC.", true); return }
+        if (code.length != 4 && code.length != 6) { say("Enter the code BingeMote is showing on your PC - 4 digits, or 6 on an older BingeMote.", true); return }
         pairing = true
         say("", false)
         scope.launch {
@@ -285,7 +285,7 @@ fun SetupScreen(
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Enter the code BingeMote is showing on your PC (4 digits, or 6 on an older PC). It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text("Enter the code BingeMote is showing on your PC (4 digits, or 6 on an older BingeMote). It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,
