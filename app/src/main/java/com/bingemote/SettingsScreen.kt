@@ -19,7 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -43,7 +44,7 @@ import kotlinx.coroutines.launch
 
 // One orange everywhere: the settings components use the theme's own tokens.
 private val OnOrange = Color(0xFF281300)
-private val ToggleOnTrack = Orange
+
 private val ThumbDark = Color(0xFF1B1B1D)
 private val PillGradient = OrangeGradient
 private val SegmentOnGradient = OrangeGradient
@@ -361,22 +362,22 @@ fun ToggleRow(label: String, checked: Boolean, haptics: Boolean, buzzWhenEnablin
     }
 }
 
-/** The shared settings toggle: one 190ms ease-in-out color fade and thumb slide on every
- * settings switch, so all of them feel identical. Sizes per the UI spec (mockup px / 3):
- * track 52x32dp radius 16dp, thumb 22.67dp with a 4.67dp inset, 1px rim when ON. */
+/** The shared settings toggle: one 190ms ease-in-out crossfade and thumb slide on every
+ * settings switch, so all of them feel identical. Track 52x32dp radius 16dp; ON crossfades
+ * gray into the shared OrangeGradient ombre every other filled orange surface uses.
+ * Whole-dp thumb: 24dp with 4dp margins, no rim. */
 @Composable
 fun SettingToggle(checked: Boolean) {
-    val track by animateColorAsState(if (checked) ToggleOnTrack else TrackGray, tween(190, easing = FastOutSlowInEasing), label = "track")
-    // Whole-dp geometry: a fractional 22.67dp thumb with a 0.33dp rim antialiased into a
-    // fuzzy ball. 24dp thumb with 4dp margins rasterizes cleanly at every density.
+    val fade by animateFloatAsState(if (checked) 1f else 0f, tween(190, easing = FastOutSlowInEasing), label = "track")
     val thumbPad by animateDpAsState(if (checked) 24.dp else 4.dp, tween(190, easing = FastOutSlowInEasing), label = "thumb")
     Box(
         Modifier
             .width(52.dp)
             .height(32.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(track),
+            .background(TrackGray),
     ) {
+        Box(Modifier.fillMaxSize().alpha(fade).background(OrangeGradient))
         Box(
             Modifier
                 .align(Alignment.CenterStart)
