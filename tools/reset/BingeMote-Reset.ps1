@@ -238,14 +238,18 @@ function Invoke-BingeMoteReset {
             # Rename the original root into owner/admin-only recovery storage.
             # Never recursively delete user-writable trees while elevated.
             $quarantine=Join-Path $backup ('quarantine-'+[guid]::NewGuid().ToString('N'))
-            Move-Item -LiteralPath $m.Original -Destination $quarantine
+            [IO.Directory]::Move($m.Original,$quarantine)
             [pscustomobject]@{Original=$m.Original;Quarantine=$quarantine} | Export-Clixml -LiteralPath ($quarantine+'.xml')
             if (Test-Path -LiteralPath $m.Original) { throw 'A folder could not be removed.' }
         }
         if ($null -ne $vlcBytes) {
             if (@(Get-Process -Name vlc -ErrorAction SilentlyContinue).Count) { throw 'VLC started during reset; its config was not changed.' }
             if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($vlcPath)) -cne [Convert]::ToBase64String($vlcBytes)) { throw 'VLC config changed during reset; it was not overwritten.' }
-            [IO.File]::WriteAllText($vlcPath,$vlcNew,(New-Object Text.UTF8Encoding($false)))
+            Assert-PlainTree $vlcPath
+            $vlcTemp=Join-Path $backup 'vlcrc-reset-new'
+            [IO.File]::WriteAllText($vlcTemp,$vlcNew,(New-Object Text.UTF8Encoding($false)))
+            # Replace a file entry, not an in-place write through a swapped symlink.
+            [IO.File]::Replace($vlcTemp,$vlcPath,(Join-Path $backup 'vlcrc-at-replace'),$false)
             Write-Host 'VLC HTTP interface/host/password reset to installed defaults; other interfaces/preferences kept.'
         }
         if ($issues.Count) {
