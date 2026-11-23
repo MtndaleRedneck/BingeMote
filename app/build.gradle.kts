@@ -13,8 +13,8 @@ android {
         applicationId = "com.bingemote"
         minSdk = 31
         targetSdk = 34
-        versionCode = 35
-        versionName = "1.12.13"
+        versionCode = 36
+        versionName = "1.12.14"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

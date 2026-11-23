@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -192,7 +193,7 @@ private fun HomeContent(
             )
             Text(
                 if (refused) "If you changed it on the PC, re-pair in Settings or set it back by hand"
-                else if (lost) "Make sure both devices are on the same network"
+                else if (lost) "Both devices need to be on the same network"
                 else if (vlcOut) "Pick a film in Movies and it starts by itself"
                 else when (s?.state) {
                     "playing" -> "Playing"
@@ -200,6 +201,8 @@ private fun HomeContent(
                     else -> "Stopped"
                 },
                 color = Color(0xFF3D2A12), fontSize = 14.sp,
+                // Reconnect line only: slightly tighter tracking so it fits one line (size unchanged).
+                letterSpacing = if (lost) 0.3.sp else TextUnit.Unspecified,
             )
             // Strictly-necessary helper notices ride the hero itself - no second card.
             // A removed pairing says pair again; a silent helper says what it affects.
