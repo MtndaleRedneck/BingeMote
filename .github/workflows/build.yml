@@ -265,8 +265,11 @@ jobs:
           $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
           & helper/shot/BingeMote.exe --window-shot
           $env:BINGEMOTE_DIALOG_SHOTS = "$PWD\helper"
-          & helper/shot/BingeMote.exe --dialog-shots
-          if ($LASTEXITCODE -ne 0) { throw "Native dark-dialog capture failed" }
+          $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -Wait -PassThru
+          if ($dialogRun.ExitCode -ne 0) { throw "Native dark-dialog capture failed: $($dialogRun.ExitCode)" }
+          foreach ($name in @('confirm', 'note', 'wifi')) {
+            if (-not (Test-Path "helper/dialog-$name.png")) { throw "Missing native dialog capture: $name" }
+          }
           $env:BINGEMOTE_OSD_SHOT = "$PWD\helper\osd.png"
           $env:BINGEMOTE_OSD_SHOT_MUTED = "$PWD\helper\osd-muted.png"
           & helper/shot/BingeMote.exe --osd-shot
