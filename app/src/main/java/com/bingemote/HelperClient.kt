@@ -181,10 +181,13 @@ object HelperClient {
         return json.optBoolean("ok") && !json.optBoolean("woke")
     }
 
+    fun subtitleMedia(host: String, port: Int, token: String): String =
+        subtitleRequest(host,port,token,"/subtitles/media").getString("mediaId")
+
     /** False only for an explicit missing route. Never bypass an in-flight helper
      * operation with a direct VLC command after a timeout or an auth failure. */
     fun selectSubtitle(host: String, port: Int, token: String, trackId: Int, mediaId: String = ""): Boolean = try {
-        val json = subtitleRequest(host,port,token,"/subtitles/select",JSONObject().put("trackId",trackId).put("mediaId",mediaId),40000)
+        val json = subtitleRequest(host,port,token,"/subtitles/select",JSONObject().put("trackId",trackId).put("mediaId",mediaId),50000)
         if (json.optBoolean("woke")) throw Unreachable("Screen woken. Tap the subtitle again.")
         if (!json.optBoolean("ok")) throw Unreachable("Couldn't change subtitles.")
         true

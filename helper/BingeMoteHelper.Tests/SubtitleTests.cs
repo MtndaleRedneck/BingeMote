@@ -59,6 +59,8 @@ public class SubtitleTests : IDisposable
                 using var raw = new HttpClient();
                 raw.DefaultRequestHeaders.Authorization = new("Basic",Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(":fixture")));
                 await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=subtitle_track&val=-1");
+                using var vlcVersion=JsonDocument.Parse(await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json"));
+                Console.WriteLine("REAL_VLC_VERSION="+vlcVersion.RootElement.GetProperty("version").GetString()+"; fresh-runner/no-vlcrc; explicitOff; no-sub-autodetect-file; dummy audio/video");
                 var addPath=Path.Combine(Path.GetDirectoryName(movie)!,"manual.en.srt");
                 await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=addsubtitle&val="+Uri.EscapeDataString(addPath));
                 await Task.Delay(800);
@@ -123,7 +125,7 @@ public class SubtitleTests : IDisposable
         acl!.WaitForExit();
         using var server = new HttpServer();server.Start();
         using var client = new HttpClient();
-        foreach(var path in new[]{"list","load","select"}) {
+        foreach(var path in new[]{"list","media","load","select"}) {
             using var denied = await client.GetAsync("http://127.0.0.1:8488/subtitles/"+path);
             Assert.Equal(System.Net.HttpStatusCode.Unauthorized,denied.StatusCode);
         }

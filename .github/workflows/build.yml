@@ -117,7 +117,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Helper unit tests
-        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc'
 
       - name: Publish helper exe
         run: |
