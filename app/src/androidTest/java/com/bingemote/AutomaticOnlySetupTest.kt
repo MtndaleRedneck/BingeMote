@@ -23,10 +23,7 @@ class AutomaticOnlySetupTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             .putExtra("screen", "settings").putExtra("updateResult", "You're up to date."))
         assertTrue(device.wait(Until.hasObject(By.text("Settings")), 10000))
-        repeat(3) {
-            device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-                device.displayWidth / 2, device.displayHeight / 5, 2)
-        }
+        assertTrue(device.wait(Until.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)), 2000))
         val version = device.findObject(By.text("Version " + BuildConfig.VERSION_NAME))
         val success = device.findObject(By.text("You're up to date."))
         assertFalse(device.hasObject(By.text("Updates")))
