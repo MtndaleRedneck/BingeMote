@@ -202,7 +202,7 @@ private fun HomeContent(
                 },
                 color = Color(0xFF3D2A12), fontSize = 14.sp,
                 // Reconnect line only: slightly tighter tracking so it fits one line (size unchanged).
-                letterSpacing = if (lost) 0.3.sp else TextUnit.Unspecified,
+                letterSpacing = if (lost) 0.sp else TextUnit.Unspecified,
             )
             // Strictly-necessary helper notices ride the hero itself - no second card.
             // A removed pairing says pair again; a silent helper says what it affects.
