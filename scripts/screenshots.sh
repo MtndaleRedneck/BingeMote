@@ -253,6 +253,15 @@ adb shell am instrument -w -e class com.bingemote.MouseCadenceTest \
 adb logcat -d -s BMMouse:I > screenshots/mouse-cadence.txt
 cat screenshots/mouse-cadence.txt
 grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSERT FAIL: mouse cadence test failed (see mouse-cadence-instrument.txt)'; SEEK_FAIL=1; }
+
+# 4c) Notification feedback proofs (Ezzy 2026-11-22): the haptic tick fires on bar
+#     actions only (app "Vibrate on press" and the system haptic switch both
+#     suppress it; the 2 s poll never ticks), and the play/pause glyph flips before
+#     VLC answers the command + reverts when the PC never takes it. The felt buzz
+#     itself is untestable on an emulator - a seam records the exact calls.
+adb shell am instrument -w -e class com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/haptic-flip-instrument.txt
+grep -q '^OK (8 tests)' screenshots/haptic-flip-instrument.txt || { echo 'ASSERT FAIL: haptic/glyph feedback tests failed (see haptic-flip-instrument.txt)'; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \
