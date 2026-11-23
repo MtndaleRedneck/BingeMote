@@ -43,9 +43,11 @@ import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.launch
 
 // One orange everywhere: the settings components use the theme's own tokens.
-private val OnOrange = Color(0xFF281300)
+// Dark-on-orange, same as every other label on an orange surface (was 281300, a warm
+// brown variant from the Zephyr port that no other on-orange text uses).
+private val OnOrange = Color(0xFF1B1B1E)
 
-private val ThumbDark = Color(0xFF1B1B1D)
+private val ThumbDark = Color(0xFF1B1B1E)
 private val PillGradient = OrangeGradient
 private val SegmentOnGradient = OrangeGradient
 
