@@ -65,10 +65,14 @@ class AutomaticOnlySetupTest {
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-before-selection.png"))
         device.findObject(By.textContains("MY-PC  (")).click()
         Thread.sleep(500)
-        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-            device.displayWidth / 2, device.displayHeight / 3, 25)
-        Thread.sleep(400)
-        assertTrue(device.hasObject(By.text("Code from your PC")))
+        repeat(4) {
+            if (!device.hasObject(By.text("Code from your PC"))) {
+                device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                    device.displayWidth / 2, device.displayHeight / 2, 20)
+                Thread.sleep(300)
+            }
+        }
+        assertTrue(device.wait(Until.hasObject(By.text("Code from your PC")), 3000))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc.png"))
         device.swipe(device.displayWidth / 2, device.displayHeight / 3,
             device.displayWidth / 2, device.displayHeight * 4 / 5, 25)

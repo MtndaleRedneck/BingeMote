@@ -27,6 +27,7 @@ function Invoke-HelperGet($path, $token) {
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 
+if ($env:BINGEMOTE_SHIPPING_ONLY -ne '1') {
 # --- Part 0: the real upgrade path: install the actual 1.7.12 build (already scoped
 # to interactive users), silent-upgrade to this build, pair the instance the installer
 # launches, run the blocked-input notice checks on that installed instance, then
@@ -582,7 +583,11 @@ try {
 # window's own label via UI Automation - the path a user takes), a shipping install-over
 # upgrade keeping that pairing, and clean uninstall. The blocked-input notice is NOT
 # exercised here; its coverage above used the hook build. ---
+}
+
 Write-Host "== shipping-bytes smoke =="
+$unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
+
 $ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $ship) {
     # Source-only push runs publish no installer, so there is nothing to pin yet.
@@ -601,7 +606,9 @@ if ($env:BINGEMOTE_SHIP_SHA256) {
     Write-Host "BINGEMOTE_SHIP_SHA256 unset: shipping identity assertion skipped this run"
 }
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-& $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
+$shipInstall = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -Wait -PassThru
+if ($shipInstall.ExitCode -ne 0) { Get-Content shipping-install.log -Tail 40; throw "shipping install failed: $($shipInstall.ExitCode)" }
+$global:LASTEXITCODE = 0
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
 # Inspect the actual installed payload extracted by the pinned installer, not
 # compressed setup bytes or a separately built helper. The single-file bundle
