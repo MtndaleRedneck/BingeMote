@@ -360,8 +360,6 @@ fun SetupScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                 }
-                Spacer(Modifier.height(14.dp))
-                TextButton(onClick = { say("", false); if (reentry) onCancel?.invoke() else step = 1 }) { Text("Back", color = Muted) }
             }
         }
 

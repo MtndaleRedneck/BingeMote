@@ -9,6 +9,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticOnlySetupTest {
+    @Test fun cancelReturnsToSettingsAndBottomBackIsAbsent() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        Store(ctx).setupDone = true
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "setup").putExtra("pairdemo", "true"))
+        assertTrue(device.wait(Until.hasObject(By.text("Cancel")), 10000))
+        assertFalse(device.hasObject(By.text("Back")))
+        device.findObject(By.text("Cancel")).click()
+        assertTrue(device.wait(Until.hasObject(By.text("Settings")), 5000))
+        device.takeScreenshot(java.io.File("/sdcard/bm-setup-cancel-settings.png"))
+    }
+
     @Test fun pairEntryNeedsSelectedPcOrConfirmedAddress() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
