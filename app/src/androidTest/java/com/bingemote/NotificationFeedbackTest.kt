@@ -233,6 +233,7 @@ class ImmediateFlipTest {
         MediaControlsService.cancelBeforePlaybackStart = false
         MediaControlsService.playbackCompleted = null
         MediaControlsService.pollCommitted = null
+        MediaControlsService.disablePeriodicPoll = false
         MediaControlsService.postProbe = null
     }
 
@@ -526,10 +527,15 @@ class ImmediateFlipTest {
         val release = java.util.concurrent.CountDownLatch(1)
         val returned = java.util.concurrent.CountDownLatch(1)
         try {
+            MediaControlsService.disablePeriodicPoll = true
             HapticTickTest.seedPrefs(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
-            val readyBy = System.currentTimeMillis() + 8000
-            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            val startedBy = System.currentTimeMillis() + 3000
+            while (!MediaControlsService.testServiceAlive && System.currentTimeMillis() < startedBy) Thread.sleep(20)
+            assertTrue(MediaControlsService.testServiceAlive)
+            val connected = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.requestObservedPoll?.invoke { connected.countDown() }
+            assertTrue(connected.await(2, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue(posts.count { !it.playing } >= 2)
             stub.beforeStatusResponse = {
                 held.countDown()
@@ -545,6 +551,7 @@ class ImmediateFlipTest {
         } finally {
             MediaControlsService.beforePollCommit = null
             MediaControlsService.afterPollAttempt = null
+            MediaControlsService.disablePeriodicPoll = false
             release.countDown(); stub.stop()
         }
     }
