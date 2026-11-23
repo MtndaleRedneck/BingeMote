@@ -179,8 +179,7 @@ class HapticTickTest {
  * is provably slow (2.5 s):
  *  1. the glyph must flip well before VLC's answer (target state shown on receipt);
  *  2. a successful slow command must never revert the glyph;
- *  3. a command that never lands (dead PC) must flip then REVERT, so the bar never
- *     keeps claiming a state the PC didn't take;
+ *  3. known disconnected/dead PCs must never flip the glyph;
  *  4. rapid double taps must end consistent with the PC's real state;
  *  5. a status poll in flight across the command (stale response) must not undo the flip.
  * On the pre-fix code, tests 1 and 3 fail by construction (the flip waited for the
@@ -230,21 +229,29 @@ class ImmediateFlipTest {
         } finally { stub.stop() }
     }
 
-    @Test fun failedCommandFlipsThenReverts() {
+    @Test fun disconnectedPlayIsTappableNoOp() {
         HapticTickTest.seedPrefs(ctx, haptics = false, port = HapticTickTest.deadPort())
         ctx.startService(Intent(ctx, MediaControlsService::class.java))
-        Thread.sleep(3000) // initial post; failed polls post nothing
+        Thread.sleep(3000)
         posts.clear()
         ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
-        val end = System.currentTimeMillis() + 6000
-        while (System.currentTimeMillis() < end) {
-            if (posts.count { it.playing } >= 1 && posts.count { !it.playing } >= 1) {
-                assertTrue("flip must come before revert", posts.first().playing)
-                return
-            }
-            Thread.sleep(50)
-        }
-        org.junit.Assert.fail("expected optimistic flip then revert, got: $posts")
+        Thread.sleep(2500)
+        assertTrue("disconnected Play must never post Pause: $posts", posts.none { it.playing })
+    }
+
+    @Test fun knownLostConnectionDoesNotFlip() {
+        val stub = HapticTickTest.StatusStub(); stub.start()
+        try {
+            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            Thread.sleep(3000)
+            stub.stop()
+            Thread.sleep(3000) // a failed poll invalidates the last good connection
+            posts.clear()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            Thread.sleep(1500)
+            assertTrue("lost connection must not show playback: $posts", posts.none { it.playing })
+        } finally { stub.stop() }
     }
 
     @Test fun rapidDoubleTapEndsConsistentWithPc() {
@@ -265,11 +272,13 @@ class ImmediateFlipTest {
     }
 
     @Test fun staleInflightPollDoesNotUndoFlip() {
-        val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.statusDelayMs = 2000; stub.start()
+        val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
         try {
             HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
-            Thread.sleep(800) // poll #1 is in flight now (snapshot "paused", answers at ~2.1 s)
+            Thread.sleep(1000) // establish a successful connection first
+            stub.statusDelayMs = 2000
+            Thread.sleep(1500) // next poll is in flight with snapshot paused
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             Thread.sleep(3500) // stale poll answers + a fresh poll reconciles
             val flips = posts.dropWhile { !it.playing }

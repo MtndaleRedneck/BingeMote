@@ -67,6 +67,9 @@ private const val ACTION_MEDIA_VOL_UP = "com.bingemote.action.VOL_UP"
 class MediaControlsService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollJob: Job? = null
+    @Volatile private var lastConnectedAt = 0L
+    private fun playbackConnected(): Boolean = lastConnectedAt != 0L &&
+        android.os.SystemClock.elapsedRealtime() - lastConnectedAt <= 5000
     private var failures = 0
     private val commandEpoch = java.util.concurrent.atomic.AtomicLong()
     private val pollMutex = Mutex()
@@ -138,6 +141,9 @@ class MediaControlsService : Service() {
             }
         }
         }
+        // Disconnected Play stays tappable but is a no-op, including no tick.
+        // Only a recent successful VLC poll permits optimistic state feedback.
+        if (intent?.action == ACTION_MEDIA_PLAY_PAUSE && !playbackConnected()) return START_STICKY
         if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) { commandEpoch.incrementAndGet(); tick() }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
@@ -159,6 +165,7 @@ class MediaControlsService : Service() {
                         Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
+                        lastConnectedAt = 0L
                         if (epochAtPress == commandEpoch.get()) {
                             lastPlaying = prev
                             postMediaNotification(prev, 0, 0, lastStatus?.title)
@@ -219,10 +226,12 @@ class MediaControlsService : Service() {
             } catch (e: Vlc.BadAuth) {
                 // The one automatic heal: adopt the PC's current password once; never push ours.
                 if (VlcAuthRepair.tryHealOnce(store)) { return } // the next poll uses it
+                lastConnectedAt = 0L
                 failures++
                         if (failures >= 5) { stopSelf() }
                 return
             } catch (e: Exception) { if (e is CancellationException) throw e;
+                lastConnectedAt = 0L
                 failures++
                         // VLC gone for good: drop the controls rather than pose over a dead player.
                 if (failures >= 5) { stopSelf() }
@@ -230,6 +239,7 @@ class MediaControlsService : Service() {
             }
             if (epoch != commandEpoch.get()) return
             failures = 0
+            lastConnectedAt = android.os.SystemClock.elapsedRealtime()
             val playing = st.playing
             lastStatus = st
             lastPlaying = playing
