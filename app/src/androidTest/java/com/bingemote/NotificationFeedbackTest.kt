@@ -217,6 +217,10 @@ class ImmediateFlipTest {
         MediaControlsService.beforePlaybackDelivery = null
         MediaControlsService.afterPollAttempt = null
         MediaControlsService.beforePollFailure = null
+        MediaControlsService.pendingPollSkipped = null
+        MediaControlsService.playbackPostFailure = null
+        MediaControlsService.throwPlaybackPost = false
+        MediaControlsService.cancelBeforePlaybackStart = false
         MediaControlsService.postProbe = null
     }
 
@@ -355,7 +359,10 @@ class ImmediateFlipTest {
             posts.clear()
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             assertTrue(reached.await(3, java.util.concurrent.TimeUnit.SECONDS))
-            Thread.sleep(2600) // at least one normal poll cycle before delivery
+            val skipped = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pendingPollSkipped = { skipped.countDown() }
+            assertTrue("no poll attempted while delivery pending", skipped.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            MediaControlsService.pendingPollSkipped = null
             assertTrue("same-epoch poll reverted optimistic Play: $posts", posts.isNotEmpty() && posts.all { it.playing })
             assertEquals("paused", stub.state)
             MediaControlsService.beforePlaybackDelivery = null
@@ -432,7 +439,10 @@ class ImmediateFlipTest {
             while (stub.commands.isEmpty() && System.currentTimeMillis() < secondBy) Thread.sleep(20)
             assertEquals("second command must pass held first", 1, stub.commands.size)
             assertEquals("playing", stub.state)
-            Thread.sleep(2200)
+            val skipped = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pendingPollSkipped = { skipped.countDown() }
+            assertTrue("no poll attempted while first delivery held", skipped.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            MediaControlsService.pendingPollSkipped = null
             assertTrue("pending first delivery lost double-tap target", posts.isNotEmpty() && !posts.last().playing)
             MediaControlsService.beforePlaybackDelivery = null
             releaseFirst.countDown()
@@ -445,6 +455,48 @@ class ImmediateFlipTest {
         } finally {
             MediaControlsService.beforePlaybackDelivery = null
             releaseFirst.countDown()
+            stub.stop()
+        }
+    }
+
+    @Test fun throwingOptimisticPostReleasesPendingAndPollingResumes() {
+        checkPreStartCleanup(throwPost = true)
+    }
+
+    @Test fun cancelledBeforeCoroutineEntryReleasesPendingAndPollingResumes() {
+        checkPreStartCleanup(throwPost = false)
+    }
+
+    private fun checkPreStartCleanup(throwPost: Boolean) {
+        val stub = HapticTickTest.StatusStub(); stub.start()
+        try {
+            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue(posts.count { !it.playing } >= 2)
+            MediaControlsService.throwPlaybackPost = throwPost
+            MediaControlsService.cancelBeforePlaybackStart = !throwPost
+            val finishedPoll = java.util.concurrent.CountDownLatch(1)
+            val postedFailure = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.playbackPostFailure = { postedFailure.countDown() }
+            val pollsBefore = stub.polls.get()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            if (throwPost) assertTrue(postedFailure.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val resumeBy = System.currentTimeMillis() + 5000
+            while (stub.polls.get() <= pollsBefore && System.currentTimeMillis() < resumeBy) Thread.sleep(30)
+            assertTrue("pending count stranded polling", stub.polls.get() > pollsBefore)
+            assertTrue("cancelled/failed prelaunch sent command", stub.commands.isEmpty())
+            MediaControlsService.throwPlaybackPost = false
+            MediaControlsService.cancelBeforePlaybackStart = false
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            val commandBy = System.currentTimeMillis() + 2000
+            while (stub.commands.isEmpty() && System.currentTimeMillis() < commandBy) Thread.sleep(30)
+            assertEquals("subsequent connected Play must still work", 1, stub.commands.size)
+        } finally {
+            MediaControlsService.throwPlaybackPost = false
+            MediaControlsService.cancelBeforePlaybackStart = false
+            MediaControlsService.playbackPostFailure = null
             stub.stop()
         }
     }
