@@ -185,6 +185,7 @@ class SubtitleClientTest {
                 assertTrue("same media resume must not clear uncertainty",remote.subtitleOutcomeUnknown)
                 store.host="127.0.0.2" // same paired token, rediscovered address
                 val recreated=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                delay(300)
                 assertTrue("recreation must preserve uncertainty",recreated.subtitleOutcomeUnknown)
                 assertNotNull(recreated.subtitleFileError)
             } finally {scope.cancel()}
@@ -205,9 +206,11 @@ class SubtitleClientTest {
                 withContext(Dispatchers.Main){remote.loadSubtitleFile(remote.subtitleFolder!!.files.single())}
                 delay(300)
                 val recreated=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                delay(300)
                 assertTrue("in-flight marker must exist before response",recreated.subtitleOutcomeUnknown)
                 store.helperToken="repaired-fixture"
                 val repaired=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                delay(300)
                 assertFalse("different pair token must not inherit warning",repaired.subtitleOutcomeUnknown)
                 delay(3000)
                 store.helperToken="lifecycle-fixture"

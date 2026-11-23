@@ -26,4 +26,20 @@ class SubtitleJournalTest {
         try { try{SubtitleJournal(ctx).begin("pair","movie");fail("storage failure accepted")}catch(_:Exception){} }
         finally{target.deleteRecursively()}
     }
+    @Test fun backupOnlyFileRecoversAndInvalidDataDoesNotResetSilently(){
+        reset();val journal=SubtitleJournal(ctx);val id=journal.begin("pair","movie")
+        val base=File(ctx.filesDir,"subtitle-operations.json")
+        assertTrue(base.renameTo(File(base.path+".bak")))
+        assertEquals(1,SubtitleJournal(ctx).entries("pair").size)
+        journal.finish(id,false)
+        base.writeText("{truncated")
+        try{SubtitleJournal(ctx).begin("pair","movie");fail("corrupt state accepted")}catch(_:Exception){}
+        reset()
+    }
+    @Test fun repeatedUnknownForSameMediaIsCompactedWithoutHidingIt(){
+        reset();val journal=SubtitleJournal(ctx)
+        repeat(150){val id=journal.begin("pair","movie");assertTrue(journal.finish(id,true))}
+        assertEquals(1,journal.entries("pair").size)
+    }
+
 }

@@ -4,44 +4,79 @@ import android.content.Context
 import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.UUID
 
-/** Crash-safe per-operation journal. Pending and unresolved records are distinct;
- * completing one request cannot erase another request's uncertainty. */
+/** Each request owns one durable record. All calls must run off the UI thread. */
 internal class SubtitleJournal(context: Context) {
     private val file = AtomicFile(File(context.filesDir, "subtitle-operations.json"))
-    companion object { private val lock = Any() }
+    companion object {
+        private val lock = Any()
+        private val live = mutableSetOf<String>()
+        private val completed = mutableMapOf<String,Boolean>()
+        private const val MAX_BYTES = 262144
+    }
     data class Entry(val id: String, val pair: String, val media: String, val phase: String)
     private fun read(): MutableList<Entry> {
-        if (!file.baseFile.exists()) return mutableListOf()
-        val bytes = file.openRead().use { input ->
-            val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(4096)
-            while (true) { val n=input.read(buf);if(n<0)break;check(out.size()+n<=262144);out.write(buf,0,n) };out.toByteArray()
+        val bytes = try { file.openRead().use { input ->
+            val out=java.io.ByteArrayOutputStream();val buf=ByteArray(4096)
+            while(true){val n=input.read(buf);if(n<0)break;check(out.size()+n<=MAX_BYTES);out.write(buf,0,n)};out.toByteArray()
+        } } catch(e:FileNotFoundException) {
+            if(file.baseFile.exists() || File(file.baseFile.path+".bak").exists())throw e
+            return mutableListOf()
         }
         val arr=JSONObject(bytes.toString(Charsets.UTF_8)).getJSONArray("entries")
-        return (0 until arr.length()).map { val o=arr.getJSONObject(it);Entry(o.getString("id"),o.getString("pair"),o.getString("media"),o.getString("phase")) }.toMutableList()
+        check(arr.length()<=1024)
+        return (0 until arr.length()).map {
+            val o=arr.getJSONObject(it)
+            val e=Entry(o.getString("id"),o.getString("pair"),o.getString("media"),o.getString("phase"))
+            check(e.id.length in 1..64 && e.pair.matches(Regex("[a-f0-9]{64}|pair")) && e.media.length<=64 && e.phase in setOf("pending","unknown"))
+            e
+        }.toMutableList()
+    }
+    private fun compact(entries: List<Entry>): List<Entry> {
+        val seen=mutableSetOf<String>()
+        return entries.filter { it.phase=="pending" || seen.add(it.pair+":"+it.media) }
     }
     private fun write(entries: List<Entry>) {
+        val compact=compact(entries);check(compact.size<=1024)
         val arr=org.json.JSONArray()
-        entries.forEach { arr.put(JSONObject().put("id",it.id).put("pair",it.pair).put("media",it.media).put("phase",it.phase)) }
-        var stream: java.io.FileOutputStream?=null
-        try { stream=file.startWrite();stream.write(JSONObject().put("entries",arr).toString().toByteArray(Charsets.UTF_8));file.finishWrite(stream) }
-        catch(e:Exception){ if(stream!=null)file.failWrite(stream);throw e }
+        compact.forEach{arr.put(JSONObject().put("id",it.id).put("pair",it.pair).put("media",it.media).put("phase",it.phase))}
+        val bytes=JSONObject().put("entries",arr).toString().toByteArray(Charsets.UTF_8)
+        check(bytes.size<=MAX_BYTES)
+        var stream:java.io.FileOutputStream?=null
+        try{stream=file.startWrite();stream.write(bytes);file.finishWrite(stream)}
+        catch(e:Exception){if(stream!=null)file.failWrite(stream);throw e}
     }
-    fun entries(pair: String): List<Entry> = synchronized(lock) { read().filter { it.pair==pair } }
-    fun begin(pair: String, media: String?): String = synchronized(lock) {
-        val entries=read();check(entries.size<128){"Too many unresolved subtitle operations"}
-        val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);id
+    private fun reconciled(): MutableList<Entry> {
+        val original=read()
+        val entries=original.mapNotNull { e ->
+            when {
+                completed[e.id]==false -> null
+                completed[e.id]==true -> e.copy(phase="unknown")
+                e.phase=="pending" && e.id !in live -> e.copy(phase="unknown")
+                else -> e
+            }
+        }.toMutableList()
+        if(entries!=original) {
+            try{write(entries);completed.keys.removeAll{ id->original.any{it.id==id} }}catch(_:Exception){ /* known results remain in memory for retry */ }
+        }
+        return compact(entries).toMutableList()
     }
-    /** Never throws from the error path. False leaves the old pending record intact. */
-    fun finish(id: String, unknown: Boolean): Boolean = synchronized(lock) {
-        try { val entries=read();val old=entries.firstOrNull{it.id==id} ?: return@synchronized true
-            entries.removeAll{it.id==id};if(unknown)entries.add(old.copy(phase="unknown"));write(entries);true
-        } catch(_:Exception){false}
+    fun entries(pair:String):List<Entry> = synchronized(lock){reconciled().filter{it.pair==pair}}
+    fun begin(pair:String,media:String?):String = synchronized(lock){
+        val entries=reconciled()
+        check(entries.count{it.pair==pair && it.phase=="pending"}<16){"Subtitle requests still pending"}
+        val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);live.add(id);id
     }
-    fun clearOtherMedia(pair: String, current: String): Boolean = synchronized(lock) {
+    /** Keeps a known outcome in process memory when durable cleanup needs retry. */
+    fun finish(id:String,unknown:Boolean):Boolean = synchronized(lock){
+        live.remove(id);completed[id]=unknown
+        try{reconciled();!completed.containsKey(id)}catch(_:Exception){false}
+    }
+    fun clearOtherMedia(pair:String,current:String):Boolean = synchronized(lock){
         if(current.isEmpty())return@synchronized false
-        try {val entries=read();entries.removeAll{it.pair==pair && it.phase=="unknown" && it.media.isNotEmpty() && it.media!=current};write(entries);true}
+        try{val entries=reconciled();entries.removeAll{it.pair==pair && it.phase=="unknown" && it.media.isNotEmpty() && it.media!=current};write(entries);true}
         catch(_:Exception){false}
     }
 }
