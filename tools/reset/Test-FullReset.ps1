@@ -40,3 +40,26 @@ if($code -ne 1){throw 'Read failure did not report failure'}
 Write-Host 'PASS READ FAILURE: explicit stopped report, no clean verdict'
 Remove-NetFirewallRule -Name $decoyId
 Remove-Item $decoy -Recurse -Force
+# Actual on-disk selective VLC rewrite and BOM/comment preservation fixture.
+Remove-Item Function:\Get-ScheduledTask
+$vlcdir=Join-Path $env:APPDATA 'vlc';New-Item -ItemType Directory $vlcdir -Force | Out-Null
+$vlcpath=Join-Path $vlcdir 'vlcrc'
+$original="extraintf=rc:http`r`nhttp-password=fixture-secret`r`nhttp-host=0.0.0.0`r`nvolume=87`r`n"
+[IO.File]::WriteAllText($vlcpath,$original,(New-Object Text.UTF8Encoding($false)))
+$media=Join-Path $vlcdir 'unrelated-media.txt';Set-Content $media 'must stay'
+$code=Invoke-BingeMoteReset
+if($code -ne 0){throw "VLC reset fixture returned $code"}
+$after=[IO.File]::ReadAllText($vlcpath)
+if($after -notmatch 'extraintf=rc' -or $after -notmatch 'volume=87' -or $after -match '(?m)^http-password=' -or $after -match '(?m)^http-host='){throw 'Selective VLC rewrite wrong'}
+if(!(Test-Path $media)){throw 'Unrelated VLC fixture file touched'}
+$back=Get-ChildItem (Join-Path $env:LOCALAPPDATA 'BingeMote-Recovery') -Directory|Sort-Object LastWriteTime -Descending|Select-Object -First 1
+if([IO.File]::ReadAllText((Join-Path $back.FullName 'vlcrc-before')) -cne $original){throw 'VLC backup differs'}
+Write-Host 'PASS NATIVE VLC FILE: original backup, selective web reset, unrelated preferences/media retained'
+# Force backup copy failure. No owned registry/firewall/file deletion may follow.
+New-Item -ItemType Directory $data -Force | Out-Null
+Set-Content (Join-Path $data 'config.json') '{"fixture":"must survive backup failure"}'
+function Copy-Item {throw 'fixture backup denied'}
+$code=Invoke-BingeMoteReset
+if($code -ne 1 -or !(Test-Path (Join-Path $data 'config.json'))){throw 'Backup failure did not preserve original data'}
+Write-Host 'PASS BACKUP FAILURE: explicit stopped report, original data retained'
+Remove-Item Function:\Copy-Item
