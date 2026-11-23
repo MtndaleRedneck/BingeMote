@@ -8,6 +8,12 @@ $ids=@();$decoy='BMFinishDecoy-'+[guid]::NewGuid().ToString('N')
 $good=[pscustomobject]@{Rules=$specs}
 Assert-Manifest $good
 $bad=[pscustomobject]@{Rules=$specs;RelativeProgram='arbitrary.exe'};$blocked=$false;try{Assert-Manifest $bad}catch{$blocked=$true};if(!$blocked){throw 'Unknown manifest field accepted'}
+foreach($invalid in @(
+ [pscustomobject]@{Rules=@([pscustomobject]@{Guid=$specs[0].Guid;Protocol='TCP'},[pscustomobject]@{Guid=$specs[0].Guid;Protocol='UDP'})},
+ [pscustomobject]@{Rules=@([pscustomobject]@{Guid=123;Protocol='TCP'},$specs[1])},
+ [pscustomobject]@{Rules=@([pscustomobject]@{Guid=$specs[0].Guid;Protocol='TCP';Extra='x'},$specs[1])}
+)) {$blocked=$false;try{Assert-Manifest $invalid}catch{$blocked=$true};if(!$blocked){throw 'Invalid manifest accepted'}}
+Write-Host 'PASS duplicate GUID, nonstring field, unexpected rule field refused'
 Write-Host 'PASS fixed-path manifest schema and extra-field refusal'
 try{
  foreach($s in $specs){$id=$s.Protocol+' Query User{'+$s.Guid+'}'+(Join-Path $profile 'downloads\bingemotehelper-v1.0.1.exe').ToLowerInvariant();$ids+=$id;New-NetFirewallRule -Name $id -DisplayName 'bingemotehelper-v1.0.1.exe' -Program (Join-Path $profile 'downloads\bingemotehelper-v1.0.1.exe') -Protocol $s.Protocol -Direction Inbound -Action Allow|Out-Null}

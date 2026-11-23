@@ -14,9 +14,12 @@ function Assert-Target($Rule,$App,$Port,$Spec,[string]$Profile) {
     if ([string]$Port.Protocol -notin $expected) {throw 'Selected rule protocol mismatch.'}
 }
 function Assert-Manifest($Manifest) {
+    if ($Manifest -isnot [pscustomobject] -or $Manifest.Rules -isnot [array]) {throw 'Manifest must be an object with a Rules array.'}
     if ((@($Manifest.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'Rules') {throw 'Unexpected manifest schema; fixed Downloads helper path only.'}
     if (@($Manifest.Rules).Count -ne 2 -or (@($Manifest.Rules.Protocol | Sort-Object)-join ',') -cne 'TCP,UDP') {throw 'Expected exactly TCP and UDP targets.'}
+    if (@($Manifest.Rules.Guid | Sort-Object -Unique).Count -ne 2) {throw 'Duplicate selected GUID refused.'}
     foreach($r in $Manifest.Rules) {
+        if ($r -isnot [pscustomobject] -or $r.Guid -isnot [string] -or $r.Protocol -isnot [string]) {throw 'Rule fields must be strings.'}
         if ((@($r.PSObject.Properties.Name | Sort-Object)-join ',') -cne 'Guid,Protocol') {throw 'Unexpected rule schema.'}
         if($r.Guid -notmatch '^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$'){throw 'Invalid rule GUID.'}
     }
