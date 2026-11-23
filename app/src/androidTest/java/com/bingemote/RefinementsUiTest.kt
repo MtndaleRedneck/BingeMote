@@ -20,6 +20,8 @@ class RefinementsUiTest {
             .putExtra("screen", screen).putExtra("pcdemo", "true").putExtra("statuscase", "cur-g"))
     }
     @Test fun yourPcCaptionAndPairButtonFit() {
+        // Model an existing paired install, not the prior test's empty token.
+        Store(ctx).helperToken = "fixture-paired-token"
         launch("yourpc")
         val caption = device.wait(Until.findObject(By.text("Attempting to reconnect in the background")), 10000)
         assertNotNull("caption missing/truncated", caption)
@@ -31,6 +33,7 @@ class RefinementsUiTest {
         assertTrue(device.hasObject(By.text("Only needed for a new phone, or if this phone was removed on the PC.")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-yourpc.png"))
         button.click()
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-after-pair-tap.png"))
         assertTrue("Pair again lost action", device.wait(Until.hasObject(By.text("Find your PC")), 5000))
     }
     @Test fun oldRingPreferenceRemovedAndFlashPreserved() {
@@ -51,6 +54,8 @@ class RefinementsUiTest {
         assertTrue("Button flash removed", device.hasObject(By.text("Button flash")))
         assertFalse("retired selector remains", device.hasObject(By.text("Cancel button style")))
         assertTrue(device.hasObject(By.text("Skip rings only")))
+        device.swipe(device.displayWidth/2, device.displayHeight*4/5, device.displayWidth/2, device.displayHeight*3/5, 20)
+        Thread.sleep(300)
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-settings.png"))
     }
 }

@@ -57,6 +57,7 @@ class NotificationTapMatrixTest {
     }
     private fun currentRow(): View {
         val nm = ctx.getSystemService(NotificationManager::class.java)
+        await("active notification posted") { nm.activeNotifications.any { it.packageName == ctx.packageName } }
         val n = nm.activeNotifications.single { it.packageName == ctx.packageName }.notification
         lateinit var row: View
         inst.runOnMainSync { row = n.contentView.apply(ctx, FrameLayout(ctx)) }
