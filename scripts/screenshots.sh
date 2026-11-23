@@ -1,6 +1,9 @@
 set -euo pipefail
 mkdir -p screenshots
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+# The demo bar posts a notification; on API 33+ notify() is silently dropped
+# without the runtime grant, so shade captures showed no bar at all.
+adb shell pm grant com.bingemote android.permission.POST_NOTIFICATIONS
 dismiss_anr() { # tap "Wait" if an "isn't responding" system dialog is up
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 0
   adb shell cat /sdcard/ui.xml | grep -q "isn't responding" || return 0
