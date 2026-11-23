@@ -99,7 +99,7 @@ internal static class Subtitles
         // its process lifetime so cached track IDs never bind to a later instance.
         var processes = System.Diagnostics.Process.GetProcessesByName("vlc");
         try {
-            if (enumerate && processes.Length != 1) return null;
+
             id += "|port:" + port + "|" + string.Join("|",processes.Select(p => {
                 try { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
                 catch { return p.Id + ":unknown"; }
@@ -107,6 +107,7 @@ internal static class Subtitles
         } finally { foreach (var process in processes) process.Dispose(); }
         if (!enumerate || !uri.IsFile || uri.IsUnc)
             return new Snapshot(Hash((uri.IsFile && !uri.IsUnc ? uri.LocalPath.ToUpperInvariant() : uri.AbsoluteUri) + "|" + id), "", Array.Empty<Candidate>(), false);
+        if (processes.Length != 1) return new Snapshot(Hash(uri.LocalPath.ToUpperInvariant() + "|" + id), "", Array.Empty<Candidate>(), false);
         return SnapshotFor(root, uri.LocalPath, id) ?? new Snapshot(Hash(uri.LocalPath.ToUpperInvariant() + "|" + id), uri.LocalPath, Array.Empty<Candidate>(), false);
     }
     internal static async Task<string> Media(int port, string password) {

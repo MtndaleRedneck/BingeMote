@@ -209,6 +209,7 @@ class RemoteState(
                 lastTitle = s.title; lastLengthSec = s.lengthSec
                 subtitleRequest++
                 subtitleListRequest++
+                subtitleListLoading = false
                 subtitleMutationLoading = false
                 pickedSubtitle = null
                 pickedSubtitleFile = null
@@ -440,8 +441,8 @@ class RemoteState(
             try {
                 val folder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
-                    if (confirmedSubtitleMedia != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
-                    if (!folder.unavailable) {
+                    if (!folder.unavailable && folder.mediaId.isNotEmpty() && confirmedSubtitleMedia != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
+                    if (!folder.unavailable && folder.mediaId.isNotEmpty()) {
                         if (confirmedSubtitleMedia != folder.mediaId) {
                             subtitleOutcomeUnknown = false; uncertainFolderMedia = null; subtitleMutationError = null
                         }
@@ -495,12 +496,14 @@ class RemoteState(
                 } }
             } catch (_: Exception) {
                 scope.launch {
-                    if (request == subtitleRequest) {
+                    // A newer intent can hide an old success, but cannot erase an
+                    // uncertain mutation that may already have reached VLC.
+                    if (confirmedSubtitleMedia == null || confirmedSubtitleMedia == folder.mediaId) {
                         subtitleOutcomeUnknown = true
                         uncertainFolderMedia = folder.mediaId
                         subtitleMutationError = "Couldn't confirm the file load. Existing subtitle controls are still available."
-                        subtitleMutationLoading = false
                     }
+                    if (request == subtitleRequest) subtitleMutationLoading = false
                 }
             }
         })
@@ -536,11 +539,11 @@ class RemoteState(
                 } }
             } catch (_: Exception) {
                 scope.launch {
-                    if (request == subtitleRequest) {
+                    if (mediaId == null || confirmedSubtitleMedia == null || confirmedSubtitleMedia == mediaId) {
                         subtitleOutcomeUnknown = true
                         subtitleMutationError = "Couldn't confirm the subtitle change. You can try the existing controls again."
-                        subtitleMutationLoading = false
                     }
+                    if (request == subtitleRequest) subtitleMutationLoading = false
                 }
             }
         })
