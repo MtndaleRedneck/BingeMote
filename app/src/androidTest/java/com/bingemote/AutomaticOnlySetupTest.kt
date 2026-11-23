@@ -74,8 +74,18 @@ class AutomaticOnlySetupTest {
         device.swipe(device.displayWidth / 2, device.displayHeight / 3,
             device.displayWidth / 2, device.displayHeight * 4 / 5, 25)
         Thread.sleep(400)
+        repeat(4) {
+            if (!device.hasObject(By.text("Or type the PC's address:"))) {
+                device.swipe(device.displayWidth / 2, device.displayHeight / 3,
+                    device.displayWidth / 2, device.displayHeight * 4 / 5, 20)
+                Thread.sleep(200)
+            }
+        }
+        assertTrue(device.hasObject(By.text("Or type the PC's address:")))
         val fields = device.findObjects(By.clazz("android.widget.EditText"))
-        fields.first().text = "192.0.2.20"
+        val addressField = fields.minBy { it.visibleBounds.top }
+        addressField.text = "192.0.2.20"
+        assertEquals("192.0.2.20", addressField.text)
         Thread.sleep(500)
         assertFalse(device.hasObject(By.text("Code from your PC")))
         if (device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")) device.pressBack()
