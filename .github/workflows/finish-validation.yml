@@ -1,0 +1,17 @@
+name: finish-two-rules-validation
+on:
+  push:
+    branches: [tmp/reset-source-validation]
+permissions:
+  contents: read
+jobs:
+  finite:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact synthetic rules native validation
+        shell: powershell
+        run: |
+          Write-Host "RUN $env:GITHUB_RUN_ID COMMIT $env:GITHUB_SHA"
+          ./tools/reset/Test-Finish.ps1

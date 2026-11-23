@@ -1,7 +1,5 @@
 name: reset-source-validation
 on:
-  push:
-    branches: [tmp/reset-source-validation]
   workflow_dispatch:
 permissions:
   contents: read
