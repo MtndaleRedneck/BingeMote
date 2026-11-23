@@ -616,8 +616,9 @@ Write-Host "exact installed payload file version: $payloadVersion"
 $payloadBytes = [IO.File]::ReadAllBytes($payload)
 $payloadAscii = [Text.Encoding]::UTF8.GetString($payloadBytes)
 $payloadUtf16 = [Text.Encoding]::Unicode.GetString($payloadBytes)
+$payloadUtf16Odd = [Text.Encoding]::Unicode.GetString($payloadBytes, 1, $payloadBytes.Length - 1)
 foreach ($marker in @('--dialog-shots', '--window-shot', '--osd-shot', '/ci/hold', '/ci/blockstate', 'DialogCapture', 'BlockNoticeProbe', 'BINGEMOTE_WINDOW_SHOT')) {
-    Assert (-not $payloadAscii.Contains($marker) -and -not $payloadUtf16.Contains($marker)) "test hook leaked into exact shipping payload: $marker"
+    Assert (-not $payloadAscii.Contains($marker) -and -not $payloadUtf16.Contains($marker) -and -not $payloadUtf16Odd.Contains($marker)) "test hook leaked into exact shipping payload: $marker"
     Write-Host "exact payload hook absent: $marker"
 }
 Assert ($payloadAscii.Contains('DarkDialog')) "exact payload missing production DarkDialog metadata"
