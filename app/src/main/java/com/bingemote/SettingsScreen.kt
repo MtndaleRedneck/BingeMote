@@ -262,7 +262,7 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(14.dp))
 
-        SettingsSection("Updates") {
+        SettingsSection("") {
             var checking by remember { mutableStateOf(false) }
             var result by remember {
                 mutableStateOf(if (BuildConfig.DEBUG) (context as? android.app.Activity)?.intent?.getStringExtra("updateResult") ?: "" else "")

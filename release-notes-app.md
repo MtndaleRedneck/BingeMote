@@ -1,6 +1,6 @@
 ## v1.12.14
 
-- "You're up to date" appears to the right of the version number.
+- "You're up to date" appears beside the version number and hides after five seconds. Removed only the redundant Updates heading.
 
 - Setup Cancel returns to Settings. Removed its bottom Back button; Android system Back still works.
 
