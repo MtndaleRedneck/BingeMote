@@ -413,23 +413,39 @@ class RemoteState(
     private var subtitleMutationError by mutableStateOf<String?>(null)
     val subtitleFileError get() = subtitleMutationError ?: subtitleListError
     private var confirmedSubtitleMedia: String? = null
-    private val subtitleWarnings = app.getSharedPreferences("subtitle-warnings", Context.MODE_PRIVATE)
+    private val subtitleJournal = SubtitleJournal(app)
     private val subtitleWarningKey: String get() = java.security.MessageDigest.getInstance("SHA-256")
         .digest(("subtitle-v1:" + store.helperToken).toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
-    var subtitleOutcomeUnknown by mutableStateOf(subtitleWarnings.contains(subtitleWarningKey)); private set
-    private var uncertainFolderMedia: String? = subtitleWarnings.getString(subtitleWarningKey,null)
-    @Volatile private var pendingSubtitleIdentity: String? = null
-    private fun persistSubtitleUnknown(media: String?, key: String = subtitleWarningKey) {
-        pendingSubtitleIdentity = media
-        if (!subtitleWarnings.edit().putString(key,media ?: "").commit())
-            throw HelperClient.SubtitleRejected("Couldn't save subtitle safety state. Try again.")
+    var subtitleOutcomeUnknown by mutableStateOf(false); private set
+    private var uncertainFolderMedia: String? = null
+    private var loadedWarningKey: String? = null
+    private fun reconcileSubtitleWarnings() {
+        val key = subtitleWarningKey
+        val records = try { subtitleJournal.entries(key) } catch (_: Exception) { listOf(SubtitleJournal.Entry("unreadable",key,"","unknown")) }
+        val media = records.firstOrNull()?.media
+        val wasUnknown = subtitleOutcomeUnknown
+        val bindingChanged = loadedWarningKey != key
+        loadedWarningKey = key
+        subtitleOutcomeUnknown = media != null
+        uncertainFolderMedia = media
+        if (bindingChanged) {
+            confirmedSubtitleMedia = null; pickedSubtitle = null; pickedSubtitleFile = null
+            subtitleFolder = null; subtitleRequest++
+        }
+        if (media != null) subtitleMutationError = "Couldn't confirm the previous subtitle change. Existing controls are still available."
+        else if (wasUnknown || bindingChanged) subtitleMutationError = null
     }
-    init { if (subtitleOutcomeUnknown) subtitleMutationError = "Couldn't confirm the previous subtitle change. Existing controls are still available." }
+    private fun beginSubtitleMutation(media: String?, key: String): String = try { subtitleJournal.begin(key,media) }
+        catch (_: Exception) { throw HelperClient.SubtitleRejected("Couldn't save subtitle safety state. Try again.") }
+    private fun finishSubtitleMutation(id: String?, unknown: Boolean) {
+        if (id != null) subtitleJournal.finish(id,unknown)
+    }
     var pickedSubtitleFile by mutableStateOf<String?>(null); private set
     @Volatile private var subtitleRequest = 0
     private var subtitleListRequest = 0
     private var subtitleListInFlight = false
+    init { reconcileSubtitleWarnings() }
 
     internal fun debugSubtitlePreview() {
         if (!BuildConfig.DEBUG) return
@@ -441,6 +457,7 @@ class RemoteState(
         pickedSubtitleFile = "demo-en"
     }
     fun refreshSubtitleFiles(quiet: Boolean = false) {
+        reconcileSubtitleWarnings()
         if (BuildConfig.DEBUG && subtitleFolder?.mediaId == "demo") return
         if (subtitleListInFlight) return
         subtitleListInFlight = true
@@ -455,8 +472,8 @@ class RemoteState(
                     if (!folder.unavailable && folder.mediaId.isNotEmpty() && confirmedSubtitleMedia != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
                     if (!folder.unavailable && folder.mediaId.isNotEmpty()) {
                         if (confirmedSubtitleMedia != folder.mediaId && uncertainFolderMedia != folder.mediaId && !uncertainFolderMedia.isNullOrEmpty()) {
-                            subtitleOutcomeUnknown = false; uncertainFolderMedia = null; subtitleMutationError = null
-                            subtitleWarnings.edit().remove(subtitleWarningKey).commit()
+                            subtitleJournal.clearOtherMedia(subtitleWarningKey,folder.mediaId)
+                            reconcileSubtitleWarnings()
                         }
                         confirmedSubtitleMedia = folder.mediaId
                     }
@@ -475,6 +492,7 @@ class RemoteState(
         }
     }
     fun loadSubtitleFile(file: HelperClient.SubtitleFile) {
+        reconcileSubtitleWarnings()
         val folder = subtitleFolder ?: return
         if (uncertainFolderMedia == folder.mediaId) {
             subtitleMutationError = "Couldn't confirm the file load. Existing subtitle controls are still available."
@@ -488,14 +506,15 @@ class RemoteState(
         // Same ordered command lane as Off/loaded-track selection. A later Off cannot
         // overtake a slow add and then be undone when that add eventually lands.
         cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
-            val hadUnknown = subtitleOutcomeUnknown
+            var journalId: String? = null
             try {
-                persistSubtitleUnknown(folder.mediaId,warningKey)
+                journalId = beginSubtitleMutation(folder.mediaId,warningKey)
                 val loaded = HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id)
-                if (!hadUnknown) subtitleWarnings.edit().remove(warningKey).commit()
+                finishSubtitleMutation(journalId,false)
                 val refreshed = if (loaded) try { HelperClient.subtitleFiles(host, port, token) } catch (_: Exception) { null } else null
                 scope.launch {
                     if (request == subtitleRequest && host == store.host && token == store.helperToken) {
+                        reconcileSubtitleWarnings()
                         if (loaded) {
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
@@ -506,19 +525,19 @@ class RemoteState(
                     }
                 }
             } catch (_: HelperClient.SubtitleRejected) {
-                if (!hadUnknown) subtitleWarnings.edit().remove(warningKey).commit()
+                finishSubtitleMutation(journalId,false)
                 scope.launch { if (request == subtitleRequest) {
                     subtitleMutationError = "That subtitle selection changed. Refresh the list and try again."
                     subtitleMutationLoading = false
                 } }
             } catch (_: Exception) {
+                finishSubtitleMutation(journalId,true)
                 scope.launch {
                     // A newer intent can hide an old success, but cannot erase an
                     // uncertain mutation that may already have reached VLC.
                     if (confirmedSubtitleMedia == null || confirmedSubtitleMedia == folder.mediaId) {
                         subtitleOutcomeUnknown = true
                         uncertainFolderMedia = folder.mediaId
-                        persistSubtitleUnknown(folder.mediaId,warningKey)
                         subtitleMutationError = "Couldn't confirm the file load. Existing subtitle controls are still available."
                     }
                     if (request == subtitleRequest) subtitleMutationLoading = false
@@ -528,6 +547,7 @@ class RemoteState(
     }
 
     fun pickSubtitle(trackId: Int) {
+        reconcileSubtitleWarnings()
         subtitleRequest++
         subtitleMutationLoading = false
         val request = subtitleRequest
@@ -538,14 +558,14 @@ class RemoteState(
         if (!subtitleOutcomeUnknown) subtitleMutationError = null
         subtitleMutationLoading = true
         cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
+            var journalId: String? = null
             var dispatched = false
             var dispatchedMedia: String? = null
-            val hadUnknown = subtitleOutcomeUnknown
             try {
                 val currentMedia = try { HelperClient.subtitleMedia(host,port,token) } catch (_: HelperClient.MissingRoute) { null }
                 if (trackId != -1 && mediaId != null && currentMedia != null && mediaId != currentMedia) throw HelperClient.SubtitleRejected("movie changed")
                 dispatchedMedia = currentMedia ?: confirmedSubtitleMedia
-                persistSubtitleUnknown(dispatchedMedia,warningKey)
+                journalId = beginSubtitleMutation(dispatchedMedia,warningKey)
                 dispatched = true
                 if (currentMedia == null || !HelperClient.selectSubtitle(host, port, token, trackId, currentMedia)) {
                     if (HelperClient.screenIsDark(host, port, token)) {
@@ -554,22 +574,22 @@ class RemoteState(
                     }
                     Vlc.setSubtitleTrack(host, vlcPort, password, trackId)
                 }
-                if (!hadUnknown) subtitleWarnings.edit().remove(warningKey).commit()
+                finishSubtitleMutation(journalId,false)
                 scope.launch {
-                    if (request == subtitleRequest) { pickedSubtitleFile = null; if (!subtitleOutcomeUnknown) pickedSubtitle = trackId; subtitleMutationLoading = false }
+                    if (request == subtitleRequest) { reconcileSubtitleWarnings(); pickedSubtitleFile = null; if (!subtitleOutcomeUnknown) pickedSubtitle = trackId; subtitleMutationLoading = false }
                 }
             } catch (_: HelperClient.SubtitleRejected) {
-                if (!hadUnknown) subtitleWarnings.edit().remove(warningKey).commit()
+                finishSubtitleMutation(journalId,false)
                 scope.launch { if (request == subtitleRequest) {
                     subtitleMutationError = "The movie or subtitle selection changed. Try again."
                     subtitleMutationLoading = false
                 } }
             } catch (_: Exception) {
+                if (dispatched) finishSubtitleMutation(journalId,true)
                 scope.launch {
                     if (dispatched && (mediaId == null || confirmedSubtitleMedia == null || confirmedSubtitleMedia == mediaId)) {
                         subtitleOutcomeUnknown = true
                         uncertainFolderMedia = dispatchedMedia
-                        persistSubtitleUnknown(dispatchedMedia,warningKey)
                         subtitleMutationError = "Couldn't confirm the subtitle change. You can try the existing controls again."
                     }
                     if (!dispatched && request == subtitleRequest) subtitleMutationError = "Can't reach the PC to change subtitles. Try again."
