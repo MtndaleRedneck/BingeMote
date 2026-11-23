@@ -264,7 +264,15 @@ fun SettingsScreen(
 
         SettingsSection("Updates") {
             var checking by remember { mutableStateOf(false) }
-            var result by remember { mutableStateOf("") }
+            var result by remember {
+                mutableStateOf(if (BuildConfig.DEBUG) (context as? android.app.Activity)?.intent?.getStringExtra("updateResult") ?: "" else "")
+            }
+            LaunchedEffect(result) {
+                if (result == "You're up to date.") {
+                    kotlinx.coroutines.delay(5000)
+                    result = ""
+                }
+            }
             val scope = rememberCoroutineScope()
             PressTile(
                 hapticsOn = haptics,

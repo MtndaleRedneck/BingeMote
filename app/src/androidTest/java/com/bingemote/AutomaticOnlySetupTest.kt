@@ -9,6 +9,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticOnlySetupTest {
+    @org.junit.Before fun dismissSystemDialogs() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val wait = device.findObject(By.text("Wait"))
+        wait?.click()
+        device.waitForIdle()
+    }
+
     @Test fun cancelReturnsToSettingsAndBottomBackIsAbsent() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         Store(ctx).setupDone = true
