@@ -38,6 +38,8 @@ try {
 } finally { foreach($id in $ids) { Remove-NetFirewallRule -Name $id -ErrorAction SilentlyContinue } }
 # Different-admin guard is tested without doing any mutation.
 $ExpectedSid='S-1-5-0';$blocked=$false;try { Invoke-BingeMoteReset } catch { $blocked=$true };Assert $blocked 'different-user elevation refused'
+foreach($d in @('D:(A;;GX;;;IU)','D:(A;;GX;;;WD)','D:(A;;GX;;;S-1-5-4)')) { Assert (Known-UrlAcl $d) 'whole known URLACL accepted' }
+foreach($d in @('D:(A;;GX;;;IU)(A;;GX;;;BA)','D:(A;;GX;;;WD)(D;;GX;;;BU)','O:BAG:BAD:(A;;GX;;;IU)','D:AI(A;;GX;;;IU)','D:(A;CI;GX;;;IU)','D:(A;;GA;;;IU)')) { Assert (!(Known-UrlAcl $d)) 'mixed/extra/flagged URLACL preserved' }
 $text="#http-password=comment`r`nextraintf=rc:http:luahttp`r`nhttp-host=0.0.0.0`r`nhttp-password=fixture`r`nvolume=123`r`n"
 $reset=Reset-VlcWebText $text
 Assert ($reset.Contains('extraintf=rc')) 'VLC unrelated rc interface retained'

@@ -69,6 +69,10 @@ function Get-RuleDecision($Rule,$App,$Port,[string[]]$InstallRoots) {
     }
     return 'keep-ambiguous'
 }
+function Known-UrlAcl([string]$Descriptor) {
+    # Entire descriptor, one GX allow ACE only. No owner/group/flags/extra ACEs.
+    return $Descriptor.Trim() -cmatch '^D:\(A;;GX;;;(?:WD|IU|S-1-1-0|S-1-5-4)\)$'
+}
 function Reset-VlcWebText([string]$Text) {
     # Comment out live host/password assignments so VLC loads its installed defaults.
     # Preserve other extra interfaces and every unrelated preference/comment.
@@ -135,9 +139,15 @@ function Invoke-BingeMoteReset {
         $url = & netsh.exe http show urlacl 2>&1
         if ($LASTEXITCODE -ne 0) { throw 'URL reservation inventory failed.' }
         $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
-        $urlBlock=[regex]::Match(($url -join "`n"),'(?ms)^\s*Reserved URL\s*:\s*http://\+:8488/\s*$(.*?)(?=^\s*Reserved URL\s*:|\z)').Value
-        $urlPresent = [bool]$urlBlock
-        $knownAcl = ($urlBlock -match 'D:\(A;;GX;;;(?:WD|IU|S-1-5-4)\)')
+        # Match the literal URL, independent of localized netsh field labels.
+        $urlPresent = [bool](($url -join "`n") -match '(?m)http://\+:8488/\s*$')
+        $knownAcl=$false
+        if ($urlPresent) {
+            $detail=& netsh.exe http show urlacl url=http://+:8488/ 2>&1
+            if ($LASTEXITCODE -ne 0) { throw 'Exact URL reservation read failed.' }
+            $descriptors=@([regex]::Matches(($detail -join "`n"),'(?m)^\s*SDDL\s*:\s*([^\r\n]+)\s*$') | ForEach-Object { $_.Groups[1].Value.Trim() })
+            $knownAcl=($descriptors.Count -eq 1 -and (Known-UrlAcl $descriptors[0]))
+        }
         $regRoots = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall')
         $uninstall = @()
         foreach ($rr in $regRoots) {
