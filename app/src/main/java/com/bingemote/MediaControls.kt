@@ -221,9 +221,22 @@ class MediaControlsService : Service() {
         /** Debug-only barrier before atomic poll commit, never a production hook. */
         internal var beforePollCommit: (() -> Unit)? = null
         internal var beforePlaybackDelivery: (() -> Unit)? = null
+        internal var afterPollAttempt: (() -> Unit)? = null
+        internal var beforePollFailure: (() -> Unit)? = null
     }
 
-    private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
+    private suspend fun pollOnce() = pollMutex.withLock {
+        try { pollBody() } finally { if (BuildConfig.DEBUG) afterPollAttempt?.invoke() }
+    }
+    private fun recordPollFailure(epoch: Long) {
+        if (BuildConfig.DEBUG) beforePollFailure?.invoke()
+        synchronized(this@MediaControlsService) {
+            if (epoch != pollVersion.get() || pendingPlayback > 0) return
+            lastConnectedAt = 0L
+            failures++
+            if (failures >= 5) stopSelf()
+        }
+    }
     private suspend fun pollBody() {
         // 1.12.4: guard the WHOLE body. On 1.12.3 only the VLC call was protected, so
         // one bad state push or notification post threw out of the poll coroutine and
@@ -243,15 +256,10 @@ class MediaControlsService : Service() {
             } catch (e: Vlc.BadAuth) {
                 // The one automatic heal: adopt the PC's current password once; never push ours.
                 if (VlcAuthRepair.tryHealOnce(store)) { return } // the next poll uses it
-                lastConnectedAt = 0L
-                failures++
-                        if (failures >= 5) { stopSelf() }
+                recordPollFailure(epoch)
                 return
             } catch (e: Exception) { if (e is CancellationException) throw e;
-                lastConnectedAt = 0L
-                failures++
-                        // VLC gone for good: drop the controls rather than pose over a dead player.
-                if (failures >= 5) { stopSelf() }
+                recordPollFailure(epoch)
                 return
             }
             if (epoch != pollVersion.get()) return
