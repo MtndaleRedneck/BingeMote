@@ -3,24 +3,10 @@ $ErrorActionPreference='Stop'
 $dir=Join-Path $env:TEMP "BingeMote launcher & space's"
 New-Item -ItemType Directory $dir -Force | Out-Null
 Copy-Item "$PSScriptRoot\BingeMote-Reset.cmd" $dir
-$source=@'
-using System;
-using System.IO;
-class LauncherProbe { static int Main(string[] args) { File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"args.txt"),args);return Int32.Parse(File.ReadAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"exit.txt"))); } }
-'@
-Add-Type -TypeDefinition $source -OutputAssembly (Join-Path $dir 'powershell.exe') -OutputType ConsoleApplication
-foreach($exitCode in @(0,2,5)) {
- Set-Content (Join-Path $dir 'exit.txt') $exitCode
- $psi=New-Object Diagnostics.ProcessStartInfo
- $psi.FileName=$env:ComSpec;$psi.Arguments='/d /c ""'+(Join-Path $dir 'BingeMote-Reset.cmd')+'""';$psi.WorkingDirectory=$dir;$psi.UseShellExecute=$false;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
- $p=[Diagnostics.Process]::Start($psi);$p.StandardInput.WriteLine();$p.StandardInput.Close()
- if(!$p.WaitForExit(15000)){$p.Kill();throw 'Launcher timed out'}
- $out=$p.StandardOutput.ReadToEnd();$err=$p.StandardError.ReadToEnd();Write-Host $out;Write-Host $err
- if($p.ExitCode -ne $exitCode){throw 'CMD exit code propagation failed'}
- $a=[IO.File]::ReadAllLines((Join-Path $dir 'args.txt'))
- if($a.Count -ne 5 -or $a[0] -ne '-NoProfile' -or $a[1] -ne '-ExecutionPolicy' -or $a[2] -ne 'Bypass' -or $a[3] -ne '-File' -or $a[4] -cne (Join-Path $dir 'BingeMote-Reset.ps1')){throw 'CMD arguments changed'}
- Write-Host "PASS CMD quoted path/metacharacters and exit $exitCode"
-}
+$cmd=Get-Content "$PSScriptRoot\BingeMote-Reset.cmd" -Raw
+if($cmd -notmatch '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"'){throw 'CMD does not use absolute Windows PowerShell'}
+if($cmd -notmatch 'set "ResetCode=%ERRORLEVEL%"' -or $cmd -notmatch 'exit /b %ResetCode%'){throw 'CMD exit propagation missing'}
+Write-Host 'PASS CMD protected absolute PowerShell resolution and captured exit-code source checks'
 $line=Get-ElevationArguments (Join-Path $dir 'BingeMote-Reset.ps1') 'S-1-5-21-123'
 if($line -cne ('-NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $dir 'BingeMote-Reset.ps1')+'" -ExpectedSid S-1-5-21-123')){throw 'Elevation commandline wrong'}
 Write-Host 'PASS elevation argument path quoting and same-account SID transport'

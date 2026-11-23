@@ -87,7 +87,9 @@ function Reset-VlcWebText([string]$Text) {
     return ($result -join '')
 }
 function Native-Checked([string]$Exe,[string[]]$Arguments) {
-    & $Exe @Arguments | Out-Host
+    $nativePath=Join-Path ([Environment]::SystemDirectory) $Exe
+    if ($Exe -notin @('icacls.exe','reg.exe','netsh.exe')) { throw 'Unapproved native command.' }
+    & $nativePath @Arguments | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "$Exe failed, exit $LASTEXITCODE" }
 }
 function Invoke-BingeMoteReset {
@@ -227,6 +229,15 @@ function Invoke-MachineReset {
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if (!$ExpectedSid -or $sid -ne $ExpectedSid) { throw 'Different account at elevation. Machine phase refused.' }
     if (!(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Machine phase requires elevation.' }
+    # Resolve Windows modules only from protected system installation directories.
+    $sys=[Environment]::SystemDirectory
+    $windowsModules=Join-Path $sys 'WindowsPowerShell\v1.0\Modules'
+    $env:PSModulePath=$windowsModules+';'+(Join-Path $PSHOME 'Modules')
+    $env:PATH=$sys+';'+[Environment]::GetFolderPath('Windows')
+    foreach($module in @('NetSecurity','ScheduledTasks','CimCmdlets','Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Security')) {
+        $base=if($module -eq 'NetSecurity' -or $module -eq 'ScheduledTasks'){ $windowsModules }else{ Join-Path $PSHOME 'Modules' }
+        Import-Module (Join-Path $base ($module+'\'+$module+'.psd1')) -Force -ErrorAction Stop
+    }
     # This worker never opens, backs up, modifies or deletes ANY user-profile file.
     $profileKey='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\'+$sid
     $profile=[Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath $profileKey).ProfileImagePath)
@@ -266,13 +277,13 @@ function Invoke-MachineReset {
         }
         $rulePlan | Export-Clixml -LiteralPath (Join-Path $backup 'firewall-plan.xml')
         Native-Checked netsh.exe @('advfirewall','export',(Join-Path $backup 'firewall-before.wfw'))
-        $url=& netsh.exe http show urlacl 2>&1
+        $url=& (Join-Path ([Environment]::SystemDirectory) 'netsh.exe') http show urlacl 2>&1
         if($LASTEXITCODE -ne 0){throw 'URLACL inventory failed.'}
         $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
         $urlPresent=[bool](($url -join "`n") -match '(?m)http://\+:8488/\s*$')
         $knownAcl=$false
         if($urlPresent) {
-            $detail=& netsh.exe http show urlacl url=http://+:8488/ 2>&1
+            $detail=& (Join-Path ([Environment]::SystemDirectory) 'netsh.exe') http show urlacl url=http://+:8488/ 2>&1
             if($LASTEXITCODE -ne 0){throw 'Exact URLACL inventory failed.'}
             $d=@([regex]::Matches(($detail -join "`n"),'(?m)^\s*SDDL\s*:\s*([^\r\n]+)\s*$') | ForEach-Object {$_.Groups[1].Value.Trim()})
             $knownAcl=($d.Count -eq 1 -and (Known-UrlAcl $d[0]))
@@ -317,7 +328,8 @@ if ($MyInvocation.InvocationName -ne '.') {
             $code=Invoke-BingeMoteReset
             if($code -eq 0) {
                 $argLine=(Get-ElevationArguments $PSCommandPath $ExpectedSid)+' -MachineOnly'
-                $child=Start-Process powershell.exe -Verb RunAs -ArgumentList $argLine -PassThru -Wait
+                $trustedPowerShell=Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
+                $child=Start-Process $trustedPowerShell -Verb RunAs -ArgumentList $argLine -PassThru -Wait
                 $code=$child.ExitCode
                 if($code -eq 0){Write-Host 'BINGEMOTE RESET COMPLETE. Install the current PC app to set up again.' -ForegroundColor Green}
                 else{Write-Host 'MACHINE PHASE INCOMPLETE. Do not assume a cold setup.' -ForegroundColor Yellow}
