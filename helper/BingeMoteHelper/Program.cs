@@ -2120,6 +2120,10 @@ internal static class ConfirmDialog
         dlg.Controls.Add(body);
         dlg.Controls.Add(yes);
         dlg.Controls.Add(no);
+        yes.TabIndex = 1;
+        no.TabIndex = 0;
+        dlg.ActiveControl = no;
+        dlg.Shown += (_, _) => no.Select();
         dlg.AcceptButton = no; // Enter on a destructive prompt must mean No
         dlg.CancelButton = no;
         answer = dlg.ShowDialog(owner) == DialogResult.OK;

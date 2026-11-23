@@ -32,7 +32,8 @@ internal static class DialogCapture
                     int hr = DwmGetWindowAttribute(dlg.Handle, 20, out int dark, sizeof(int));
                     File.WriteAllText(Path.Combine(directory, "dialog-" + name + ".txt"), $"darkTitleBar={dark}; hresult={hr}; type={dlg.GetType().Name}; size={dlg.Size}");
                     if (hr != 0 || dark != 1) throw new Exception("Dark native title-bar attribute not applied");
-                    if (name == "confirm" && dlg.AcceptButton != dlg.CancelButton) throw new Exception("Destructive confirmation lost safe Enter default");
+                    if (name == "confirm" && (dlg.AcceptButton != dlg.CancelButton || dlg.ActiveControl != dlg.CancelButton))
+                        throw new Exception("Destructive confirmation lost safe initial Cancel focus");
                     using var bitmap = new Bitmap(dlg.Width, dlg.Height);
                     using (var g = Graphics.FromImage(bitmap))
                     {
