@@ -1,0 +1,23 @@
+name: reset-source-validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors=$null
+          $null=[Management.Automation.Language.Parser]::ParseFile("$pwd/tools/reset/BingeMote-Reset.ps1",[ref]$null,[ref]$errors)
+          if($errors){$errors|Format-List;throw 'Parse errors'}
+      - name: Finite safety and native NetSecurity tests
+        shell: powershell
+        run: ./tools/reset/Test-Reset.ps1
+      - name: Disposable full reset and failed-read fixtures
+        shell: powershell
+        run: ./tools/reset/Test-FullReset.ps1
