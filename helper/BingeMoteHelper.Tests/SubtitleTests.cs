@@ -59,6 +59,7 @@ public class SubtitleTests : IDisposable
                 var repeat = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200,repeat.status);
                 using var p2 = JsonDocument.Parse(repeat.body); Assert.Equal(proof.RootElement.GetProperty("trackIds").ToString(),p2.RootElement.GetProperty("trackIds").ToString());
                 var stale = await Subtitles.Load(root,8099,"fixture",new string('F',64),id); Assert.Equal(409,stale.status);
+
             }
         } finally { if (!process.HasExited) { process.Kill(true); process.WaitForExit(); } }
     }
@@ -68,7 +69,18 @@ public class SubtitleTests : IDisposable
         using var valid = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"trackId\":-1}"));
         Assert.Contains("trackId",await HttpServer.ReadBoundedBody(valid));
     }
-    [Fact] public async Task RealVlcSlowLoadThenOffLeavesOffFinal() {
+    private sealed class SlowBody : MemoryStream {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) {
+            await Task.Delay(10000); return 0;
+        }
+    }
+    [Fact] public async Task RequestBodyHasTotalDeadlineEvenIfStreamIgnoresCancellation() {
+        using var slow = new SlowBody();
+        var started=Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>HttpServer.ReadBoundedBody(slow));
+        Assert.InRange(started.Elapsed.TotalSeconds,4,7);
+    }
+    [Fact] public async Task DelayedSelectThenOffUsesSameGateInOrder() {
         // A delayed fake VLC models a sidecar command continuing after the phone
         // has stopped waiting. Select must wait on the same server mutation gate.
         using var listener = new System.Net.HttpListener();

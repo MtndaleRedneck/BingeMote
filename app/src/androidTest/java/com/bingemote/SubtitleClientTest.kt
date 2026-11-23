@@ -79,7 +79,7 @@ class SubtitleClientTest {
     }
     @Test fun oversizedSubtitleResponseIsRejected() {
         Stub().use { stub ->
-            stub.responseBytes = 131073
+            stub.responseBytes = 524289
             try { HelperClient.subtitleFiles("127.0.0.1",stub.port,"fixture"); fail("oversize accepted") }
             catch (_: HelperClient.Unreachable) { }
         }
@@ -96,6 +96,50 @@ class SubtitleClientTest {
             val port=absent.localPort;absent.close()
             try { HelperClient.selectSubtitle("127.0.0.1",port,"fixture",-1);fail("unreachable accepted") }
             catch (_: Exception) { }
+        }
+    }
+
+    @Test fun quietRefreshCoalescesSlowListingInsteadOfStarvingIt() = runBlocking {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        Stub().use { stub ->
+            stub.delayMs=3000
+            HapticTickTest.seedPrefs(ctx,false,stub.port)
+            val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
+            try {
+                val remote=RemoteState(ctx,store,scope)
+                withContext(Dispatchers.Main){remote.refreshSubtitleFiles()}
+                delay(2000)
+                withContext(Dispatchers.Main){remote.refreshSubtitleFiles(quiet=true)}
+                delay(1400)
+                assertEquals("opaque-movie",remote.subtitleFolder?.mediaId)
+                assertEquals(1,stub.requests.size)
+                assertFalse(remote.subtitleFilesLoading)
+            } finally {scope.cancel()}
+        }
+    }
+
+    @Test fun pendingSubtitleChoicesCoalesceToLatestOff() = runBlocking {
+        val ctx=InstrumentationRegistry.getInstrumentation().targetContext
+        Stub().use { stub ->
+            HapticTickTest.seedPrefs(ctx,false,stub.port)
+            val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
+            try {
+                val remote=RemoteState(ctx,store,scope)
+                withContext(Dispatchers.Main){remote.refreshSubtitleFiles()}
+                delay(300)
+                stub.delayMs=2800
+                withContext(Dispatchers.Main){remote.pickSubtitle(1)}
+                delay(300)
+                withContext(Dispatchers.Main){remote.pickSubtitle(2);remote.pickSubtitle(3);remote.pickSubtitle(-1)}
+                delay(6500)
+                val selects=stub.requests.filter{it.startsWith("POST /subtitles/select")}
+                assertEquals(2,selects.size)
+                assertTrue(selects.last().contains("\"trackId\":-1"))
+                assertEquals(-1,remote.pickedSubtitle)
+                assertFalse(remote.subtitleFilesLoading)
+            } finally {scope.cancel()}
         }
     }
 

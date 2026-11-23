@@ -148,13 +148,13 @@ object HelperClient {
             if (code == 404) throw MissingRoute()
             if (code == 401 || code == 403) throw BadToken("The PC rejected the pairing token.")
             if (code !in 200..299) throw Unreachable("Couldn't change subtitles. PC error $code.")
-            if (c.contentLengthLong > 131072) throw Unreachable("Subtitle response too large.")
+            if (c.contentLengthLong > 524288) throw Unreachable("Subtitle response too large.")
             val out = java.io.ByteArrayOutputStream()
             c.inputStream.use { input ->
                 val buf = ByteArray(4096)
                 while (true) {
                     val n = input.read(buf); if (n < 0) break
-                    if (out.size() + n > 131072) throw Unreachable("Subtitle response too large.")
+                    if (out.size() + n > 524288) throw Unreachable("Subtitle response too large.")
                     out.write(buf,0,n)
                 }
             }
@@ -177,14 +177,14 @@ object HelperClient {
         }, json.optBoolean("unavailable"), json.optBoolean("truncated"))
     }
     fun loadSubtitle(host: String, port: Int, token: String, mediaId: String, id: String): Boolean {
-        val json = subtitleRequest(host,port,token,"/subtitles/load",JSONObject().put("mediaId",mediaId).put("id",id),35000)
+        val json = subtitleRequest(host,port,token,"/subtitles/load",JSONObject().put("mediaId",mediaId).put("id",id),55000)
         return json.optBoolean("ok") && !json.optBoolean("woke")
     }
 
     /** False only for an explicit missing route. Never bypass an in-flight helper
      * operation with a direct VLC command after a timeout or an auth failure. */
-    fun selectSubtitle(host: String, port: Int, token: String, trackId: Int): Boolean = try {
-        val json = subtitleRequest(host,port,token,"/subtitles/select",JSONObject().put("trackId",trackId),40000)
+    fun selectSubtitle(host: String, port: Int, token: String, trackId: Int, mediaId: String = ""): Boolean = try {
+        val json = subtitleRequest(host,port,token,"/subtitles/select",JSONObject().put("trackId",trackId).put("mediaId",mediaId),40000)
         if (json.optBoolean("woke")) throw Unreachable("Screen woken. Tap the subtitle again.")
         if (!json.optBoolean("ok")) throw Unreachable("Couldn't change subtitles.")
         true

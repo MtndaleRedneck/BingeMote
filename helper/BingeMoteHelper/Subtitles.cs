@@ -93,7 +93,7 @@ internal static class Subtitles
         var current = Nodes(playlist.RootElement).Where(n => n.TryGetProperty("current", out _) && n.TryGetProperty("uri", out _)).ToArray();
         if (current.Length != 1) return null;
         var item = current[0];
-        if (!Uri.TryCreate(item.GetProperty("uri").GetString(), UriKind.Absolute, out var uri) || !uri.IsFile || uri.IsUnc) return null;
+        if (!Uri.TryCreate(item.GetProperty("uri").GetString(), UriKind.Absolute, out var uri)) return null;
         var id = item.TryGetProperty("id", out var val) ? val.ToString() : "";
         // Playlist IDs can restart from the same value after VLC restarts. Include
         // its process lifetime so cached track IDs never bind to a later instance.
@@ -102,7 +102,9 @@ internal static class Subtitles
             if (processes.Length != 1) return null;
             id += "|" + processes[0].Id + "|" + processes[0].StartTime.ToUniversalTime().Ticks;
         } finally { foreach (var process in processes) process.Dispose(); }
-        return SnapshotFor(root, uri.LocalPath, id);
+        if (!uri.IsFile || uri.IsUnc)
+            return new Snapshot(Hash(uri.AbsoluteUri + "|" + id), "", Array.Empty<Candidate>(), false);
+        return SnapshotFor(root, uri.LocalPath, id) ?? new Snapshot(Hash(uri.LocalPath.ToUpperInvariant() + "|" + id), uri.LocalPath, Array.Empty<Candidate>(), false);
     }
     internal static async Task<string> List(string root, int port, string password) {
         try {
@@ -153,7 +155,7 @@ internal static class Subtitles
     }
     // All subtitle mutations, including Off, share the same gate. The caller's HTTP
     // timeout cannot let a direct-VLC Off overtake a still-running sidecar operation.
-    internal static async Task<(int status, string body)> Select(int port, string password, int trackId) {
+    internal static async Task<(int status, string body)> Select(int port, string password, int trackId, string? root = null, string? mediaId = null) {
         if (trackId < -1) return (400, "{\"error\":\"invalid track\"}");
         var selection = Interlocked.Increment(ref latestSelection);
         if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
@@ -161,6 +163,10 @@ internal static class Subtitles
         OperationToken.Value = deadline.Token;
         try {
             if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (root != null) {
+                var current = await Current(root, port, password);
+                if (current == null || current.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
+            }
             using var response = await Get(port, password, "status.json?command=subtitle_track&val=" + trackId);
             return (200, "{\"ok\":true}");
         } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }
