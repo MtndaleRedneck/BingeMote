@@ -294,6 +294,9 @@ done
 adb shell am instrument -w -e class com.bingemote.AutomaticOnlySetupTest,com.bingemote.AutoSetupCheckTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/automatic-setup-instrument.txt
 grep -q '^OK (' screenshots/automatic-setup-instrument.txt || { echo 'ASSERT FAIL: automatic-only setup tests failed'; SEEK_FAIL=1; }
+for capture in setup-before-selection setup-selected-pc setup-selected-address; do
+  adb exec-out cat "/sdcard/bm-$capture.png" > "screenshots/$capture.png"
+done
 # Counter-region pixel proof: the seed counters after cancel/interruption must
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.
