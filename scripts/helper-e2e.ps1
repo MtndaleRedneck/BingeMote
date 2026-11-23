@@ -655,11 +655,12 @@ public static class WinScan {
     // Class-agnostic click: Pair is a ReadableButton with ControlStyles.UserPaint,
     // so BM_CLICK (a native-BUTTON-only message) is not grounded. Real mouse-down/up
     // at the client center is what WinForms turns into Click for any control.
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     public static void Click(IntPtr h) {
         RECT r; GetClientRect(h, out r);
         IntPtr lp = (IntPtr)((((r.Bottom - r.Top) / 2) << 16) | (((r.Right - r.Left) / 2) & 0xFFFF));
-        SendMessage(h, 0x0201, (IntPtr)1, lp);
-        SendMessage(h, 0x0202, IntPtr.Zero, lp);
+        PostMessage(h, 0x0201, (IntPtr)1, lp);
+        PostMessage(h, 0x0202, IntPtr.Zero, lp);
     }
     [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessageText(IntPtr h, uint msg, IntPtr w, string l);
     [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
