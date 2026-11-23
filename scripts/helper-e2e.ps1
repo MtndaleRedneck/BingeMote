@@ -606,30 +606,13 @@ if ($env:BINGEMOTE_SHIP_SHA256) {
     Write-Host "BINGEMOTE_SHIP_SHA256 unset: shipping identity assertion skipped this run"
 }
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-$shipInstall = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -Wait -PassThru
+$initialInstaller = $ship.FullName
+$prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.7.13.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($prior) { $initialInstaller = $prior.FullName; Write-Host 'Initial install: exact prior1.7.13 for paired upgrade retention' }
+$shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -Wait -PassThru
 if ($shipInstall.ExitCode -ne 0) { Get-Content shipping-install.log -Tail 40; throw "shipping install failed: $($shipInstall.ExitCode)" }
 $global:LASTEXITCODE = 0
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
-# Inspect the actual installed payload extracted by the pinned installer, not
-# compressed setup bytes or a separately built helper. The single-file bundle
-# contains the managed metadata and literals uncompressed (default publish).
-$payload = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe'
-Assert (Test-Path $payload) "pinned shipping installer did not extract helper payload"
-$payloadHash = (Get-FileHash $payload -Algorithm SHA256).Hash.ToLower()
-$payloadVersion = (Get-Item $payload).VersionInfo.FileVersion
-Write-Host "exact installed payload: $payload"
-Write-Host "exact installed payload sha256: $payloadHash"
-Write-Host "exact installed payload file version: $payloadVersion"
-$payloadBytes = [IO.File]::ReadAllBytes($payload)
-$payloadAscii = [Text.Encoding]::UTF8.GetString($payloadBytes)
-$payloadUtf16 = [Text.Encoding]::Unicode.GetString($payloadBytes)
-$payloadUtf16Odd = [Text.Encoding]::Unicode.GetString($payloadBytes, 1, $payloadBytes.Length - 1)
-foreach ($marker in @('--dialog-shots', '--window-shot', '--osd-shot', '/ci/hold', '/ci/blockstate', 'DialogCapture', 'BlockNoticeProbe', 'BINGEMOTE_WINDOW_SHOT')) {
-    Assert (-not $payloadAscii.Contains($marker) -and -not $payloadUtf16.Contains($marker) -and -not $payloadUtf16Odd.Contains($marker)) "test hook leaked into exact shipping payload: $marker"
-    Write-Host "exact payload hook absent: $marker"
-}
-Assert ($payloadAscii.Contains('DarkDialog')) "exact payload missing production DarkDialog metadata"
-Write-Host 'exact payload production DarkDialog metadata present'
 $up = $false
 foreach ($i in 1..40) {
     try {
@@ -791,6 +774,44 @@ $shipToken2 = ($r.body | ConvertFrom-Json).token
 $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
 
+# Install exact new1.7.14 over the genuinely paired prior1.7.13 state.
+Write-Host 'Exact prior1.7.13 -> pinned1.7.14 upgrade begins'
+Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+$upgrade = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-upgrade.log' -Wait -PassThru
+if ($upgrade.ExitCode -ne 0) { Get-Content shipping-upgrade.log -Tail 40; throw "exact shipping upgrade failed: $($upgrade.ExitCode)" }
+# Inspect the actual installed payload extracted by the pinned installer, not
+# compressed setup bytes or a separately built helper. The single-file bundle
+# contains the managed metadata and literals uncompressed (default publish).
+$payload = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe'
+Assert (Test-Path $payload) "pinned shipping installer did not extract helper payload"
+$payloadHash = (Get-FileHash $payload -Algorithm SHA256).Hash.ToLower()
+$payloadVersion = (Get-Item $payload).VersionInfo.FileVersion
+Write-Host "exact installed payload: $payload"
+Write-Host "exact installed payload sha256: $payloadHash"
+Write-Host "exact installed payload file version: $payloadVersion"
+$payloadBytes = [IO.File]::ReadAllBytes($payload)
+$payloadAscii = [Text.Encoding]::UTF8.GetString($payloadBytes)
+$payloadUtf16 = [Text.Encoding]::Unicode.GetString($payloadBytes)
+$payloadUtf16Odd = [Text.Encoding]::Unicode.GetString($payloadBytes, 1, $payloadBytes.Length - 1)
+foreach ($marker in @('--dialog-shots', '--window-shot', '--osd-shot', '/ci/hold', '/ci/blockstate', 'DialogCapture', 'BlockNoticeProbe', 'BINGEMOTE_WINDOW_SHOT')) {
+    Assert (-not $payloadAscii.Contains($marker) -and -not $payloadUtf16.Contains($marker) -and -not $payloadUtf16Odd.Contains($marker)) "test hook leaked into exact shipping payload: $marker"
+    Write-Host "exact payload hook absent: $marker"
+}
+Assert ($payloadAscii.Contains('DarkDialog')) "exact payload missing production DarkDialog metadata"
+Write-Host 'exact payload production DarkDialog metadata present'
+$up = $false
+foreach ($i in 1..40) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $up) { throw "shipping install-over: helper did not start listening on 8488" }
+$r = Invoke-Helper '/ping' '{}' $shipToken2
+Assert ($r.code -eq 200) "shipping upgrade: the window-paired token survives install-over"
+$r = Invoke-Helper '/pair' '{"code":"0000"}' $null
+Assert ($r.code -eq 403) "shipping upgrade: no live pair code after install-over (paired state retained)"
 # Exercise the actual installed shipping confirmation, on the disposable CI
 # phone just paired above. Cancel must have initial native focus, and physical
 # Enter/Esc must both leave the fixture's token valid.
@@ -817,21 +838,6 @@ foreach ($key in @('{ENTER}', '{ESC}')) {
     Write-Host "exact shipping $key returned Cancel; disposable paired phone retained"
 }
 
-# Shipping upgrade: install the same shipping bytes over the paired state.
-& $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "shipping install-over failed with exit $LASTEXITCODE" }
-$up = $false
-foreach ($i in 1..40) {
-    try {
-        $c = New-Object Net.Sockets.TcpClient
-        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
-    } catch { Start-Sleep -Milliseconds 500 }
-}
-if (-not $up) { throw "shipping install-over: helper did not start listening on 8488" }
-$r = Invoke-Helper '/ping' '{}' $shipToken2
-Assert ($r.code -eq 200) "shipping upgrade: the window-paired token survives install-over"
-$r = Invoke-Helper '/pair' '{"code":"0000"}' $null
-Assert ($r.code -eq 403) "shipping upgrade: no live pair code after install-over (paired state retained)"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 & $unins /VERYSILENT /NORESTART | Out-Null
