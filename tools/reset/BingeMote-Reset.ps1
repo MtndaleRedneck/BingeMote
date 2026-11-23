@@ -133,7 +133,7 @@ function Invoke-BingeMoteReset {
         $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
         $urlBlock=[regex]::Match(($url -join "`n"),'(?ms)^\s*Reserved URL\s*:\s*http://\+:8488/\s*$(.*?)(?=^\s*Reserved URL\s*:|\z)').Value
         $urlPresent = [bool]$urlBlock
-        $knownAcl = ($urlBlock -match 'D:\(A;;GX;;;(?:WD|S-1-5-4)\)')
+        $knownAcl = ($urlBlock -match 'D:\(A;;GX;;;(?:WD|IU|S-1-5-4)\)')
         $regRoots = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall')
         $uninstall = @()
         foreach ($rr in $regRoots) {
@@ -211,6 +211,7 @@ function Invoke-BingeMoteReset {
         foreach ($r in $rulePlan | Where-Object { $_.Decision -eq 'remove' }) { Remove-NetFirewallRule -PolicyStore PersistentStore -Name $r.ID }
         if ($urlPresent) {
             $listener=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq 8488 })
+            Write-Host ('URLACL safety check: known install='+$hadInstall+' known SDDL='+$knownAcl+' remaining listeners='+$listener.Count)
             if ($hadInstall -and $knownAcl -and !$listener.Count) { Native-Checked netsh.exe @('http','delete','urlacl','url=http://+:8488/') }
             else { $issues.Add('Preserved URL reservation: ownership/listener could not be established after stopping BingeMote.') }
         }
