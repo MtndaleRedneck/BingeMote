@@ -185,14 +185,14 @@ private fun HomeContent(
     ) {
         Column {
             Text(
-                if (refused) "VLC refused the password" else if (lost) "Can't reach your PC" else if (vlcOut) "VLC isn't open"
+                if (refused) "VLC refused the password" else if (lost) "Trying to reconnect" else if (vlcOut) "VLC isn't open"
                 else s?.title?.let { displayName(it).ifBlank { "Nothing playing" } } ?: "Nothing playing",
                 color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold,
                 maxLines = 2,
             )
             Text(
                 if (refused) "If you changed it on the PC, re-pair in Settings or set it back by hand"
-                else if (lost) "Trying to reconnect"
+                else if (lost) "Make sure both devices are on the same network"
                 else if (vlcOut) "Pick a film in Movies and it starts by itself"
                 else when (s?.state) {
                     "playing" -> "Playing"
