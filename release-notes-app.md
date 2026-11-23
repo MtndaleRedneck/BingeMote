@@ -1,5 +1,7 @@
 ## v1.12.14
 
+- Pair-code entry appears after selecting a discovered PC or confirming a typed address. Discovery errors stay with PC selection.
+
 - Removed manual VLC configuration and password-entry setup. Pairing handles setup; the manual PC-address option remains.
 
 - The "Trying to reconnect" banner now reads "Both devices need to be on the same network", tightened slightly so it fits on one line.
