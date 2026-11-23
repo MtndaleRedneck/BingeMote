@@ -14,7 +14,7 @@ data class DiscoveredHelper(val host: String, val port: Int, val name: String)
 
 /**
  * Client for the BingeMote Windows helper: mouse, scroll, zoom and keyboard over LAN HTTP.
- * Every request carries the pairing token. Pairing trades a one-time 6-digit code
+ * Every request carries the pairing token. Pairing trades a one-time code
  * (shown on the PC) for the token. HTTP is not encrypted. Use only on a trusted private network;
  * a device on that network could observe the token and input.
  */
@@ -212,7 +212,7 @@ object HelperClient {
         post(host, port, "/config", JSONObject().put("moviesFolder", folder), token)
 
     /**
-     * Trade a one-time 6-digit code (shown on the PC) for the long-lived pairing token.
+     * Trade a one-time code (shown on the PC) for the long-lived pairing token.
      * Returns the token and the PC's name.
      */
     /** What a successful pairing returns. vlcPassword/vlcPending exist on helper 1.7+:

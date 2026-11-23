@@ -107,8 +107,6 @@ fun FeedbackScreen(scrollState: ScrollState, onBack: () -> Unit) {
 
         SettingsSection("What will be sent") {
             Text(Feedback.preview(text, c), color = Muted, fontSize = 13.sp, lineHeight = 19.sp)
-            Spacer(Modifier.height(8.dp))
-            Text("No PC name, Wi-Fi names, paired phone names, or file paths are included. Nothing is sent until you tap a button below, and then it opens in your browser for you to review and submit.", color = Muted, fontSize = 12.sp, lineHeight = 17.sp)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -129,12 +127,6 @@ fun FeedbackScreen(scrollState: ScrollState, onBack: () -> Unit) {
                 if (text.isBlank()) Toast.makeText(ctx, "Write your message first.", Toast.LENGTH_SHORT).show()
                 else open(Feedback.formUrl(text, c))
             }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        // Done is just Back: a quiet text button, not a third orange button competing with the two send buttons.
-        androidx.compose.material3.TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Text("Done", color = Muted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

@@ -1,3 +1,10 @@
+## v1.12.13
+
+- Pairs with the PC's new 4-digit codes, and still works with 6-digit codes from an older PC
+- One orange everywhere in Settings - the chips, toggles and pills had drifted into slightly different shades
+- Sharper circles: the settings toggle ball and the play/pause ring now render cleanly at every screen density
+- Feedback screen tidied: the extra explanation lines and the Done button are gone (Back still works)
+
 ## v1.12.2
 
 - When the PC's screen is off, the first press of any button only brings the screen back - the press itself does nothing. The next press works as usual

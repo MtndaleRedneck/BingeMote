@@ -120,10 +120,8 @@ internal static class Program
     internal static string? LastRunVersion;
     /// <summary>A newer published helper version, found by the background update check.</summary>
     internal static (string Version, string ExeUrl, string? Sha256)? AvailableUpdate;
-    internal static DateTime PairCodeExpires = DateTime.MinValue;
     internal static int PairFailures;
     internal const int MaxPairFailures = 5;
-    internal static readonly TimeSpan PairCodeLifetime = TimeSpan.FromMinutes(10);
 
     [STAThread]
     private static int Main(string[] args)
@@ -265,7 +263,7 @@ internal static class Program
             LastRunVersion = VersionText;
             SaveConfig();
         }
-        Log("Started. " + (!Paired ? "Not paired - showing a pairing code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
+        Log("Started. " + (!Paired ? "Not paired - open the window and tap Pair to get a code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
         try { RegisterApplicationRestart("/restarted", 0); } catch { } // crash or hang: Windows relaunches us
 
@@ -291,23 +289,16 @@ internal static class Program
         ResumeTracker.Start();
         }
 
-        // A live pairing code is a way in, so one exists only when this PC still needs
-        // pairing. After pairing, a new code comes only from the window's Pair button.
+        // A live pairing code is a way in, so one comes only from the window's Pair button,
+        // never from startup. The fixed-code hook below exists only for CI's own copy.
         var overrideCode = Environment.GetEnvironmentVariable("BINGEMOTE_PAIR_CODE");
 #if !PAIR_CODE_HOOK
         // Shipped builds never honor a fixed code. CI defines PAIR_CODE_HOOK for its own copy.
         overrideCode = null;
 #endif
-        if (overrideCode is { Length: 6 } && overrideCode.All(char.IsDigit))
+        if (overrideCode is { Length: 4 } && overrideCode.All(char.IsDigit))
         {
             PairCode = overrideCode;
-            PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
-        }
-        else if (!Paired)
-        {
-            PendingPhoneName = null;
-            PairCode = NewPairCode();
-            PairCodeExpires = DateTime.UtcNow + PairCodeLifetime;
         }
 
         using var http = new HttpServer();
@@ -373,7 +364,7 @@ internal static class Program
         return null;
     }
 
-    internal static string NewPairCode() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+    internal static string NewPairCode() => RandomNumberGenerator.GetInt32(0, 10_000).ToString("D4");
 
     internal static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
@@ -635,7 +626,6 @@ internal sealed class HelperWindow : Form
     private readonly Label _code;
     private readonly Label _codeNote;
     private readonly Button _cancelPair;
-    private bool _codeExpired;
     private readonly Label _phonesHeader;
     private readonly FlowLayoutPanel _phoneList;
     private readonly Button _removeAll;
@@ -688,14 +678,14 @@ internal sealed class HelperWindow : Form
         _pairHeader = Header("Pair new phone", margin, y); y += 20 + 12;
         _firstRun = new LinkLabel
         {
-            Text = "New here? Get the BingeMote app on your phone, then give the phone a name and tap Pair.",
+            Text = "Get the BingeMote app on your phone. Connect your phone to the same home network as this PC, then enter a name for the phone and click Pair.",
             Font = new Font("Segoe UI", 8f),
             AutoSize = true, Left = margin, Top = y,
             // Wrap inside the content width instead of running past the right margin.
             MaximumSize = new Size(contentW, 0),
             LinkColor = Orange, ActiveLinkColor = Orange, VisitedLinkColor = Orange,
         };
-        _firstRun.Links.Add(18, 13, "https://mtndaleredneck.github.io/BingeMote/");
+        _firstRun.Links.Add(8, 13, "https://mtndaleredneck.github.io/BingeMote/");
         _firstRun.LinkClicked += (_, e) =>
         {
             try { Process.Start(new ProcessStartInfo((string)e.Link!.LinkData!) { UseShellExecute = true }); } catch { }
@@ -746,7 +736,7 @@ internal sealed class HelperWindow : Form
         };
         _code = new Label
         {
-            Text = Program.PairCode ?? "------",
+            Text = Program.PairCode ?? "----",
             Font = new Font("Consolas", 15, FontStyle.Bold),
             ForeColor = Orange,
             AutoSize = true, Left = margin + 98, Top = y,
@@ -758,7 +748,7 @@ internal sealed class HelperWindow : Form
         y += 28 + 6;
         _codeNote = new Label
         {
-            Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.",
+            Text = "Enter this code in the BingeMote app on your phone. Works once.",
             Font = new Font("Segoe UI", 8),
             AutoSize = false, Left = margin, Top = y, Width = contentW,
             Visible = false,
@@ -1192,7 +1182,7 @@ internal sealed class HelperWindow : Form
         // Re-assert the final first-run state and re-run layout right before the shot:
         // whatever order the strip/phones events landed in, this is the settled state
         // a real desktop reaches after OnLoad.
-        _firstRun.Visible = Program.PhonesCount == 0;
+        _firstRun.Visible = true;
         ApplyLayout();
         Application.DoEvents();
         // Capture 1: DWM-composed (PW_RENDERFULLCONTENT) so cue banners and
@@ -1251,32 +1241,18 @@ internal sealed class HelperWindow : Form
         Close();
     }
 
-    /// <summary>Roll an expired pairing code (window-visible work).</summary>
+    /// <summary>Show or hide the pairing code block (window-visible work).</summary>
     private void TickStatus()
     {
-        if (Program.PairCode != null && DateTime.UtcNow > Program.PairCodeExpires)
-        {
-            // Stop at expiry instead of rolling a new code forever: the typed name goes back
-            // into the box (Pair re-enables) and the note says what happened.
-            var name = Program.PendingPhoneName;
-            Program.PairCode = null;
-            Program.PendingPhoneName = null;
-            if (!string.IsNullOrEmpty(name) && _nameBox.Text.Trim().Length == 0) _nameBox.Text = name;
-            _codeExpired = true;
-            Program.Log("Pairing code expired - showing \"Code expired\" until Pair is tapped again.");
-        }
-        _code.Text = Program.PairCode ?? "------";
-        // The block shows a live code (caption, code, Cancel, note) or the expired note alone.
+        _code.Text = Program.PairCode ?? "----";
+        // The block shows only a live code (caption, code, Cancel, note); codes never expire.
         var live = Program.PairCode != null;
-        var show = live || _codeExpired;
-        if (show != _codeShown || live != _code.Visible)
+        if (live != _codeShown || live != _code.Visible)
         {
-            _codeShown = show;
+            _codeShown = live;
             _codeCaption.Visible = _code.Visible = _cancelPair.Visible = live;
-            _codeNote.Visible = show;
-            _codeNote.Text = live
-                ? "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes."
-                : "Code expired. Tap Pair for a new one.";
+            _codeNote.Visible = live;
+            _codeNote.Text = "Enter this code in the BingeMote app on your phone. Works once.";
             ApplyLayout();
         }
     }
@@ -1288,7 +1264,6 @@ internal sealed class HelperWindow : Form
         Program.PairCode = null;
         Program.PendingPhoneName = null;
         if (!string.IsNullOrEmpty(name) && _nameBox.Text.Trim().Length == 0) _nameBox.Text = name;
-        _codeExpired = false;
         Program.Log("Pairing canceled from the window.");
         TickStatus();
     }
@@ -1356,8 +1331,8 @@ internal sealed class HelperWindow : Form
         }
         _removeAllShown = Program.PhonesCount > 0;
         _removeAll.Visible = _removeAllShown;
-        _firstRunShown = Program.PhonesCount == 0;
-        _firstRun.Visible = _firstRunShown;
+        _firstRunShown = true;
+        _firstRun.Visible = true;
         ApplyLayout();
     }
 
@@ -1391,10 +1366,8 @@ internal sealed class HelperWindow : Form
         if (name.Length == 0) return;
         Program.PendingPhoneName = name;
         Program.PairCode = Program.NewPairCode();
-        Program.PairCodeExpires = DateTime.UtcNow + Program.PairCodeLifetime;
         Program.PairFailures = 0;
         _nameBox.Clear();
-        _codeExpired = false;
         Program.Log("Pairing code created for \"" + name + "\".");
         TickStatus();
     }
