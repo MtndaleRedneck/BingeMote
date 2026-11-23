@@ -74,6 +74,7 @@ class MediaControlsService : Service() {
     private val commandEpoch = java.util.concurrent.atomic.AtomicLong()
     private val pollVersion = java.util.concurrent.atomic.AtomicLong()
     private var pendingPlayback = 0
+    @Volatile private var destroyed = false
     private val pollMutex = Mutex()
     private var foregroundStarted = false
     private var lastRender: List<Any?>? = null
@@ -126,6 +127,7 @@ class MediaControlsService : Service() {
     }
 
     @Synchronized override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (destroyed) return START_NOT_STICKY
         if (!MediaControls.allowed(this)) {
                 stopSelf()
             return START_NOT_STICKY
@@ -169,7 +171,7 @@ class MediaControlsService : Service() {
                     pendingPlayback--
                     pollVersion.incrementAndGet()
                     lastPlaying = prev
-                    if (BuildConfig.DEBUG) playbackPostFailure?.invoke()
+                    if (BuildConfig.DEBUG) { playbackPostFailure?.invoke(); playbackCompleted?.invoke(pendingPlayback) }
                     refreshNow()
                     return START_STICKY
                 }
@@ -183,7 +185,7 @@ class MediaControlsService : Service() {
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         synchronized(this@MediaControlsService) {
-                            if (epochAtPress == commandEpoch.get()) {
+                            if (!destroyed && epochAtPress == commandEpoch.get()) {
                                 lastConnectedAt = 0L
                                 lastPlaying = prev
                                 postMediaNotification(prev, 0, 0, lastStatus?.title)
@@ -202,6 +204,7 @@ class MediaControlsService : Service() {
                         pendingPlayback--
                         pollVersion.incrementAndGet()
                     }
+                    if (BuildConfig.DEBUG) playbackCompleted?.invoke(pendingPlayback)
                     refreshNow()
                 }
                 if (BuildConfig.DEBUG && cancelBeforePlaybackStart) playbackJob.cancel()
@@ -216,7 +219,7 @@ class MediaControlsService : Service() {
     }
 
     @Volatile private var lastPlaying = false
-    private fun refreshNow() { scope.launch { pollOnce() } }
+    private fun refreshNow() { if (!destroyed) scope.launch { pollOnce() } }
 
     /** short confirmation tick on each bar button press. Honors
      * the app's "Vibrate on press" setting AND the system haptic-feedback switch;
@@ -252,6 +255,8 @@ class MediaControlsService : Service() {
         @Volatile internal var testServiceAlive = false
         internal var serviceDestroyed: (() -> Unit)? = null
         internal var requestTestPoll: (() -> Unit)? = null
+        internal var playbackCompleted: ((Int) -> Unit)? = null
+        internal var pollCommitted: (() -> Unit)? = null
     }
 
     private suspend fun pollOnce() = pollMutex.withLock {
@@ -260,7 +265,7 @@ class MediaControlsService : Service() {
     private fun recordPollFailure(epoch: Long) {
         if (BuildConfig.DEBUG) beforePollFailure?.invoke()
         synchronized(this@MediaControlsService) {
-            if (epoch != pollVersion.get() || pendingPlayback > 0) return
+            if (destroyed || epoch != pollVersion.get() || pendingPlayback > 0) return
             lastConnectedAt = 0L
             failures++
             if (failures >= 5) stopSelf()
@@ -277,6 +282,7 @@ class MediaControlsService : Service() {
                 return
             }
             val epoch = synchronized(this@MediaControlsService) {
+                if (destroyed) return
                 if (pendingPlayback > 0) {
                     if (BuildConfig.DEBUG) pendingPollSkipped?.invoke()
                     return
@@ -299,13 +305,14 @@ class MediaControlsService : Service() {
             // One monitor protects epoch validation, state mutation and the post.
             // onStartCommand takes the same monitor before its epoch bump/flip.
             synchronized(this@MediaControlsService) {
-                if (epoch != pollVersion.get() || pendingPlayback > 0) return
+                if (destroyed || epoch != pollVersion.get() || pendingPlayback > 0) return
                 failures = 0
                 lastConnectedAt = android.os.SystemClock.elapsedRealtime()
                 val playing = st.playing
                 lastStatus = st
                 lastPlaying = playing
                 postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
+                if (BuildConfig.DEBUG) pollCommitted?.invoke()
             }
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
@@ -318,6 +325,7 @@ class MediaControlsService : Service() {
     }
 
     @Synchronized private fun postMediaNotification(playing: Boolean, timeSec: Long, lengthSec: Long, title: String?) {
+        if (destroyed) return
         val config = resources.configuration
         val key = listOf(playing, title, Store(this).skipMainSec, config.uiMode, resources.displayMetrics.densityDpi)
         if (foregroundStarted && key == lastRender) return
@@ -410,6 +418,11 @@ class MediaControlsService : Service() {
     }
 
     override fun onDestroy() {
+        synchronized(this) {
+            destroyed = true
+            pollVersion.incrementAndGet()
+            commandEpoch.incrementAndGet()
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         scope.cancel()
         super.onDestroy()
