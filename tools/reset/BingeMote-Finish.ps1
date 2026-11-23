@@ -13,7 +13,16 @@ function Assert-Target($Rule,$App,$Port,$Spec,[string]$Profile) {
     $expected=if($Spec.Protocol -eq 'TCP'){@('TCP','6')}else{@('UDP','17')}
     if ([string]$Port.Protocol -notin $expected) {throw 'Selected rule protocol mismatch.'}
 }
+function Assert-Manifest($Manifest) {
+    if ((@($Manifest.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'Rules') {throw 'Unexpected manifest schema; fixed Downloads helper path only.'}
+    if (@($Manifest.Rules).Count -ne 2 -or (@($Manifest.Rules.Protocol | Sort-Object)-join ',') -cne 'TCP,UDP') {throw 'Expected exactly TCP and UDP targets.'}
+    foreach($r in $Manifest.Rules) {
+        if ((@($r.PSObject.Properties.Name | Sort-Object)-join ',') -cne 'Guid,Protocol') {throw 'Unexpected rule schema.'}
+        if($r.Guid -notmatch '^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$'){throw 'Invalid rule GUID.'}
+    }
+}
 function Invoke-Finish($Manifest) {
+    Assert-Manifest $Manifest
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if (!$ExpectedSid -or $sid -ne $ExpectedSid){throw 'Different administrator account refused.'}
     if (!(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator permission required.'}
@@ -43,6 +52,7 @@ function Invoke-Finish($Manifest) {
     & (Join-Path $sys 'netsh.exe') advfirewall export (Join-Path $backup 'firewall-before.wfw') | Out-Host
     if($LASTEXITCODE -ne 0){throw 'Firewall backup failed. Nothing removed.'}
     $plan | Select-Object Name,DisplayName,Direction,Action,Profile | Export-Clixml -LiteralPath (Join-Path $backup 'selected-rules.xml')
+    try {
     foreach($r in $plan){
         $now=Get-NetFirewallRule -PolicyStore PersistentStore -Name $r.Name
         $spec=@($Manifest.Rules | Where-Object {$now.Name.StartsWith($_.Protocol+' Query User{'+$_.Guid+'}',[StringComparison]::OrdinalIgnoreCase)})
@@ -52,6 +62,17 @@ function Invoke-Finish($Manifest) {
     }
     $remaining=@(Get-NetFirewallRule -PolicyStore PersistentStore)
     foreach($r in $plan){if(@($remaining|Where-Object {$_.Name -eq $r.Name}).Count){throw 'Selected rule remains.'}}
+    } catch {
+        Write-Host ('CLEANUP STOPPED: '+$_.Exception.Message) -ForegroundColor Red
+        Write-Host ('Local firewall recovery: '+$backup)
+        foreach($item in $plan) {
+            try {
+                $left=@(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object {$_.Name -eq $item.Name})
+                Write-Host ('Selected rule '+$item.Name+': '+$(if($left.Count){'REMAINS'}else{'ABSENT'}))
+            } catch { Write-Host ('Selected rule '+$item.Name+': STATE UNVERIFIED') }
+        }
+        return 1
+    }
     Write-Host ('Local firewall recovery: '+$backup)
     Write-Host 'TWO-RULE CLEANUP COMPLETE. No files, settings or other firewall rules were changed.' -ForegroundColor Green
     return 0
