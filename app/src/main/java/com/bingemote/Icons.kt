@@ -268,18 +268,18 @@ fun KeyboardIcon(color: Color, size: Dp = 22.dp) {
     }
 }
 
-/** Play triangle. */
+/** Play triangle. Corners slightly blunted (roundedPoly, r = 0.025w) to match
+ * the cursor/fullscreen/speaker artwork; straight sides and pointed shape kept. */
 @Composable
 fun PlayIcon(color: Color, size: Dp = 40.dp) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
-        val p = Path().apply {
-            moveTo(w * 0.34f, h * 0.20f)
-            lineTo(w * 0.34f, h * 0.80f)
-            lineTo(w * 0.82f, h * 0.50f)
-            close()
-        }
-        drawPath(p, color)
+        val pts = listOf(
+            Offset(w * 0.34f, h * 0.20f),
+            Offset(w * 0.34f, h * 0.80f),
+            Offset(w * 0.82f, h * 0.50f),
+        )
+        drawPath(roundedPoly(pts, w * 0.025f), color)
     }
 }
 
