@@ -535,10 +535,8 @@ class ImmediateFlipTest {
                 held.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
-            MediaControlsService.requestTestPoll?.invoke()
+            MediaControlsService.requestObservedPoll?.invoke { returned.countDown() }
             assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
-            // pollMutex guarantees this held network request is the sole active poll.
-            MediaControlsService.observeHeldPoll?.invoke { returned.countDown() }
             awaitServiceDestroyed(ctx)
             posts.clear()
             release.countDown()

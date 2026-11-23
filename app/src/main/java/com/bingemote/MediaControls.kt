@@ -83,7 +83,7 @@ class MediaControlsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.DEBUG) { testServiceAlive = true; requestTestPoll = { refreshNow() }; observeHeldPoll = { observer -> activePollObserver = observer } }
+        if (BuildConfig.DEBUG) { testServiceAlive = true; requestTestPoll = { refreshNow() }; requestObservedPoll = { observer -> scope.launch { pollOnce(observer) } }; observeHeldPoll = { observer -> activePollObserver = observer } }
         // A prior version's session is released when its process is replaced.
         // No new session is created here, so the row cannot supply a media token.
     }
@@ -259,13 +259,14 @@ class MediaControlsService : Service() {
         @Volatile internal var testServiceAlive = false
         internal var serviceDestroyed: (() -> Unit)? = null
         internal var requestTestPoll: (() -> Unit)? = null
+        internal var requestObservedPoll: (((() -> Unit)) -> Unit)? = null
         internal var playbackCompleted: ((Int) -> Unit)? = null
         internal var pollCommitted: (() -> Unit)? = null
     }
 
     @Volatile private var activePollObserver: (() -> Unit)? = null
-    private suspend fun pollOnce() = pollMutex.withLock {
-        activePollObserver = if (BuildConfig.DEBUG) afterPollAttempt else null
+    private suspend fun pollOnce(observer: (() -> Unit)? = null) = pollMutex.withLock {
+        activePollObserver = observer ?: if (BuildConfig.DEBUG) afterPollAttempt else null
         try { pollBody() } finally {
             val observer = activePollObserver
             activePollObserver = null
@@ -439,6 +440,6 @@ class MediaControlsService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         scope.cancel()
         super.onDestroy()
-        if (BuildConfig.DEBUG) { testServiceAlive = false; requestTestPoll = null; observeHeldPoll = null; serviceDestroyed?.invoke() }
+        if (BuildConfig.DEBUG) { testServiceAlive = false; requestTestPoll = null; requestObservedPoll = null; observeHeldPoll = null; serviceDestroyed?.invoke() }
     }
 }
