@@ -287,6 +287,10 @@ for f in cancel-inside-ring.png cancel-after-ring.png \
     echo "PULL DIAG: failed/invalid: $f ($sz bytes, $sig)"
   fi
 done
+# Automatic-only setup: keep the PC-address fallback and Done, with no manual VLC fields.
+adb shell am instrument -w -e class com.bingemote.AutomaticOnlySetupTest,com.bingemote.AutoSetupCheckTest \
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/automatic-setup-instrument.txt
+grep -q '^OK (' screenshots/automatic-setup-instrument.txt || { echo 'ASSERT FAIL: automatic-only setup tests failed'; SEEK_FAIL=1; }
 # Counter-region pixel proof: the seed counters after cancel/interruption must
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.
