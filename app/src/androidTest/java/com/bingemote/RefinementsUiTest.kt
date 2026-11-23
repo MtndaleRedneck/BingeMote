@@ -33,8 +33,8 @@ class RefinementsUiTest {
         assertTrue(device.hasObject(By.text("Only needed for a new phone, or if this phone was removed on the PC.")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-yourpc.png"))
         button.click()
-        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-after-pair-tap.png"))
         assertTrue("Pair again lost action", device.wait(Until.hasObject(By.text("Find your PC")), 5000))
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-after-pair-tap.png"))
     }
     @Test fun oldRingPreferenceRemovedAndFlashPreserved() {
         val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)

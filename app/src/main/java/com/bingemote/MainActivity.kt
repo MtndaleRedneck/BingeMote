@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreview", false)) remote.debugSubtitlePreview()
         // Screenshot-rig only: render one status-notice review scenario per capture.
         // Polling is frozen (setupDone=false -> pollOnce no-ops) or leftover rig prefs
         // would re-trip unreachable/helperDown over the forced states mid-capture.

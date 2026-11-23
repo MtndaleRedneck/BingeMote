@@ -3,6 +3,8 @@ package com.bingemote
 import android.util.Log
 import android.view.MotionEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -733,6 +735,10 @@ private fun BottomRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, onSu
 private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
     val tracks = remote.status?.subtitleTracks ?: emptyList()
     val picked = remote.pickedSubtitle
+    val folder = remote.subtitleFolder
+    val mapped = folder?.files?.flatMap { it.trackIds }?.toSet() ?: emptySet()
+    val loadedTracks = tracks.filter { it.id !in mapped }
+    LaunchedEffect(Unit) { remote.refreshSubtitleFiles() }
     Box(
         Modifier
             .fillMaxSize()
@@ -750,28 +756,50 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 .background(Card)
+                .heightIn(max = 620.dp)
+                .verticalScroll(rememberScrollState())
                 // taps inside the sheet don't close it
                 .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); waitForUpOrCancellation() } }
                 .padding(horizontal = 22.dp, vertical = 20.dp),
         ) {
             Text("Subtitles", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(14.dp))
-            SubtitleRow("Off", picked == -1 || (picked == null && tracks.none { it.selected }), remote.store.haptics) {
+            SubtitleRow("Off", remote.pickedSubtitleFile == null && (picked == -1 || (picked == null && tracks.none { it.selected })), remote.store.haptics) {
                 remote.pickSubtitle(-1); onClose()
             }
-            tracks.forEach { t ->
-                val checked = if (picked != null) picked == t.id else t.selected
+            SubtitleDivider()
+            if (remote.subtitleFilesLoading && folder == null) {
+                Text("Checking subtitle files...", color = Muted, fontSize = 13.sp)
+            }
+            folder?.files?.forEach { file ->
+                val checked = remote.pickedSubtitleFile == file.id ||
+                    (remote.pickedSubtitleFile == null && file.trackIds.any { id -> if (picked != null) picked == id else tracks.any { it.id == id && it.selected } })
+                SubtitleRow(file.name.substringBeforeLast('.'), checked, remote.store.haptics) {
+                    if (!remote.subtitleFilesLoading) remote.loadSubtitleFile(file)
+                }
+            }
+            remote.subtitleFileError?.let { Text(it, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
+            if (folder?.files?.isNotEmpty() == true && loadedTracks.isNotEmpty()) SubtitleDivider()
+            loadedTracks.forEach { t ->
+                val checked = remote.pickedSubtitleFile == null && (if (picked != null) picked == t.id else t.selected)
                 SubtitleRow(t.name, checked, remote.store.haptics) {
                     remote.pickSubtitle(t.id); onClose()
                 }
             }
-            if (tracks.isEmpty()) {
+            if (tracks.isEmpty() && folder?.files.isNullOrEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null) {
                 Spacer(Modifier.height(6.dp))
-                Text("No subtitle tracks in this video.", color = Muted, fontSize = 13.sp)
+                Text("No subtitle tracks or files found.", color = Muted, fontSize = 13.sp)
             }
             Spacer(Modifier.height(10.dp))
         }
     }
+}
+
+@Composable
+private fun SubtitleDivider() {
+    Spacer(Modifier.height(10.dp))
+    Box(Modifier.fillMaxWidth().height(0.7.dp).background(TrackGray))
+    Spacer(Modifier.height(10.dp))
 }
 
 @Composable
