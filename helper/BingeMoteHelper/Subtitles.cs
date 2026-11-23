@@ -125,6 +125,7 @@ internal static class Subtitles
         if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         OperationToken.Value = deadline.Token;
+        var mutationSent = false;
         try {
             if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             var snapshot = await Current(root, port, password);
@@ -138,12 +139,15 @@ internal static class Subtitles
             if (latest?.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
             using var currentStatus = await Get(port, password, "status.json");
             var currentIds = TrackIds(currentStatus);
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             if (candidate.TrackIds.Length > 0 && candidate.TrackIds.All(currentIds.Contains)) {
+                mutationSent = true;
                 using var selected = await Get(port, password, "status.json?command=subtitle_track&val=" + candidate.TrackIds[0]);
                 return (200, JsonSerializer.Serialize(new { ok = true, trackIds = candidate.TrackIds }));
             }
             var beforeIds = currentIds;
             if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            mutationSent = true;
             using var response = await Get(port, password, "status.json?command=addsubtitle&val=" + Uri.EscapeDataString(file));
             var added = TrackIds(response).Except(beforeIds).ToArray();
             for (var attempt = 0; added.Length == 0 && attempt < 10; attempt++) {
@@ -151,13 +155,13 @@ internal static class Subtitles
                 using var after = await Get(port, password, "status.json");
                 added = TrackIds(after).Except(beforeIds).ToArray();
             }
-            if (added.Length == 0) return (503, "{\"error\":\"subtitle not confirmed\"}");
+            if (added.Length == 0) return (503, "{\"error\":\"subtitle not confirmed\",\"unknown\":true}");
             if (Loaded.Count > 1000) Loaded.Clear();
-            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\",\"unknown\":true}");
             using var selectedTrack = await Get(port, password, "status.json?command=subtitle_track&val=" + added[0]);
             Loaded[candidate.Id] = added;
             return (200, JsonSerializer.Serialize(new { ok = true, trackIds = added }));
-        } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }
+        } catch { return (503, JsonSerializer.Serialize(new { error = "subtitle unavailable", unknown = mutationSent })); }
         finally { OperationToken.Value = default; LoadGate.Release(); }
     }
     // All subtitle mutations, including Off, share the same gate. The caller's HTTP
@@ -168,15 +172,17 @@ internal static class Subtitles
         if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         OperationToken.Value = deadline.Token;
+        var mutationSent = false;
         try {
             if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             if (root != null) {
                 var current = await Current(root, port, password, false);
                 if (current == null || current.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
             }
+            mutationSent = true;
             using var response = await Get(port, password, "status.json?command=subtitle_track&val=" + trackId);
             return (200, "{\"ok\":true}");
-        } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }
+        } catch { return (503, JsonSerializer.Serialize(new { error = "subtitle unavailable", unknown = mutationSent })); }
         finally { OperationToken.Value = default; LoadGate.Release(); }
     }
 

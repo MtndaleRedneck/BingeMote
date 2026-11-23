@@ -25,6 +25,7 @@ object HelperClient {
     private const val REPLY_MAGIC = "BINGEMOTE_HERE_V1"
 
     open class Unreachable(val msg: String) : Exception(msg)
+    class SubtitleRejected(val detail: String) : Exception(detail)
     class MissingRoute : Unreachable("BingeMote PC is too old for this app.")
     /** Shown to the user. The raw socket text ("failed to connect to /192.168.1.5 (port 8488) after 2500ms") used to leak into Movies. */
     private const val NO_PC = "Can't reach BingeMote on the PC. Check that the PC is on and BingeMote is open."
@@ -147,10 +148,10 @@ object HelperClient {
             val code = c.responseCode
             if (code == 404) throw MissingRoute()
             if (code == 401 || code == 403) throw BadToken("The PC rejected the pairing token.")
-            if (code !in 200..299) throw Unreachable("Couldn't change subtitles. PC error $code.")
             if (c.contentLengthLong > 524288) throw Unreachable("Subtitle response too large.")
             val out = java.io.ByteArrayOutputStream()
-            c.inputStream.use { input ->
+            (if (code in 200..299) c.inputStream else c.errorStream).use { input ->
+                requireNotNull(input)
                 val buf = ByteArray(4096)
                 while (true) {
                     val n = input.read(buf); if (n < 0) break
@@ -158,7 +159,12 @@ object HelperClient {
                     out.write(buf,0,n)
                 }
             }
-            return JSONObject(out.toString("UTF-8"))
+            val result = JSONObject(out.toString("UTF-8"))
+            if (code !in 200..299) {
+                if (!result.optBoolean("unknown", code !in listOf(400,409,429))) throw SubtitleRejected(result.optString("error","Selection unavailable"))
+                throw Unreachable("Couldn't confirm the subtitle change.")
+            }
+            return result
         } finally { stopper.cancel(false); c.disconnect(); deadline.shutdownNow() }
     }
 

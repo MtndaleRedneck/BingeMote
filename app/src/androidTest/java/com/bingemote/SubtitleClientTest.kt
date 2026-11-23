@@ -14,6 +14,8 @@ class SubtitleClientTest {
         private val server = ServerSocket(0)
         val port = server.localPort
         @Volatile var oldPc = false
+        @Volatile var errorCode = 0
+        @Volatile var unknown = false
         @Volatile var responseBytes = 0
         @Volatile var delayMs = 0L
         @Volatile var running = true
@@ -28,8 +30,8 @@ class SubtitleClientTest {
                     val body = CharArray(len); var n = 0
                     while (n < len) { val k = reader.read(body, n, len-n); if (k < 0) break; n += k }
                     requests.add(line + "\n" + headers.joinToString("\n") + "\n" + String(body))
-                    val json = if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else if (line.contains("/subtitles/media")) """{"mediaId":"opaque-movie"}""" else """{"ok":true}"""
-                    val code = if (oldPc) "404 Not Found" else "200 OK"
+                    val json = if (errorCode > 0) """{"error":"fixture rejection","unknown":$unknown}""" else if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else if (line.contains("/subtitles/media")) """{"mediaId":"opaque-movie"}""" else """{"ok":true}"""
+                    val code = if (oldPc) "404 Not Found" else if (errorCode > 0) "$errorCode Fixture" else "200 OK"
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val bytes = if (responseBytes > 0) ByteArray(responseBytes) { 32 } else json.toByteArray()
                     sock.getOutputStream().write("HTTP/1.1 $code\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray()+bytes)
@@ -140,6 +142,17 @@ class SubtitleClientTest {
                 assertEquals(-1,remote.pickedSubtitle)
                 assertFalse(remote.subtitleFilesLoading)
             } finally {scope.cancel()}
+        }
+    }
+
+    @Test fun typedSubtitleRejectionDistinguishesPostMutationUnknown() {
+        Stub().use {stub->
+            stub.errorCode=409
+            try{HelperClient.loadSubtitle("127.0.0.1",stub.port,"fixture","movie","file");fail("rejection accepted")}
+            catch (_:HelperClient.SubtitleRejected){}
+            stub.unknown=true
+            try{HelperClient.loadSubtitle("127.0.0.1",stub.port,"fixture","movie","file");fail("unknown accepted")}
+            catch (_:HelperClient.Unreachable){}
         }
     }
 
