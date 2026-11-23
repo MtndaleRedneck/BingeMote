@@ -85,4 +85,18 @@ class SubtitleClientTest {
         }
     }
 
+    @Test fun delayedSelectAndErrorNeverMasqueradeAs404Fallback() {
+        Stub().use { stub ->
+            stub.delayMs = 2300
+            val start=System.nanoTime()
+            assertTrue(HelperClient.selectSubtitle("127.0.0.1",stub.port,"fixture",-1))
+            assertTrue((System.nanoTime()-start)/1_000_000 >= 2000)
+        }
+        ServerSocket(0).use { absent ->
+            val port=absent.localPort;absent.close()
+            try { HelperClient.selectSubtitle("127.0.0.1",port,"fixture",-1);fail("unreachable accepted") }
+            catch (_: Exception) { }
+        }
+    }
+
 }
