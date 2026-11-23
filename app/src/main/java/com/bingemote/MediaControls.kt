@@ -140,7 +140,7 @@ class MediaControlsService : Service() {
         if (pollJob?.isActive != true) {
                 pollJob = scope.launch {
                 while (isActive) {
-                    pollOnce()
+                    if (!(BuildConfig.DEBUG && disablePeriodicPoll)) pollOnce()
                     delay(2000)
                 }
             }
@@ -259,6 +259,7 @@ class MediaControlsService : Service() {
         @Volatile internal var testServiceAlive = false
         internal var serviceDestroyed: (() -> Unit)? = null
         internal var requestTestPoll: (() -> Unit)? = null
+        internal var disablePeriodicPoll = false
         internal var requestObservedPoll: (((() -> Unit)) -> Unit)? = null
         internal var playbackCompleted: ((Int) -> Unit)? = null
         internal var pollCommitted: (() -> Unit)? = null
