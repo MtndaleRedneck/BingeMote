@@ -16,7 +16,30 @@ internal static class DialogCapture
         Capture("confirm", () => ConfirmDialog.Ask(owner, "Remove Test phone? It stops controlling this PC right away. You can pair it again any time with a new code.", "Remove"));
         Capture("note", () => NoteDialog.Show(owner, "This Wi-Fi is now marked as Private."));
         Capture("wifi", () => { using var dlg = new WifiDialog(new NetProfile { Name = "Test home network", Category = "Public" }); dlg.ShowDialog(owner); });
+        CheckKey("enter", "{ENTER}");
+        CheckKey("escape", "{ESC}");
         owner.Close();
+
+        void CheckKey(string name, string key)
+        {
+            bool fired = false;
+            using var timer = new System.Windows.Forms.Timer { Interval = 700 };
+            using var timeout = new System.Windows.Forms.Timer { Interval = 5000 };
+            timer.Tick += (_, _) => {
+                timer.Stop();
+                var dlg = Form.ActiveForm;
+                if (dlg == null || dlg == owner || dlg.ActiveControl != dlg.CancelButton)
+                    throw new Exception("Initial focus is not Cancel");
+                fired = true;
+                SendKeys.SendWait(key);
+            };
+            timeout.Tick += (_, _) => { timeout.Stop(); Form.ActiveForm?.Close(); };
+            timer.Start(); timeout.Start();
+            bool removed = ConfirmDialog.Ask(owner, "Harmless test phone fixture. No phone is removed by this check.", "Remove");
+            timeout.Stop();
+            File.WriteAllText(Path.Combine(directory, "dialog-key-" + name + ".txt"), $"key={name}; fired={fired}; confirmed={removed}");
+            if (!fired || removed) throw new Exception("Initial " + name + " confirmed destructive action");
+        }
 
         void Capture(string name, Action show)
         {
