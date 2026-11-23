@@ -200,11 +200,12 @@ class MediaControlsService : Service() {
                     return START_STICKY
                 }
                 playbackJob.invokeOnCompletion {
-                    synchronized(this@MediaControlsService) {
+                    val remaining = synchronized(this@MediaControlsService) {
                         pendingPlayback--
                         pollVersion.incrementAndGet()
+                        pendingPlayback
                     }
-                    if (BuildConfig.DEBUG) playbackCompleted?.invoke(pendingPlayback)
+                    if (BuildConfig.DEBUG) playbackCompleted?.invoke(remaining)
                     refreshNow()
                 }
                 if (BuildConfig.DEBUG && cancelBeforePlaybackStart) playbackJob.cancel()
