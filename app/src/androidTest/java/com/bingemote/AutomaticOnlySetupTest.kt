@@ -22,8 +22,8 @@ class AutomaticOnlySetupTest {
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             .putExtra("screen", "settings").putExtra("updateResult", "You're up to date."))
-        assertTrue(device.wait(Until.hasObject(By.text("Settings")), 10000))
-        assertTrue(device.wait(Until.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)), 2000))
+        // Rig intentionally starts at bottom, so the Settings header is offscreen.
+        assertTrue(device.wait(Until.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)), 4000))
         val version = device.findObject(By.text("Version " + BuildConfig.VERSION_NAME))
         val success = device.findObject(By.text("You're up to date."))
         assertFalse(device.hasObject(By.text("Updates")))
@@ -89,9 +89,13 @@ class AutomaticOnlySetupTest {
         assertTrue(device.wait(Until.hasObject(By.text("Use this address")), 3000))
         device.findObject(By.text("Use this address")).click()
         Thread.sleep(500)
-        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-            device.displayWidth / 2, device.displayHeight / 2, 25)
-        Thread.sleep(400)
+        repeat(4) {
+            if (!device.hasObject(By.text("Code from your PC"))) {
+                device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                    device.displayWidth / 2, device.displayHeight / 2, 20)
+                Thread.sleep(200)
+            }
+        }
         assertTrue(device.hasObject(By.text("Code from your PC")))
         assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-address.png"))
