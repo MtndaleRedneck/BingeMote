@@ -107,6 +107,7 @@ class RemoteState(
     }
 
     private var pollJob: Job? = null
+    private var lastConnectedAt = 0L
     private var failures = 0
     private var helperFailures = 0
     private var rediscovering = false
@@ -201,6 +202,7 @@ class RemoteState(
         try {
             val s = vlcDeferred!!.await()
             status = s
+            lastConnectedAt = android.os.SystemClock.elapsedRealtime()
             // A new video clears the remembered subtitle pick; the sheet then shows the
             // file's own selected track instead of a checkmark from the previous video.
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
@@ -215,6 +217,7 @@ class RemoteState(
             connecting = false
             expectingVlc = false
         } catch (e: Vlc.BadAuth) {
+            lastConnectedAt = 0L
             // The one automatic heal: adopt the PC's current password once. The phone never
             // pushes its stored copy at the PC - a refusal can be an intentional PC change.
             val healed = withContext(Dispatchers.IO) { VlcAuthRepair.tryHealOnce(store) }
@@ -223,6 +226,7 @@ class RemoteState(
             failures = UNREACHABLE_AFTER
             unreachable = true
         } catch (e: Exception) {
+            lastConnectedAt = 0L
             failures++
             if (failures >= UNREACHABLE_AFTER) {
                 unreachable = true
@@ -317,6 +321,9 @@ class RemoteState(
     }
 
     fun togglePause() {
+        // A disconnected tap is intentionally inert, without disabled styling.
+        if (unreachable || vlcClosed || vlcRefused || lastConnectedAt == 0L ||
+            android.os.SystemClock.elapsedRealtime() - lastConnectedAt > 5000) return
         if (BuildConfig.DEBUG) Log.i("BMSeek", "togglePause")
         // Flip the icon at once; the next status poll (about a second out) confirms or corrects it.
         val s = status
