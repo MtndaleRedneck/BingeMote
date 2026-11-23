@@ -420,28 +420,27 @@ class RemoteState(
     var subtitleOutcomeUnknown by mutableStateOf(false); private set
     private var uncertainFolderMedia: String? = null
     private var uncertainSubtitleMedia: Set<String> = emptySet()
-    private val degradedSubtitlePairs = mutableSetOf<String>()
     private var loadedWarningKey: String? = null
     private var warningReadInFlight = false
     private var warningReadAgain = false
     @Volatile private var warningGeneration = 0
     private suspend fun readSubtitleWarnings(key:String,current:String?): Pair<List<SubtitleJournal.Entry>,Boolean> = withContext(Dispatchers.IO){
         try{
-            if(!current.isNullOrEmpty())subtitleJournal.clearOtherMedia(key,current)
-            subtitleJournal.entries(key) to false
+            subtitleJournal.entries(key) to subtitleJournal.isDegraded(key)
         }catch(_:Exception){emptyList<SubtitleJournal.Entry>() to true}
     }
-    private fun applySubtitleWarnings(key:String,current:String?,result:Pair<List<SubtitleJournal.Entry>,Boolean>) {
-        if(key!=subtitleWarningKey || current!=confirmedSubtitleMedia)return
+    private fun applySubtitleWarnings(key:String,current:String?,result:Pair<List<SubtitleJournal.Entry>,Boolean>): Boolean {
+        if(key!=subtitleWarningKey || current!=confirmedSubtitleMedia)return false
         val records=result.first
         val relevant=records.filter{current.isNullOrEmpty() || it.media.isEmpty() || it.media==current || it.phase=="pending"}
         val wasUnknown=subtitleOutcomeUnknown
-        subtitleOutcomeUnknown=result.second || key in degradedSubtitlePairs || relevant.isNotEmpty()
+        subtitleOutcomeUnknown=result.second || relevant.isNotEmpty()
         uncertainSubtitleMedia=relevant.map{it.media}.toSet()
         uncertainFolderMedia=relevant.firstOrNull{it.media==current}?.media ?: relevant.firstOrNull()?.media
-        if(result.second || key in degradedSubtitlePairs)subtitleMutationError="Subtitle safety history couldn't be read. New file loads are paused until storage is available."
+        if(result.second)subtitleMutationError="Subtitle safety history couldn't be read. New file loads are paused until storage is available."
         else if(subtitleOutcomeUnknown)subtitleMutationError="Couldn't confirm the previous subtitle change. Existing controls are still available."
         else if(wasUnknown)subtitleMutationError=null
+        return true
     }
     private fun reconcileSubtitleWarnings() {
         val key=subtitleWarningKey
@@ -545,7 +544,7 @@ class RemoteState(
                         val current=confirmedSubtitleMedia
                         val result=readSubtitleWarnings(warningKey,current)
                         if(request!=subtitleRequest || warningKey!=subtitleWarningKey)return@launch
-                        applySubtitleWarnings(warningKey,current,result)
+                        if(!applySubtitleWarnings(warningKey,current,result))return@launch
                         if (loaded) {
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
@@ -602,8 +601,8 @@ class RemoteState(
                 catch (_: HelperClient.SubtitleRejected) {
                     // Existing track controls remain usable when history storage is
                     // unavailable, but cannot claim a confirmed durable outcome.
+                    subtitleJournal.markDegraded(warningKey)
                     scope.launch { if(warningKey==subtitleWarningKey){
-                        degradedSubtitlePairs.add(warningKey)
                         subtitleOutcomeUnknown=true
                         subtitleMutationError="Subtitle history couldn't be saved. Existing controls are best-effort; the selected state is unconfirmed."
                     } }
@@ -622,7 +621,7 @@ class RemoteState(
                         val current=confirmedSubtitleMedia
                         val result=readSubtitleWarnings(warningKey,current)
                         if(request!=subtitleRequest || warningKey!=subtitleWarningKey)return@launch
-                        applySubtitleWarnings(warningKey,current,result)
+                        if(!applySubtitleWarnings(warningKey,current,result))return@launch
                         pickedSubtitleFile=null;if(!subtitleOutcomeUnknown)pickedSubtitle=trackId
                         subtitleMutationLoading=false
                     }
