@@ -82,7 +82,7 @@ class MediaControlsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.DEBUG) testServiceAlive = true
+        if (BuildConfig.DEBUG) { testServiceAlive = true; requestTestPoll = { refreshNow() } }
         // A prior version's session is released when its process is replaced.
         // No new session is created here, so the row cannot supply a media token.
     }
@@ -251,6 +251,7 @@ class MediaControlsService : Service() {
         internal var cancelBeforePlaybackStart = false
         @Volatile internal var testServiceAlive = false
         internal var serviceDestroyed: (() -> Unit)? = null
+        internal var requestTestPoll: (() -> Unit)? = null
     }
 
     private suspend fun pollOnce() = pollMutex.withLock {
@@ -412,6 +413,6 @@ class MediaControlsService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         scope.cancel()
         super.onDestroy()
-        if (BuildConfig.DEBUG) { testServiceAlive = false; serviceDestroyed?.invoke() }
+        if (BuildConfig.DEBUG) { testServiceAlive = false; requestTestPoll = null; serviceDestroyed?.invoke() }
     }
 }

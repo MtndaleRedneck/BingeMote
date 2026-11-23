@@ -400,7 +400,8 @@ class ImmediateFlipTest {
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
             stub.failStatus = true
-            assertTrue(reached.await(4, java.util.concurrent.TimeUnit.SECONDS))
+            MediaControlsService.requestTestPoll?.invoke()
+            assertTrue(reached.await(2, java.util.concurrent.TimeUnit.SECONDS))
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             val commandBy = System.currentTimeMillis() + 1500
             while (stub.commands.isEmpty() && System.currentTimeMillis() < commandBy) Thread.sleep(20)
