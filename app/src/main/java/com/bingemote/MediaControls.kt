@@ -167,15 +167,27 @@ class MediaControlsService : Service() {
     private fun refreshNow() { scope.launch { pollOnce() } }
 
     /** short confirmation tick on each bar button press. Honors
-     * the system haptic-feedback switch; the notification channel itself never
-     * vibrates, and the status poll path never calls this. */
+     * the app's "Vibrate on press" setting AND the system haptic-feedback switch;
+     * the notification channel itself never vibrates, and the status poll path
+     * never calls this. */
     private fun tick() {
         try {
+            if (!Store(this).haptics) return
             if (android.provider.Settings.System.getInt(contentResolver,
                     android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 1) return
-            getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
-                ?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+            performTick(this)
         } catch (_: Exception) { }
+    }
+
+    companion object {
+        /** Test seam: instrumented tests substitute a recorder; production vibrates. */
+        internal var performTick: (Context) -> Unit = { ctx ->
+            ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+                ?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+        }
+
+        /** Test seam: instrumented tests watch every real bar post (true = play glyph). */
+        internal var postProbe: ((Boolean) -> Unit)? = null
     }
 
     private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
@@ -278,7 +290,9 @@ class MediaControlsService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(false)
             .setCustomContentView(row)
-            .setCustomBigContentView(row)
+            // no expanded form - the big view repeated the same row,
+            // so the shade offered a pointless expand arrow. Collapsed-only: one fixed
+            // row. (OEM shades may still decorate; validated on the CI profile.)
             .setStyle(Notification.DecoratedCustomViewStyle())
             .apply {
                 if (android.os.Build.VERSION.SDK_INT >= 36) {
@@ -292,6 +306,7 @@ class MediaControlsService : Service() {
                 }
             }
             .build()
+        postProbe?.invoke(playing)
         if (foregroundStarted) {
             nm.notify(NOTIF_ID, n)
         } else if (android.os.Build.VERSION.SDK_INT >= 29) {
