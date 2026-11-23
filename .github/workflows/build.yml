@@ -15,12 +15,16 @@ on:
         options: [app, helper]
         default: helper
       only:
-        description: Limit the run (pc-e2e skips the android/scanner/screenshot jobs)
+        description: Limit the run (pc-e2e skips the android/scanner/screenshot jobs; stage runs only the android/helper builds and stages the signed bytes to the private TestLab draft)
         type: choice
-        options: [all, pc-e2e]
+        options: [all, pc-e2e, stage]
         default: all
       shipping_run_id:
         description: Run ID whose BingeMote-PC artifact the e2e shipping leg tests (leave empty to skip that leg)
+        type: string
+        default: ''
+      shipping_testlab_asset_id:
+        description: TestLab draft asset ID whose staged installer bytes the e2e shipping leg tests (leave empty to skip that source)
         type: string
         default: ''
       shipping_sha256:
@@ -65,11 +69,41 @@ jobs:
           echo "VERSION=$V" >> $GITHUB_ENV
           cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
 
+      # Public-repo artifacts are downloadable by any signed-in GitHub user, so
+      # signed-binary uploads stay on the real public-release path (only == 'all')
+      # only. Hidden builds stage to the private TestLab draft below instead.
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
         with:
           name: BingeMote-Android-apk
           path: BingeMote-Android-*.apk
+
+      # Hidden-build staging: the signed APK goes straight to the private TestLab
+      # repo's draft release (collaborator-only visibility), never to a public
+      # artifact. Prints the sha256 of the staged bytes for the review brief.
+      - name: Stage the signed APK to the private TestLab draft
+        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
+        env:
+          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
+        run: |
+          set -euo pipefail
+          APK=$(ls BingeMote-Android-*.apk)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "Staged APK: $APK"
+          echo "Staged APK sha256: $SHA"
+          AUTH="Authorization: Bearer $TESTLAB_PAT"
+          REPO=MtndaleRedneck/TestLab
+          TAG="android-v${VERSION}"
+          ID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.draft==true and .tag_name==$t)][0].id // empty')
+          if [ -z "$ID" ]; then
+            ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
+          fi
+          echo "TestLab draft release id: $ID"
+          for a in $(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id'); do
+            curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
+          done
+          UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
+          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$APK" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
 
 
   helper:
@@ -98,7 +132,8 @@ jobs:
         # Binary uploads are publish-path only: artifacts on a public repo are
         # publicly downloadable, and withheld builds must never publish (run
         # 45029656665's helper job exposed the installer until deleted).
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+        # only == 'all' too: hidden builds stage privately below, never here.
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
         with:
           name: BingeMote-PC-raw
           path: helper/out/BingeMote.exe
@@ -113,13 +148,47 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         # Publish-path only (see BingeMote-PC-raw gate above).
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
         with:
           name: BingeMote-PC
           path: BingeMote-PC-*.exe
           retention-days: 1
 
+      # Hidden-build staging: the installer goes straight to the private TestLab
+      # repo's draft release (collaborator-only visibility), never to a public
+      # artifact. Prints the sha256 of the staged bytes for the review brief.
+      - name: Stage the installer to the private TestLab draft
+        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
+        env:
+          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Get-Item BingeMote-PC-*.exe).Name
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Output "Staged installer: $exe"
+          Write-Output "Staged installer sha256: $sha"
+          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT" }
+          $repo = 'MtndaleRedneck/TestLab'
+          $tag = "pc-v$env:HELPER_VERSION"
+          $rels = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
+          $draft = $rels | Where-Object { $_.draft -and $_.tag_name -eq $tag } | Select-Object -First 1
+          if (-not $draft) {
+            $body = @{ tag_name = $tag; name = "BingeMote PC $env:HELPER_VERSION"; draft = $true; body = "Staged for independent review. Source: MtndaleRedneck/BingeMote@$env:GITHUB_SHA, run $env:GITHUB_RUN_ID." } | ConvertTo-Json
+            $draft = Invoke-RestMethod -Method Post -Headers $headers -Body $body -ContentType 'application/json' "https://api.github.com/repos/$repo/releases"
+          }
+          Write-Output "TestLab draft release id: $($draft.id)"
+          $rel = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/$($draft.id)"
+          foreach ($a in ($rel.assets | Where-Object { $_.name -eq $exe })) {
+            Invoke-RestMethod -Method Delete -Headers $headers "https://api.github.com/repos/$repo/releases/assets/$($a.id)" | Out-Null
+          }
+          $upload = $rel.upload_url -replace '\{\?name,label\}', ''
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
+          $upHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/octet-stream' }
+          $asset = Invoke-RestMethod -Method Post -Headers $upHeaders -Body $bytes ("$upload" + "?name=$exe")
+          Write-Output "Staged asset id: $($asset.id)"
+
   helper-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage'
     runs-on: windows-latest
     needs: helper
     steps:
@@ -175,6 +244,19 @@ jobs:
           run-id: ${{ inputs.shipping_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Same exact-bytes guarantee from the private staging area: downloads the
+      # staged installer asset from the hidden TestLab draft (collaborator-only)
+      # instead of a public run artifact. helper-e2e.ps1 asserts its hash against
+      # the shipping_sha256 input before installing.
+      - name: Download the shipping installer from the TestLab draft (exact staged bytes)
+        if: ${{ inputs.shipping_testlab_asset_id != '' }}
+        env:
+          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
+        run: |
+          New-Item -ItemType Directory -Force helper/Shipping | Out-Null
+          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT"; Accept = 'application/octet-stream' }
+          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
+
       - name: Render the window for layout review (CI only)
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
@@ -216,7 +298,7 @@ jobs:
 
 
   scanner-test:
-    if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
     # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
     # (syntax, every section, summary) and uploads its report. The runner has no
     # BingeMote, so a clean "nothing found" run is the expected result.
@@ -238,7 +320,7 @@ jobs:
           if-no-files-found: error
 
   screenshots:
-    if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -268,7 +350,9 @@ jobs:
           path: screenshots/*
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    # Hard-gated to the real public-release dispatch (all + publish): never runs
+    # under limited modes, independent of needs/notes assumptions.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
     needs: [android, helper, helper-e2e, screenshots]
     runs-on: ubuntu-latest
     permissions:

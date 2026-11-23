@@ -1,9 +1,3 @@
-## v1.7.13
-
-- The pairing code is now 4 digits and no longer expires after 10 minutes - it works once, whenever you enter it
-- A code appears only after you type the phone's name and tap Pair - none is made at startup anymore
-- The "get the app on your phone" instructions now stay on screen, with the same-home-network step spelled out
-
 ## v1.7.3
 
 - Smaller, sharper volume display with a subtle rounded pill and a clearer mute icon.
