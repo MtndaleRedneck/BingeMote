@@ -11,7 +11,7 @@ $p.Protocol='UDP';$p.LocalPort=@('8489');Assert ((Get-RuleDecision $r $a $p $roo
 $p.LocalPort=@('12345');Assert ((Get-RuleDecision $r $a $p $roots) -eq 'keep-ambiguous') 'same display name wrong port preserved'
 $r.DisplayName='BingeMote Unrelated';$p.LocalPort=@('8488');$p.Protocol='TCP';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'keep-ambiguous') 'substring collision preserved'
 $r.DisplayName='bingemote.exe';$a.Program=Join-Path $roots[0] 'BingeMote.exe';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'remove') 'current app path rule'
-$a.Program=Join-Path $env:TEMP 'missing-history\BingeMoteHelper-v1.0.1.exe';$r.DisplayName='bingemotehelper-v1.0.1.exe';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'remove') 'missing legacy app path rule'
+$a.Program=Join-Path $env:TEMP 'missing-history\BingeMoteHelper-v1.0.1.exe';$r.DisplayName='bingemotehelper-v1.0.1.exe';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'keep-ambiguous') 'unproven missing legacy path preserved'
 $a.Program="$env:SystemRoot\System32\notepad.exe";$r.DisplayName='bingemote.exe';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'keep-ambiguous') 'unrelated program with copied display name preserved'
 $a.Program='Any';Assert ((Get-RuleDecision $r $a $p $roots) -eq 'keep-ambiguous') 'broad rule with app-like name preserved'
 Assert (!(In-Root ($roots[0]+'-other\BingeMote.exe') $roots)) 'prefix sibling not owned'

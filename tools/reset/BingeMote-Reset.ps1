@@ -62,7 +62,7 @@ function Get-RuleDecision($Rule,$App,$Port,[string[]]$InstallRoots) {
     $exactDisplay = $display -in @('BingeMote','BingeMote Helper','bingemote.exe','bingemotehelper.exe','bingemotehelper-v1.0.1.exe')
     if ($knownLeaf -and $exactDisplay -and [IO.Path]::IsPathRooted($program)) {
         if (In-Root $program $InstallRoots) { return 'remove' }
-        if (!(Test-Path -LiteralPath $program)) { return 'remove' }
+        if (!(Test-Path -LiteralPath $program)) { return 'keep-ambiguous' }
         # Do not trust just the name of an existing file outside the install roots.
         $v = (Get-Item -LiteralPath $program).VersionInfo
         if ($v.ProductName -in @('BingeMote','BingeMoteHelper','BingeMote Helper') -and $v.OriginalFilename -in @('BingeMote.exe','BingeMoteHelper.exe')) { return 'remove' }
@@ -235,7 +235,11 @@ function Invoke-BingeMoteReset {
         foreach ($m in $manifest) {
             Assert-PlainTree $m.Original
             if ((@(Get-TreeProof $m.Original) -join "`n") -cne (@($m.Proof) -join "`n")) { throw 'App files changed after backup; remaining deletion stopped.' }
-            Remove-Item -LiteralPath $m.Original -Recurse -Force
+            # Rename the original root into owner/admin-only recovery storage.
+            # Never recursively delete user-writable trees while elevated.
+            $quarantine=Join-Path $backup ('quarantine-'+[guid]::NewGuid().ToString('N'))
+            Move-Item -LiteralPath $m.Original -Destination $quarantine
+            [pscustomobject]@{Original=$m.Original;Quarantine=$quarantine} | Export-Clixml -LiteralPath ($quarantine+'.xml')
             if (Test-Path -LiteralPath $m.Original) { throw 'A folder could not be removed.' }
         }
         if ($null -ne $vlcBytes) {
