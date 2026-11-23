@@ -34,10 +34,10 @@ class AutomaticOnlySetupTest {
         assertNotNull(success)
         assertEquals(version.visibleBounds.centerY(), success.visibleBounds.centerY())
         assertTrue(success.visibleBounds.left > version.visibleBounds.right)
-        device.takeScreenshot(java.io.File("/sdcard/bm-updates-success.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-success.png"))
         assertTrue(device.wait(Until.gone(By.text("You're up to date.")), 7000))
         assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
-        device.takeScreenshot(java.io.File("/sdcard/bm-updates-expired.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-expired.png"))
     }
 
     @Test fun cancelReturnsToSettingsAndBottomBackIsAbsent() {
@@ -51,7 +51,7 @@ class AutomaticOnlySetupTest {
         assertFalse(device.hasObject(By.text("Back")))
         device.findObject(By.text("Cancel")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Settings")), 5000))
-        device.takeScreenshot(java.io.File("/sdcard/bm-setup-cancel-settings.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-cancel-settings.png"))
     }
 
     @Test fun pairEntryNeedsSelectedPcOrConfirmedAddress() {
@@ -62,14 +62,14 @@ class AutomaticOnlySetupTest {
             .putExtra("screen", "setup").putExtra("pairdemo", "true"))
         assertTrue(device.wait(Until.hasObject(By.text("Find your PC")), 10000))
         assertFalse(device.hasObject(By.text("Code from your PC")))
-        device.takeScreenshot(java.io.File("/sdcard/bm-setup-before-selection.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-before-selection.png"))
         device.findObject(By.textContains("MY-PC  (")).click()
         Thread.sleep(500)
         device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
             device.displayWidth / 2, device.displayHeight / 3, 25)
         Thread.sleep(400)
         assertTrue(device.hasObject(By.text("Code from your PC")))
-        device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-pc.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc.png"))
         device.swipe(device.displayWidth / 2, device.displayHeight / 3,
             device.displayWidth / 2, device.displayHeight * 4 / 5, 25)
         Thread.sleep(400)
@@ -77,7 +77,15 @@ class AutomaticOnlySetupTest {
         fields.first().text = "192.0.2.20"
         Thread.sleep(500)
         assertFalse(device.hasObject(By.text("Code from your PC")))
-        device.pressBack()
+        if (device.isNaturalOrientation) device.pressBack()
+        repeat(3) {
+            if (!device.hasObject(By.text("Use this address"))) {
+                device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                    device.displayWidth / 2, device.displayHeight / 3, 20)
+                Thread.sleep(250)
+            }
+        }
+        assertTrue(device.wait(Until.hasObject(By.text("Use this address")), 3000))
         device.findObject(By.text("Use this address")).click()
         Thread.sleep(500)
         device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
@@ -85,7 +93,7 @@ class AutomaticOnlySetupTest {
         Thread.sleep(400)
         assertTrue(device.hasObject(By.text("Code from your PC")))
         assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
-        device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-address.png"))
+        device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-address.png"))
     }
 
     @Test fun pendingAutomaticSetupHasDoneAndNoManualVlcFields() {

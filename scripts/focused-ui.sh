@@ -12,11 +12,12 @@ adb shell input keyevent 4
 adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen main --es statuscase cur-g
 sleep 5
-adb exec-out screencap -p > focused-ui/reconnect.png
 adb shell uiautomator dump /sdcard/focused-ui.xml
+sleep 3
+adb exec-out screencap -p > focused-ui/reconnect.png
 adb exec-out cat /sdcard/focused-ui.xml > focused-ui/reconnect.xml
 adb shell am instrument -w -e class com.bingemote.AutomaticOnlySetupTest,com.bingemote.AutoSetupCheckTest,com.bingemote.ImmediateFlipTest,com.bingemote.DisconnectedPlaybackTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee focused-ui/tests.txt
 for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings updates-success updates-expired; do
-  adb exec-out cat "/sdcard/bm-$capture.png" > "focused-ui/$capture.png"
+  adb exec-out cat "/sdcard/Android/data/com.bingemote/files/bm-$capture.png" > "focused-ui/$capture.png"
 done
 grep -q '^OK (' focused-ui/tests.txt
