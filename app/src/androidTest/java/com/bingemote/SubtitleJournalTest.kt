@@ -42,4 +42,25 @@ class SubtitleJournalTest {
         assertEquals(1,journal.entries("pair").size)
     }
 
+    @Test fun orphanPendingBecomesUnknownAndDifferentMediaCanRecover(){
+        reset()
+        File(ctx.filesDir,"subtitle-operations.json").writeText("""{"entries":[{"id":"dead-process-op","pair":"pair","media":"movieA","phase":"pending"}]}""")
+        val journal=SubtitleJournal(ctx)
+        assertEquals("unknown",journal.entries("pair").single().phase)
+        assertTrue(journal.clearOtherMedia("pair","movieB"))
+        assertTrue(journal.entries("pair").isEmpty())
+    }
+    @Test fun capacityFailurePreservesAllUncertaintyAndDoesNotGrantBegin(){
+        reset();val entries=org.json.JSONArray()
+        repeat(1024){entries.put(org.json.JSONObject().put("id","old-$it").put("pair","pair").put("media","movie$it").put("phase","unknown"))}
+        File(ctx.filesDir,"subtitle-operations.json").writeText(org.json.JSONObject().put("entries",entries).toString())
+        val journal=SubtitleJournal(ctx)
+        assertEquals(1,journal.entries("pair").size)
+        val existing=journal.begin("pair","newMovie");assertTrue(journal.finish(existing,false))
+        assertEquals("",journal.entries("pair").single().media)
+        assertTrue(journal.clearOtherMedia("pair","currentMovie"))
+        assertEquals("coarse uncertainty must survive media refresh",1,journal.entries("pair").size)
+        try{journal.begin("pair","currentMovie",true);fail("coarse uncertainty allowed folder add")}catch(_:Exception){}
+    }
+
 }
