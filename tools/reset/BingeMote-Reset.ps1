@@ -128,10 +128,12 @@ function Invoke-BingeMoteReset {
         }
         $rulePlan | Export-Clixml -LiteralPath (Join-Path $backup 'firewall-plan.xml')
         Native-Checked netsh.exe @('advfirewall','export',(Join-Path $backup 'firewall-before.wfw'))
-        $url = & netsh.exe http show urlacl url=http://+:8488/ 2>&1
+        $url = & netsh.exe http show urlacl 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'URL reservation inventory failed.' }
         $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
-        $urlPresent = $LASTEXITCODE -eq 0
-        $knownAcl = (($url -join "`n") -match 'D:\(A;;GX;;;(?:WD|S-1-5-4)\)')
+        $urlBlock=[regex]::Match(($url -join "`n"),'(?ms)^\s*Reserved URL\s*:\s*http://\+:8488/\s*$(.*?)(?=^\s*Reserved URL\s*:|\z)').Value
+        $urlPresent = [bool]$urlBlock
+        $knownAcl = ($urlBlock -match 'D:\(A;;GX;;;(?:WD|S-1-5-4)\)')
         $regRoots = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall')
         $uninstall = @()
         foreach ($rr in $regRoots) {

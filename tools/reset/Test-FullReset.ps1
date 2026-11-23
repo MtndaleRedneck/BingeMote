@@ -18,6 +18,8 @@ $id='BMResetFull-'+[guid]::NewGuid().ToString('N')
 New-NetFirewallRule -Name $id -DisplayName bingemote.exe -Program (Join-Path $root 'BingeMote.exe') -Direction Inbound -Action Allow | Out-Null
 $decoyId=$id+'-decoy';New-NetFirewallRule -Name $decoyId -DisplayName 'Unrelated reset fixture' -Program "$env:SystemRoot\System32\notepad.exe" -Direction Inbound -Action Allow | Out-Null
 # Clear the intentionally ambiguous decoy name from enumeration while keeping it as unrelated state.
+& netsh.exe http add urlacl url=http://+:8488/ 'sddl=D:(A;;GX;;;S-1-5-4)'
+if($LASTEXITCODE -ne 0){throw 'URL fixture creation failed'}
 $code=Invoke-BingeMoteReset
 if($code -ne 0){throw "Full fixture reset returned $code"}
 foreach($d in @($root,$data,$roam)){if(Test-Path $d){throw "Fixture not reset: $d"}}
