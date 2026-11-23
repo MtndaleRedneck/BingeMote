@@ -477,7 +477,6 @@ class ImmediateFlipTest {
             assertTrue(posts.count { !it.playing } >= 2)
             MediaControlsService.throwPlaybackPost = throwPost
             MediaControlsService.cancelBeforePlaybackStart = !throwPost
-            val finishedPoll = java.util.concurrent.CountDownLatch(1)
             val postedFailure = java.util.concurrent.CountDownLatch(1)
             MediaControlsService.playbackPostFailure = { postedFailure.countDown() }
             val pollsBefore = stub.polls.get()
