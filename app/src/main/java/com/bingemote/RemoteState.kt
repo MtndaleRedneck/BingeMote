@@ -420,43 +420,56 @@ class RemoteState(
     var subtitleOutcomeUnknown by mutableStateOf(false); private set
     private var uncertainFolderMedia: String? = null
     private var uncertainSubtitleMedia: Set<String> = emptySet()
+    private val degradedSubtitlePairs = mutableSetOf<String>()
     private var loadedWarningKey: String? = null
     private var warningReadInFlight = false
+    private var warningReadAgain = false
+    @Volatile private var warningGeneration = 0
+    private suspend fun readSubtitleWarnings(key:String,current:String?): Pair<List<SubtitleJournal.Entry>,Boolean> = withContext(Dispatchers.IO){
+        try{
+            if(!current.isNullOrEmpty())subtitleJournal.clearOtherMedia(key,current)
+            subtitleJournal.entries(key) to false
+        }catch(_:Exception){emptyList<SubtitleJournal.Entry>() to true}
+    }
+    private fun applySubtitleWarnings(key:String,current:String?,result:Pair<List<SubtitleJournal.Entry>,Boolean>) {
+        if(key!=subtitleWarningKey || current!=confirmedSubtitleMedia)return
+        val records=result.first
+        val relevant=records.filter{current.isNullOrEmpty() || it.media.isEmpty() || it.media==current || it.phase=="pending"}
+        val wasUnknown=subtitleOutcomeUnknown
+        subtitleOutcomeUnknown=result.second || key in degradedSubtitlePairs || relevant.isNotEmpty()
+        uncertainSubtitleMedia=relevant.map{it.media}.toSet()
+        uncertainFolderMedia=relevant.firstOrNull{it.media==current}?.media ?: relevant.firstOrNull()?.media
+        if(result.second || key in degradedSubtitlePairs)subtitleMutationError="Subtitle safety history couldn't be read. New file loads are paused until storage is available."
+        else if(subtitleOutcomeUnknown)subtitleMutationError="Couldn't confirm the previous subtitle change. Existing controls are still available."
+        else if(wasUnknown)subtitleMutationError=null
+    }
     private fun reconcileSubtitleWarnings() {
         val key=subtitleWarningKey
         if(loadedWarningKey!=key){
             loadedWarningKey=key;confirmedSubtitleMedia=null;pickedSubtitle=null;pickedSubtitleFile=null
-            subtitleFolder=null;subtitleRequest++;subtitleListRequest++
+            subtitleFolder=null;subtitleRequest++;subtitleListRequest++;warningGeneration++
             subtitleListLoading=false;subtitleMutationLoading=false;subtitleMutationError=null
             subtitleOutcomeUnknown=false;uncertainFolderMedia=null;uncertainSubtitleMedia=emptySet()
         }
-        if(warningReadInFlight)return
+        if(warningReadInFlight){warningReadAgain=true;return}
         warningReadInFlight=true
-        val current=confirmedSubtitleMedia
         scope.launch {
-            val result=withContext(Dispatchers.IO){
-                try{
-                    if(!current.isNullOrEmpty())subtitleJournal.clearOtherMedia(key,current)
-                    subtitleJournal.entries(key) to false
-                }catch(_:Exception){emptyList<SubtitleJournal.Entry>() to true}
-            }
-            warningReadInFlight=false
-            if(key!=subtitleWarningKey)return@launch
-            val records=result.first
-            val relevant=records.filter{current.isNullOrEmpty() || it.media.isEmpty() || it.media==current || it.phase=="pending"}
-            val wasUnknown=subtitleOutcomeUnknown
-            subtitleOutcomeUnknown=result.second || relevant.isNotEmpty()
-            uncertainSubtitleMedia=relevant.map{it.media}.toSet()
-            uncertainFolderMedia=relevant.firstOrNull{it.media==current}?.media ?: relevant.firstOrNull()?.media
-            if(result.second)subtitleMutationError="Subtitle safety history couldn't be read. Subtitle changes are paused until storage is available."
-            else if(subtitleOutcomeUnknown)subtitleMutationError="Couldn't confirm the previous subtitle change. Existing controls are still available."
-            else if(wasUnknown)subtitleMutationError=null
+            try {
+                do {
+                    warningReadAgain=false
+                    val readKey=subtitleWarningKey;val current=confirmedSubtitleMedia
+                    val generation=warningGeneration;val mutation=subtitleRequest
+                    val result=readSubtitleWarnings(readKey,current)
+                    if(generation==warningGeneration && mutation==subtitleRequest)applySubtitleWarnings(readKey,current,result)
+                    else warningReadAgain=true
+                } while(warningReadAgain)
+            } finally { warningReadInFlight=false }
         }
     }
-    private fun beginSubtitleMutation(media: String?, key: String): String = try { subtitleJournal.begin(key,media) }
+    private fun beginSubtitleMutation(media: String?, key: String, folderLoad:Boolean=false): String = try { subtitleJournal.begin(key,media,folderLoad) }
         catch (_: Exception) { throw HelperClient.SubtitleRejected("Couldn't save subtitle safety state. Try again.") }
     private fun finishSubtitleMutation(id: String?, unknown: Boolean) {
-        if (id != null) subtitleJournal.finish(id,unknown)
+        if (id != null) { subtitleJournal.finish(id,unknown);warningGeneration++ }
     }
     var pickedSubtitleFile by mutableStateOf<String?>(null); private set
     @Volatile private var subtitleRequest = 0
@@ -523,13 +536,16 @@ class RemoteState(
             var journalId: String? = null
             try {
                 if (warningKey != subtitleWarningKey) throw HelperClient.SubtitleRejected("pairing changed")
-                journalId = beginSubtitleMutation(folder.mediaId,warningKey)
+                journalId = beginSubtitleMutation(folder.mediaId,warningKey,true)
                 val loaded = HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id)
                 finishSubtitleMutation(journalId,false)
                 val refreshed = if (loaded) try { HelperClient.subtitleFiles(host, port, token) } catch (_: Exception) { null } else null
                 scope.launch {
                     if (request == subtitleRequest && host == store.host && token == store.helperToken) {
-                        reconcileSubtitleWarnings()
+                        val current=confirmedSubtitleMedia
+                        val result=readSubtitleWarnings(warningKey,current)
+                        if(request!=subtitleRequest || warningKey!=subtitleWarningKey)return@launch
+                        applySubtitleWarnings(warningKey,current,result)
                         if (loaded) {
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
@@ -582,7 +598,16 @@ class RemoteState(
                 val currentMedia = try { HelperClient.subtitleMedia(host,port,token) } catch (_: HelperClient.MissingRoute) { null }
                 if (trackId != -1 && mediaId != null && currentMedia != null && mediaId != currentMedia) throw HelperClient.SubtitleRejected("movie changed")
                 dispatchedMedia = currentMedia ?: confirmedSubtitleMedia
-                journalId = beginSubtitleMutation(dispatchedMedia,warningKey)
+                try { journalId = beginSubtitleMutation(dispatchedMedia,warningKey) }
+                catch (_: HelperClient.SubtitleRejected) {
+                    // Existing track controls remain usable when history storage is
+                    // unavailable, but cannot claim a confirmed durable outcome.
+                    scope.launch { if(warningKey==subtitleWarningKey){
+                        degradedSubtitlePairs.add(warningKey)
+                        subtitleOutcomeUnknown=true
+                        subtitleMutationError="Subtitle history couldn't be saved. Existing controls are best-effort; the selected state is unconfirmed."
+                    } }
+                }
                 dispatched = true
                 if (currentMedia == null || !HelperClient.selectSubtitle(host, port, token, trackId, currentMedia)) {
                     if (HelperClient.screenIsDark(host, port, token)) {
@@ -593,7 +618,14 @@ class RemoteState(
                 }
                 finishSubtitleMutation(journalId,false)
                 scope.launch {
-                    if (warningKey == subtitleWarningKey && request == subtitleRequest) { reconcileSubtitleWarnings(); pickedSubtitleFile = null; if (!subtitleOutcomeUnknown) pickedSubtitle = trackId; subtitleMutationLoading = false }
+                    if (warningKey == subtitleWarningKey && request == subtitleRequest) {
+                        val current=confirmedSubtitleMedia
+                        val result=readSubtitleWarnings(warningKey,current)
+                        if(request!=subtitleRequest || warningKey!=subtitleWarningKey)return@launch
+                        applySubtitleWarnings(warningKey,current,result)
+                        pickedSubtitleFile=null;if(!subtitleOutcomeUnknown)pickedSubtitle=trackId
+                        subtitleMutationLoading=false
+                    }
                 }
             } catch (_: HelperClient.SubtitleRejected) {
                 finishSubtitleMutation(journalId,false)

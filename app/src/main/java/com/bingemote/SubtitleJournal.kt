@@ -27,16 +27,24 @@ internal class SubtitleJournal(context: Context) {
         }
         val arr=JSONObject(bytes.toString(Charsets.UTF_8)).getJSONArray("entries")
         check(arr.length()<=1024)
+        val ids=mutableSetOf<String>()
         return (0 until arr.length()).map {
             val o=arr.getJSONObject(it)
             val e=Entry(o.getString("id"),o.getString("pair"),o.getString("media"),o.getString("phase"))
-            check(e.id.length in 1..64 && e.pair.matches(Regex("[a-f0-9]{64}|pair")) && e.media.length<=64 && e.phase in setOf("pending","unknown"))
+            check(ids.add(e.id) && e.id.length in 1..64 && e.pair.matches(Regex("[a-f0-9]{64}|pair")) && e.media.length<=64 && e.phase in setOf("pending","unknown"))
             e
         }.toMutableList()
     }
     private fun compact(entries: List<Entry>): List<Entry> {
-        val seen=mutableSetOf<String>()
-        return entries.filter { it.phase=="pending" || seen.add(it.pair+":"+it.media) }
+        val result=mutableListOf<Entry>()
+        entries.groupBy{it.pair}.forEach{(pair,group)->
+            result.addAll(group.filter{it.phase=="pending"})
+            val unknown=group.filter{it.phase=="unknown"}.distinctBy{it.media}
+            if(unknown.size>32 || unknown.any{it.media.isEmpty()})
+                result.add(Entry("coarse-"+pair.take(48),pair,"","unknown"))
+            else result.addAll(unknown)
+        }
+        return result
     }
     private fun write(entries: List<Entry>) {
         val compact=compact(entries);check(compact.size<=1024)
@@ -58,14 +66,20 @@ internal class SubtitleJournal(context: Context) {
                 else -> e
             }
         }.toMutableList()
+        val represented = completed.filter { (id, unknown) ->
+            val existing=original.firstOrNull{it.id==id}
+            existing==null || (unknown && existing.phase=="unknown")
+        }.keys
+        completed.keys.removeAll(represented)
         if(entries!=original) {
             try{write(entries);completed.keys.removeAll{ id->original.any{it.id==id} }}catch(_:Exception){ /* known results remain in memory for retry */ }
         }
         return compact(entries).toMutableList()
     }
     fun entries(pair:String):List<Entry> = synchronized(lock){reconciled().filter{it.pair==pair}}
-    fun begin(pair:String,media:String?):String = synchronized(lock){
+    fun begin(pair:String,media:String?,folderLoad:Boolean=false):String = synchronized(lock){
         val entries=reconciled()
+        if(folderLoad)check(entries.none{it.pair==pair && (it.media.isEmpty() || it.media==media)}){"A previous file load is still unconfirmed"}
         check(entries.count{it.pair==pair && it.phase=="pending"}<16){"Subtitle requests still pending"}
         val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);live.add(id);id
     }
