@@ -90,9 +90,12 @@ public class SubtitleTests : IDisposable
                     }
                 });
                 try{
-                    var slowLoad=Subtitles.Load(root,8100,"fixture",media,delayedId);
+                    using var routedList=JsonDocument.Parse(await Subtitles.List(root,8100,"fixture"));
+                    var routedMedia=routedList.RootElement.GetProperty("mediaId").GetString()!;
+                    var routedId=routedList.RootElement.GetProperty("files").EnumerateArray().Single(x=>x.GetProperty("name").GetString()=="delayed.srt").GetProperty("id").GetString()!;
+                    var slowLoad=Subtitles.Load(root,8100,"fixture",routedMedia,routedId);
                     await addSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                    var finalOff=Subtitles.Select(8100,"fixture",-1,root,media);
+                    var finalOff=Subtitles.Select(8100,"fixture",-1,root,routedMedia);
                     Assert.Equal(409,(await slowLoad).status);
                     Assert.Equal(200,(await finalOff).status);
                     using var finalProbe=JsonDocument.Parse(await raw.GetStringAsync("http://127.0.0.1:8099/requests/bm-subtitle-probe.json"));
