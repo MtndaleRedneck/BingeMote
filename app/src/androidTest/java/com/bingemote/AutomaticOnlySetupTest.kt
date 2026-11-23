@@ -16,6 +16,29 @@ class AutomaticOnlySetupTest {
         device.waitForIdle()
     }
 
+    @Test fun updateSuccessSharesVersionRowAndExpires() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "settings").putExtra("updateResult", "You're up to date."))
+        assertTrue(device.wait(Until.hasObject(By.text("Settings")), 10000))
+        repeat(6) {
+            device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                device.displayWidth / 2, device.displayHeight / 4, 5)
+        }
+        val version = device.findObject(By.text("Version " + BuildConfig.VERSION_NAME))
+        val success = device.findObject(By.text("You're up to date."))
+        assertNotNull(version)
+        assertNotNull(success)
+        assertEquals(version.visibleBounds.centerY(), success.visibleBounds.centerY())
+        assertTrue(success.visibleBounds.left > version.visibleBounds.right)
+        device.takeScreenshot(java.io.File("/sdcard/bm-updates-success.png"))
+        assertTrue(device.wait(Until.gone(By.text("You're up to date.")), 7000))
+        assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
+        device.takeScreenshot(java.io.File("/sdcard/bm-updates-expired.png"))
+    }
+
     @Test fun cancelReturnsToSettingsAndBottomBackIsAbsent() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         Store(ctx).setupDone = true
