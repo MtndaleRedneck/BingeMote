@@ -20,3 +20,12 @@ if($childOut -notmatch 'Different Windows account' -or $childOut -match 'cannot 
 if($p.ExitCode -ne 1){throw 'Real child profile refusal exit incorrect'}
 Write-Host 'PASS real Windows PowerShell child profile guard/error exit'
 Write-Host 'NOT COVERED: interactive UAC consent dialog or human desktop pixels on hosted service runner.'
+# Actual CMD entrypoint with absolute PowerShell. Hosted runner admin must safely refuse user phase.
+Copy-Item "$PSScriptRoot\BingeMote-Reset.ps1" $dir
+$psi=New-Object Diagnostics.ProcessStartInfo
+$psi.FileName=$env:ComSpec;$psi.Arguments='/d /c ""'+(Join-Path $dir 'BingeMote-Reset.cmd')+'""';$psi.WorkingDirectory=$dir;$psi.UseShellExecute=$false;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+$p=[Diagnostics.Process]::Start($psi);$p.StandardInput.WriteLine();$p.StandardInput.WriteLine();$p.StandardInput.Close()
+if(!$p.WaitForExit(15000)){$p.Kill();throw 'Real CMD entry timed out'}
+$entryOut=$p.StandardOutput.ReadToEnd();$entryErr=$p.StandardError.ReadToEnd();Write-Host $entryOut;Write-Host $entryErr
+if($p.ExitCode -ne 1 -or $entryOut -notmatch 'NOT as administrator' -or $entryOut -notmatch 'Reset did not finish completely'){throw 'Real CMD did not preserve correct safe refusal/error'}
+Write-Host 'PASS REAL CMD ENTRYPOINT: absolute native PowerShell path with spaces/metacharacters, admin refusal, exit1 propagated'

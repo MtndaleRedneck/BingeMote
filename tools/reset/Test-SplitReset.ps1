@@ -53,6 +53,7 @@ try {
  if($p.ExitCode -ne 0){if(Test-Path "$common\error.txt"){Get-Content "$common\error.txt"};throw 'Real standard-user phase failed'}
  Write-Host 'PASS REAL STANDARD USER: profile quarantine/backup and VLC reset, no admin rights'
 } finally {Remove-LocalUser $testName}
+$env:PSModulePath=(Join-Path $env:TEMP 'untrusted-module-decoy')+';'+$env:PSModulePath
 $code=Invoke-MachineReset
 if($code -ne 0){throw "Machine reset failed: $code"}
 if(Test-Path $uk){throw 'Machine uninstall entry remains'}
