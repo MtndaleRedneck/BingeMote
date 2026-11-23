@@ -260,12 +260,14 @@ jobs:
           Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
 
       - name: Render the window for layout review (CI only)
+        timeout-minutes: 5
         run: |
           dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
           $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
           & helper/shot/BingeMote.exe --window-shot
           $env:BINGEMOTE_DIALOG_SHOTS = "$PWD\helper"
-          $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -Wait -PassThru
+          $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -PassThru
+          if (-not $dialogRun.WaitForExit(45000)) { Stop-Process -Id $dialogRun.Id -Force; throw 'Native dialog fixture exceeded 45 second bound' }
           if ($dialogRun.ExitCode -ne 0) { throw "Native dark-dialog capture failed: $($dialogRun.ExitCode)" }
           foreach ($name in @('confirm', 'note', 'wifi')) {
             if (-not (Test-Path "helper/dialog-$name.png")) { throw "Missing native dialog capture: $name" }
