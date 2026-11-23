@@ -208,6 +208,7 @@ class RemoteState(
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
                 lastTitle = s.title; lastLengthSec = s.lengthSec
                 subtitleRequest++
+                subtitleListRequest++
                 subtitleFilesLoading = false
                 pickedSubtitle = null
                 pickedSubtitleFile = null
@@ -287,13 +288,14 @@ class RemoteState(
     // Taps carry their time: a play/pause/skip/seek queued more than about 2 s (a dead
     // PC, a stalled request) is a tap he no longer expects, so it is dropped - and a
     // burst of volume steps folds into the newest one.
-    private class Cmd(val kind: String, val ts: Long, val block: () -> Unit)
+    private class Cmd(val kind: String, val ts: Long, val subtitleGeneration: Int = -1, val block: () -> Unit)
     private val cmds = Channel<Cmd>(Channel.UNLIMITED)
     @Volatile private var pushback: Cmd? = null // one non-volume command held while volume folds
     init {
         scope.launch(Dispatchers.IO) {
             while (isActive) {
                 var c = pushback?.also { pushback = null } ?: cmds.receive()
+                if (c.kind == "sub" && c.subtitleGeneration != subtitleRequest) continue
                 if (c.kind == "volume") {
                     while (true) {
                         val nxt = cmds.tryReceive().getOrNull() ?: break
@@ -322,7 +324,7 @@ class RemoteState(
                 block()
             }
         }
-        cmds.trySend(Cmd(kind, System.currentTimeMillis(), gated))
+        cmds.trySend(Cmd(kind, System.currentTimeMillis(), block = gated))
     }
 
     fun togglePause() {
@@ -406,7 +408,9 @@ class RemoteState(
     var subtitleFilesLoading by mutableStateOf(false); private set
     var subtitleFileError by mutableStateOf<String?>(null); private set
     var pickedSubtitleFile by mutableStateOf<String?>(null); private set
-    private var subtitleRequest = 0
+    @Volatile private var subtitleRequest = 0
+    private var subtitleListRequest = 0
+    private var subtitleListInFlight = false
 
     internal fun debugSubtitlePreview() {
         if (!BuildConfig.DEBUG) return
@@ -419,26 +423,28 @@ class RemoteState(
     }
     fun refreshSubtitleFiles(quiet: Boolean = false) {
         if (BuildConfig.DEBUG && subtitleFolder?.mediaId == "demo") return
-        val request = ++subtitleRequest
-        if (!quiet) subtitleFilesLoading = true
-        subtitleFileError = null
+        if (subtitleListInFlight) return
+        subtitleListInFlight = true
+        val request = ++subtitleListRequest
+        val mutationAtStart = subtitleRequest
+        if (!quiet) { subtitleFilesLoading = true; subtitleFileError = null }
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         scope.launch {
             try {
                 val folder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
-                if (request == subtitleRequest) {
-                    if (subtitleFolder?.mediaId != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
+                if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
+                    if (subtitleFolder != null && subtitleFolder?.mediaId != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
                     subtitleFolder = folder
                     if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
                     else if (folder.truncated) subtitleFileError = "This folder is large. Only some subtitle files are shown."
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
-                if (request == subtitleRequest) {
+                if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
                     subtitleFolder = null
                     subtitleFileError = "Folder subtitles need the updated PC app and a connection to it."
                 }
-            } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
+            } finally { subtitleListInFlight = false; if (request == subtitleListRequest && mutationAtStart == subtitleRequest) subtitleFilesLoading = false }
         }
     }
     fun loadSubtitleFile(file: HelperClient.SubtitleFile) {
@@ -449,7 +455,7 @@ class RemoteState(
         subtitleFilesLoading = true
         // Same ordered command lane as Off/loaded-track selection. A later Off cannot
         // overtake a slow add and then be undone when that add eventually lands.
-        cmds.trySend(Cmd("sub", System.currentTimeMillis()) {
+        cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
             try {
                 val loaded = HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id)
                 val refreshed = if (loaded) try { HelperClient.subtitleFiles(host, port, token) } catch (_: Exception) { null } else null
@@ -459,7 +465,7 @@ class RemoteState(
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
                             subtitleFolder = refreshed
-                            if (refreshed == null) subtitleFileError = "Subtitle loaded. Couldn't refresh the list. Tap Retry."
+                            if (refreshed == null || refreshed.unavailable) subtitleFileError = "Subtitle loaded. Couldn't refresh the list. Tap Retry."
                         } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
                         subtitleFilesLoading = false
                     }
@@ -481,11 +487,12 @@ class RemoteState(
         val request = subtitleRequest
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         val vlcPort = store.vlcPort; val password = store.vlcPassword
+        val mediaId = subtitleFolder?.mediaId.orEmpty()
         subtitleFileError = null
         subtitleFilesLoading = true
-        cmds.trySend(Cmd("sub", System.currentTimeMillis()) {
+        cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
             try {
-                if (!HelperClient.selectSubtitle(host, port, token, trackId)) {
+                if (!HelperClient.selectSubtitle(host, port, token, trackId, mediaId)) {
                     if (HelperClient.screenIsDark(host, port, token)) {
                         HelperClient.wakeDisplay(host, port, token)
                         throw IllegalStateException("wake only")

@@ -155,7 +155,7 @@ internal sealed class HttpServer : IDisposable
                         if (PowerWake.ShouldSwallowDiscrete()) { Reply(res, 200, "{\"woke\":true}"); return; }
                         using var doc = JsonDocument.Parse(ReadBody(req));
                         var answer = await Subtitles.Select(int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var selectPort) && selectPort is > 0 and <= 65535 ? selectPort : 8080,
-                            VlcSetup.EffectivePassword() ?? "", doc.RootElement.GetProperty("trackId").GetInt32());
+                            VlcSetup.EffectivePassword() ?? "", doc.RootElement.GetProperty("trackId").GetInt32(), Program.MoviesFolder ?? "", doc.RootElement.GetProperty("mediaId").GetString());
                         Reply(res, answer.status, answer.body);
                     }
                     return;
