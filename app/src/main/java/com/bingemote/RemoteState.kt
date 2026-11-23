@@ -209,7 +209,7 @@ class RemoteState(
                 lastTitle = s.title; lastLengthSec = s.lengthSec
                 subtitleRequest++
                 subtitleListRequest++
-                subtitleFilesLoading = false
+                subtitleMutationLoading = false
                 pickedSubtitle = null
                 pickedSubtitleFile = null
                 subtitleFolder = null
@@ -304,7 +304,7 @@ class RemoteState(
                     }
                 } else if (c.kind != "sub" && System.currentTimeMillis() - c.ts > CmdPolicy.EXPIRY_MS) {
                     Diag.cmdsExpired.incrementAndGet()
-                    if (c.kind == "sub") scope.launch { subtitleFilesLoading = false }
+                    if (c.kind == "sub") scope.launch { subtitleMutationLoading = false }
                     continue
                 }
                 try { c.block() } catch (_: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
@@ -405,8 +405,13 @@ class RemoteState(
     }
 
     var subtitleFolder by mutableStateOf<HelperClient.SubtitleFolder?>(null); private set
-    var subtitleFilesLoading by mutableStateOf(false); private set
-    var subtitleFileError by mutableStateOf<String?>(null); private set
+    private var subtitleListLoading by mutableStateOf(false)
+    private var subtitleMutationLoading by mutableStateOf(false)
+    val subtitleFilesLoading get() = subtitleListLoading || subtitleMutationLoading
+    private var subtitleListError by mutableStateOf<String?>(null)
+    private var subtitleMutationError by mutableStateOf<String?>(null)
+    val subtitleFileError get() = subtitleMutationError ?: subtitleListError
+    private var confirmedSubtitleMedia: String? = null
     var pickedSubtitleFile by mutableStateOf<String?>(null); private set
     @Volatile private var subtitleRequest = 0
     private var subtitleListRequest = 0
@@ -427,32 +432,34 @@ class RemoteState(
         subtitleListInFlight = true
         val request = ++subtitleListRequest
         val mutationAtStart = subtitleRequest
-        if (!quiet) { subtitleFilesLoading = true; subtitleFileError = null }
+        if (!quiet) { subtitleListLoading = true; subtitleListError = null }
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         scope.launch {
             try {
                 val folder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
-                    if (subtitleFolder != null && subtitleFolder?.mediaId != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
+                    if (confirmedSubtitleMedia != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
+                    if (!folder.unavailable) confirmedSubtitleMedia = folder.mediaId
                     subtitleFolder = folder
-                    if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
-                    else if (folder.truncated) subtitleFileError = "This folder is large. Only some subtitle files are shown."
+                    subtitleListError = null
+                    if (folder.unavailable) subtitleListError = "Can't check subtitle files right now."
+                    else if (folder.truncated) subtitleListError = "This folder is large. Only some subtitle files are shown."
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
                     subtitleFolder = null
-                    subtitleFileError = "Folder subtitles need the updated PC app and a connection to it."
+                    subtitleListError = "Folder subtitles need the updated PC app and a connection to it."
                 }
-            } finally { subtitleListInFlight = false; if (request == subtitleListRequest && mutationAtStart == subtitleRequest) subtitleFilesLoading = false }
+            } finally { subtitleListInFlight = false; if (request == subtitleListRequest) subtitleListLoading = false }
         }
     }
     fun loadSubtitleFile(file: HelperClient.SubtitleFile) {
         val folder = subtitleFolder ?: return
         val request = ++subtitleRequest
         val host = store.host; val port = store.helperPort; val token = store.helperToken
-        subtitleFileError = null
-        subtitleFilesLoading = true
+        subtitleMutationError = null
+        subtitleMutationLoading = true
         // Same ordered command lane as Off/loaded-track selection. A later Off cannot
         // overtake a slow add and then be undone when that add eventually lands.
         cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
@@ -465,16 +472,16 @@ class RemoteState(
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
                             subtitleFolder = refreshed
-                            if (refreshed == null || refreshed.unavailable) subtitleFileError = "Subtitle loaded. Couldn't refresh the list. Tap Retry."
-                        } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
-                        subtitleFilesLoading = false
+                            if (refreshed == null || refreshed.unavailable) subtitleMutationError = "Subtitle loaded. Couldn't refresh the list. Tap Retry."
+                        } else subtitleMutationError = "Screen woken. Tap the subtitle again to load it."
+                        subtitleMutationLoading = false
                     }
                 }
             } catch (_: Exception) {
                 scope.launch {
                     if (request == subtitleRequest) {
-                        subtitleFileError = "Couldn't load that subtitle. Check the movie and try again."
-                        subtitleFilesLoading = false
+                        subtitleMutationError = "Couldn't load that subtitle. Check the movie and try again."
+                        subtitleMutationLoading = false
                     }
                 }
             }
@@ -483,16 +490,18 @@ class RemoteState(
 
     fun pickSubtitle(trackId: Int) {
         subtitleRequest++
-        subtitleFilesLoading = false
+        subtitleMutationLoading = false
         val request = subtitleRequest
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         val vlcPort = store.vlcPort; val password = store.vlcPassword
-        val mediaId = subtitleFolder?.mediaId.orEmpty()
-        subtitleFileError = null
-        subtitleFilesLoading = true
+        val mediaId = confirmedSubtitleMedia
+        subtitleMutationError = null
+        subtitleMutationLoading = true
         cmds.trySend(Cmd("sub", System.currentTimeMillis(), request) {
             try {
-                if (!HelperClient.selectSubtitle(host, port, token, trackId, mediaId)) {
+                val currentMedia = try { HelperClient.subtitleMedia(host,port,token) } catch (_: HelperClient.MissingRoute) { null }
+                if (mediaId != null && currentMedia != null && mediaId != currentMedia) throw IllegalStateException("movie changed")
+                if (currentMedia == null || !HelperClient.selectSubtitle(host, port, token, trackId, currentMedia)) {
                     if (HelperClient.screenIsDark(host, port, token)) {
                         HelperClient.wakeDisplay(host, port, token)
                         throw IllegalStateException("wake only")
@@ -500,13 +509,13 @@ class RemoteState(
                     Vlc.setSubtitleTrack(host, vlcPort, password, trackId)
                 }
                 scope.launch {
-                    if (request == subtitleRequest) { pickedSubtitleFile = null; pickedSubtitle = trackId; subtitleFilesLoading = false }
+                    if (request == subtitleRequest) { pickedSubtitleFile = null; pickedSubtitle = trackId; subtitleMutationLoading = false }
                 }
             } catch (_: Exception) {
                 scope.launch {
                     if (request == subtitleRequest) {
-                        subtitleFileError = "Couldn't change subtitles. Check the movie and try again."
-                        subtitleFilesLoading = false
+                        subtitleMutationError = "Couldn't change subtitles. Check the movie and try again."
+                        subtitleMutationLoading = false
                     }
                 }
             }

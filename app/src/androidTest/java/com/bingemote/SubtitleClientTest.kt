@@ -28,7 +28,7 @@ class SubtitleClientTest {
                     val body = CharArray(len); var n = 0
                     while (n < len) { val k = reader.read(body, n, len-n); if (k < 0) break; n += k }
                     requests.add(line + "\n" + headers.joinToString("\n") + "\n" + String(body))
-                    val json = if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else """{"ok":true}"""
+                    val json = if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else if (line.contains("/subtitles/media")) """{"mediaId":"opaque-movie"}""" else """{"ok":true}"""
                     val code = if (oldPc) "404 Not Found" else "200 OK"
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val bytes = if (responseBytes > 0) ByteArray(responseBytes) { 32 } else json.toByteArray()

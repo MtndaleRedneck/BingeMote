@@ -143,6 +143,11 @@ internal sealed class HttpServer : IDisposable
                     }
                     return;
 
+                case "/subtitles/media":
+                    if (!Authorized(req)) { Reply(res,401,"{}"); return; }
+                    if (req.HttpMethod != "GET") { Reply(res,405,"{}"); return; }
+                    Reply(res,200,await Subtitles.Media(int.TryParse(VlcSetup.ReadVlcrcValue("http-port"),out var mediaPort) && mediaPort is >0 and <=65535 ? mediaPort :8080,VlcSetup.EffectivePassword() ?? ""));
+                    return;
                 case "/subtitles/list":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     if (req.HttpMethod != "GET") { Reply(res, 405, "{}"); return; }

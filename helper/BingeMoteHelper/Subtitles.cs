@@ -50,7 +50,7 @@ internal static class Subtitles
             var name = Path.GetFileName(safe);
             if (name.Length > 255) continue;
             var candidateId = Hash(mediaId + "|" + name.ToUpperInvariant());
-            entries.Add(new Candidate(candidateId, name, Loaded.TryGetValue(candidateId, out var ids) ? ids : Array.Empty<int>()));
+            entries.Add(new Candidate(candidateId, name, Loaded.TryGetValue(candidateId, out var ids) ? ids.Take(32).ToArray() : Array.Empty<int>()));
             if (entries.Count >= 200) { truncated = true; break; }
         }
         return new Snapshot(mediaId, f, entries.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToArray(), truncated);
@@ -86,7 +86,7 @@ internal static class Subtitles
         if (e.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray()) foreach (var node in Nodes(child)) yield return node;
     }
-    private static async Task<Snapshot?> Current(string root, int port, string password) {
+    private static async Task<Snapshot?> Current(string root, int port, string password, bool enumerate = true) {
         using var status = await Get(port, password, "status.json");
         if (!status.RootElement.TryGetProperty("state", out var state) || state.GetString() is not ("playing" or "paused")) return null;
         using var playlist = await Get(port, password, "playlist.json");
@@ -102,9 +102,13 @@ internal static class Subtitles
             if (processes.Length != 1) return null;
             id += "|" + processes[0].Id + "|" + processes[0].StartTime.ToUniversalTime().Ticks;
         } finally { foreach (var process in processes) process.Dispose(); }
-        if (!uri.IsFile || uri.IsUnc)
-            return new Snapshot(Hash(uri.AbsoluteUri + "|" + id), "", Array.Empty<Candidate>(), false);
+        if (!enumerate || !uri.IsFile || uri.IsUnc)
+            return new Snapshot(Hash((uri.IsFile && !uri.IsUnc ? uri.LocalPath.ToUpperInvariant() : uri.AbsoluteUri) + "|" + id), "", Array.Empty<Candidate>(), false);
         return SnapshotFor(root, uri.LocalPath, id) ?? new Snapshot(Hash(uri.LocalPath.ToUpperInvariant() + "|" + id), uri.LocalPath, Array.Empty<Candidate>(), false);
+    }
+    internal static async Task<string> Media(int port, string password) {
+        var current = await Current("", port, password, false);
+        return JsonSerializer.Serialize(new { mediaId = current?.MediaId ?? "" });
     }
     internal static async Task<string> List(string root, int port, string password) {
         try {
@@ -159,12 +163,12 @@ internal static class Subtitles
         if (trackId < -1) return (400, "{\"error\":\"invalid track\"}");
         var selection = Interlocked.Increment(ref latestSelection);
         if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         OperationToken.Value = deadline.Token;
         try {
             if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             if (root != null) {
-                var current = await Current(root, port, password);
+                var current = await Current(root, port, password, false);
                 if (current == null || current.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
             }
             using var response = await Get(port, password, "status.json?command=subtitle_track&val=" + trackId);
