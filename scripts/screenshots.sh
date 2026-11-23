@@ -93,6 +93,13 @@ adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true >/dev/null
 sleep 8
 # Quick settings first: the media card sits at the top of this surface.
+# The shade notification row itself, unlocked: the demo bar as it actually renders
+# (chevron-removal pixel check - no expand affordance may sit on the row).
+adb shell cmd statusbar expand-notifications
+sleep 3
+adb exec-out screencap -p > "screenshots/bar-shade.png"
+adb shell cmd statusbar collapse
+sleep 2
 adb shell cmd statusbar expand-settings
 sleep 3
 adb exec-out screencap -p > "screenshots/lockscreen-controls.png"
