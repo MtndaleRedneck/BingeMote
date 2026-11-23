@@ -136,6 +136,8 @@ class HapticTickTest {
         /** Next N commands are NOT applied and answer 500 after their delay. */
         @Volatile var failCommands = 0
         @Volatile var failStatus = false
+        @Volatile var beforeStatusResponse: (() -> Unit)? = null
+        @Volatile var beforeCommandResponse: (() -> Unit)? = null
         private val running = AtomicBoolean(true)
         private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val port = server.localPort
@@ -157,6 +159,7 @@ class HapticTickTest {
                                     if (!fail && line.contains("pl_pause")) state = if (state == "playing") "paused" else "playing"
                                     commands += line.substringAfter('?', "")
                                     if (commandDelayMs > 0) Thread.sleep(commandDelayMs)
+                                    beforeCommandResponse?.invoke()
                                     if (fail) {
                                         val out = sock.getOutputStream()
                                         out.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
@@ -173,6 +176,7 @@ class HapticTickTest {
                                     polls.incrementAndGet()
                                     if (statusDelayMs > 0) Thread.sleep(statusDelayMs)
                                 }
+                                if (!line.contains("command=")) beforeStatusResponse?.invoke()
                                 val body = """{"time":30,"length":3600,"volume":128,"state":"$snap","information":{"category":{"meta":{"filename":"demo.mkv"}}}}"""
                                 val out = sock.getOutputStream()
                                 out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body".toByteArray())
@@ -527,11 +531,11 @@ class ImmediateFlipTest {
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue(posts.count { !it.playing } >= 2)
-            MediaControlsService.beforePollCommit = {
-                MediaControlsService.afterPollAttempt = { returned.countDown() }
+            stub.beforeStatusResponse = {
                 held.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
+            MediaControlsService.afterPollAttempt = { returned.countDown() }
             MediaControlsService.requestTestPoll?.invoke()
             assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
             awaitServiceDestroyed(ctx)
@@ -557,7 +561,7 @@ class ImmediateFlipTest {
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue(posts.count { !it.playing } >= 2)
-            MediaControlsService.beforePlaybackDelivery = {
+            stub.beforeCommandResponse = {
                 held.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
