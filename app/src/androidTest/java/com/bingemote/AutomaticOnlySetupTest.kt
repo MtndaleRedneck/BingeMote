@@ -77,7 +77,7 @@ class AutomaticOnlySetupTest {
         fields.first().text = "192.0.2.20"
         Thread.sleep(500)
         assertFalse(device.hasObject(By.text("Code from your PC")))
-        if (device.isNaturalOrientation) device.pressBack()
+        if (device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")) device.pressBack()
         repeat(3) {
             if (!device.hasObject(By.text("Use this address"))) {
                 device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
