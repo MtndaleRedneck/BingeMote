@@ -72,6 +72,8 @@ class MediaControlsService : Service() {
         android.os.SystemClock.elapsedRealtime() - lastConnectedAt <= 5000
     private var failures = 0
     private val commandEpoch = java.util.concurrent.atomic.AtomicLong()
+    private val pollVersion = java.util.concurrent.atomic.AtomicLong()
+    private var pendingPlayback = 0
     private val pollMutex = Mutex()
     private var foregroundStarted = false
     private var lastRender: List<Any?>? = null
@@ -144,7 +146,7 @@ class MediaControlsService : Service() {
         // Disconnected Play stays tappable but is a no-op, including no tick.
         // Only a recent successful VLC poll permits optimistic state feedback.
         if (intent?.action == ACTION_MEDIA_PLAY_PAUSE && !playbackConnected()) return START_STICKY
-        if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) { commandEpoch.incrementAndGet(); tick() }
+        if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) { commandEpoch.incrementAndGet(); pollVersion.incrementAndGet(); tick() }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
             ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
@@ -155,6 +157,7 @@ class MediaControlsService : Service() {
                 // never lands, revert - but only when no newer bar action superseded
                 // this press (a late failure must not stomp a later flip). The 2 s
                 // poll reconciles any remaining divergence with the PC's real state.
+                pendingPlayback++
                 val prev = lastPlaying
                 val epochAtPress = commandEpoch.get()
                 lastPlaying = !prev
@@ -162,6 +165,7 @@ class MediaControlsService : Service() {
                 scope.launch {
                     try {
                         val store = Store(this@MediaControlsService)
+                        if (BuildConfig.DEBUG) beforePlaybackDelivery?.invoke()
                         Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
@@ -171,6 +175,11 @@ class MediaControlsService : Service() {
                                 lastPlaying = prev
                                 postMediaNotification(prev, 0, 0, lastStatus?.title)
                             }
+                        }
+                    } finally {
+                        synchronized(this@MediaControlsService) {
+                            pendingPlayback--
+                            pollVersion.incrementAndGet()
                         }
                     }
                     refreshNow()
@@ -211,6 +220,7 @@ class MediaControlsService : Service() {
         internal var postProbe: ((Boolean) -> Unit)? = null
         /** Debug-only barrier before atomic poll commit, never a production hook. */
         internal var beforePollCommit: (() -> Unit)? = null
+        internal var beforePlaybackDelivery: (() -> Unit)? = null
     }
 
     private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
@@ -224,7 +234,10 @@ class MediaControlsService : Service() {
                         stopSelf()
                 return
             }
-            val epoch = commandEpoch.get()
+            val epoch = synchronized(this@MediaControlsService) {
+                if (pendingPlayback > 0) return
+                pollVersion.get()
+            }
             val st = try {
                 Vlc.status(store.host, store.vlcPort, store.vlcPassword)
             } catch (e: Vlc.BadAuth) {
@@ -241,12 +254,12 @@ class MediaControlsService : Service() {
                 if (failures >= 5) { stopSelf() }
                 return
             }
-            if (epoch != commandEpoch.get()) return
+            if (epoch != pollVersion.get()) return
             if (BuildConfig.DEBUG) beforePollCommit?.invoke()
             // One monitor protects epoch validation, state mutation and the post.
             // onStartCommand takes the same monitor before its epoch bump/flip.
             synchronized(this@MediaControlsService) {
-                if (epoch != commandEpoch.get()) return
+                if (epoch != pollVersion.get() || pendingPlayback > 0) return
                 failures = 0
                 lastConnectedAt = android.os.SystemClock.elapsedRealtime()
                 val playing = st.playing
