@@ -738,7 +738,13 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
     val folder = remote.subtitleFolder
     val mapped = folder?.files?.flatMap { it.trackIds }?.toSet() ?: emptySet()
     val loadedTracks = tracks.filter { it.id !in mapped }
-    LaunchedEffect(Unit) { remote.refreshSubtitleFiles() }
+    LaunchedEffect(Unit) {
+        remote.refreshSubtitleFiles()
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            if (!remote.subtitleFilesLoading) remote.refreshSubtitleFiles(quiet = true)
+        }
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -765,7 +771,7 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
             Text("Subtitles", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(14.dp))
             SubtitleRow("Off", remote.pickedSubtitleFile == null && (picked == -1 || (picked == null && tracks.none { it.selected })), remote.store.haptics) {
-                remote.pickSubtitle(-1); onClose()
+                remote.pickSubtitle(-1)
             }
             SubtitleDivider()
             if (remote.subtitleFilesLoading && folder == null) {
@@ -775,18 +781,21 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
                 val checked = remote.pickedSubtitleFile == file.id ||
                     (remote.pickedSubtitleFile == null && file.trackIds.any { id -> if (picked != null) picked == id else tracks.any { it.id == id && it.selected } })
                 SubtitleRow(file.name.substringBeforeLast('.'), checked, remote.store.haptics) {
-                    if (!remote.subtitleFilesLoading) remote.loadSubtitleFile(file)
+                    remote.loadSubtitleFile(file)
                 }
             }
-            remote.subtitleFileError?.let { Text(it, color = Muted, fontSize = 13.sp, lineHeight = 18.sp) }
+            remote.subtitleFileError?.let {
+                Text(it, color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                SubtitleRow("Retry", false, remote.store.haptics) { remote.refreshSubtitleFiles() }
+            }
             if (folder?.files?.isNotEmpty() == true && loadedTracks.isNotEmpty()) SubtitleDivider()
             loadedTracks.forEach { t ->
                 val checked = remote.pickedSubtitleFile == null && (if (picked != null) picked == t.id else t.selected)
                 SubtitleRow(t.name, checked, remote.store.haptics) {
-                    remote.pickSubtitle(t.id); onClose()
+                    remote.pickSubtitle(t.id)
                 }
             }
-            if (tracks.isEmpty() && folder?.files.isNullOrEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null) {
+            if (tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null) {
                 Spacer(Modifier.height(6.dp))
                 Text("No subtitle tracks or files found.", color = Muted, fontSize = 13.sp)
             }

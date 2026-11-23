@@ -148,6 +148,17 @@ internal sealed class HttpServer : IDisposable
                     if (req.HttpMethod != "GET") { Reply(res, 405, "{}"); return; }
                     Reply(res, 200, await Subtitles.List(Program.MoviesFolder ?? "", int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var listPort) && listPort is > 0 and <= 65535 ? listPort : 8080, VlcSetup.EffectivePassword() ?? ""));
                     return;
+                case "/subtitles/select":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    if (req.HttpMethod != "POST") { Reply(res, 405, "{}"); return; }
+                    {
+                        if (PowerWake.ShouldSwallowDiscrete()) { Reply(res, 200, "{\"woke\":true}"); return; }
+                        using var doc = JsonDocument.Parse(ReadBody(req));
+                        var answer = await Subtitles.Select(int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var selectPort) && selectPort is > 0 and <= 65535 ? selectPort : 8080,
+                            VlcSetup.EffectivePassword() ?? "", doc.RootElement.GetProperty("trackId").GetInt32());
+                        Reply(res, answer.status, answer.body);
+                    }
+                    return;
                 case "/subtitles/load":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     if (req.HttpMethod != "POST") { Reply(res, 405, "{}"); return; }
@@ -551,10 +562,20 @@ internal sealed class HttpServer : IDisposable
     private static string ReadBody(HttpListenerRequest req)
     {
         if (req.ContentLength64 > 64 * 1024) throw new InvalidDataException("Request too large");
-        using var reader = new StreamReader(req.InputStream, Encoding.UTF8);
-        var s = reader.ReadToEnd();
-        if (s.Length > 64 * 1024) throw new InvalidDataException("Request too large");
-        return s;
+        return ReadBoundedBody(req.InputStream).GetAwaiter().GetResult();
+    }
+
+    internal static async Task<string> ReadBoundedBody(Stream input) {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var output = new MemoryStream();
+        var buffer = new byte[4096];
+        while (true) {
+            var n = await input.ReadAsync(buffer.AsMemory(), timeout.Token).AsTask().WaitAsync(timeout.Token);
+            if (n == 0) break;
+            if (output.Length + n > 64 * 1024) throw new InvalidDataException("Request too large");
+            output.Write(buffer, 0, n);
+        }
+        return Encoding.UTF8.GetString(output.ToArray());
     }
 
     private static void Reply(HttpListenerResponse res, int code, string json)
