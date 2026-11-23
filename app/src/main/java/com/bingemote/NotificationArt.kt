@@ -90,17 +90,36 @@ object NotificationArt {
         c.drawRoundRect(RectF(w * 0.57f, h * 0.20f, w * 0.57f + w * 0.15f, h * 0.20f + h * 0.60f), r, r, p)
     }
 
-    /** Speaker body shared by the volume pair (Icons.kt drawSpeaker). */
+    /** Speaker body shared by the volume pair (Icons.kt drawSpeaker): same six
+     * points, same corner blunting (roundedPoly, r = 0.035w, quadratic eased) so the
+     * shade buttons match the in-app buttons pixel for pixel. */
     private fun drawSpeaker(c: Canvas, p: Paint, w: Float, h: Float) {
-        val path = Path().apply {
-            moveTo(w * 0.02f, h * 0.34f)
-            lineTo(w * 0.20f, h * 0.34f)
-            lineTo(w * 0.48f, h * 0.04f)
-            lineTo(w * 0.48f, h * 0.96f)
-            lineTo(w * 0.20f, h * 0.66f)
-            lineTo(w * 0.02f, h * 0.66f)
-            close()
+        val pts = arrayOf(
+            floatArrayOf(w * 0.02f, h * 0.34f), floatArrayOf(w * 0.20f, h * 0.34f),
+            floatArrayOf(w * 0.48f, h * 0.04f), floatArrayOf(w * 0.48f, h * 0.96f),
+            floatArrayOf(w * 0.20f, h * 0.66f), floatArrayOf(w * 0.02f, h * 0.66f),
+        )
+        val n = pts.size
+        val r = w * 0.035f
+        fun cut(i: Int): Pair<FloatArray, FloatArray> {
+            val p0 = pts[(i - 1 + n) % n]; val p1 = pts[i]; val p2 = pts[(i + 1) % n]
+            val v1x = p0[0] - p1[0]; val v1y = p0[1] - p1[1]
+            val v2x = p2[0] - p1[0]; val v2y = p2[1] - p1[1]
+            val l1 = Math.hypot(v1x.toDouble(), v1y.toDouble()).toFloat()
+            val l2 = Math.hypot(v2x.toDouble(), v2y.toDouble()).toFloat()
+            val rr = minOf(r, l1 / 2.2f, l2 / 2.2f)
+            return floatArrayOf(p1[0] + v1x / l1 * rr, p1[1] + v1y / l1 * rr) to
+                floatArrayOf(p1[0] + v2x / l2 * rr, p1[1] + v2y / l2 * rr)
         }
+        val path = Path()
+        val (a0, _) = cut(0)
+        path.moveTo(a0[0], a0[1])
+        for (i in 0 until n) {
+            val (a, b) = cut(i)
+            path.lineTo(a[0], a[1])
+            path.quadTo(pts[i][0], pts[i][1], b[0], b[1])
+        }
+        path.close()
         p.style = Paint.Style.FILL
         c.drawPath(path, p)
     }
