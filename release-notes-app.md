@@ -4,6 +4,7 @@
 - One orange everywhere in Settings - the chips, toggles and pills had drifted into slightly different shades
 - Sharper circles: the settings toggle ball and the play/pause ring now render cleanly at every screen density
 - Feedback screen tidied: the extra explanation lines and the Done button are gone (Back still works)
+- When the PC is unreachable, the banner now leads with "Trying to reconnect" and reminds you both devices need the same network
 
 ## v1.12.2
 
