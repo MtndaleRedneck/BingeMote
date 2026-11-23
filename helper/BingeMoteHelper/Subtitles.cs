@@ -99,8 +99,11 @@ internal static class Subtitles
         // its process lifetime so cached track IDs never bind to a later instance.
         var processes = System.Diagnostics.Process.GetProcessesByName("vlc");
         try {
-            if (processes.Length != 1) return null;
-            id += "|" + processes[0].Id + "|" + processes[0].StartTime.ToUniversalTime().Ticks;
+            if (enumerate && processes.Length != 1) return null;
+            id += "|port:" + port + "|" + string.Join("|",processes.Select(p => {
+                try { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
+                catch { return p.Id + ":unknown"; }
+            }).OrderBy(v=>v));
         } finally { foreach (var process in processes) process.Dispose(); }
         if (!enumerate || !uri.IsFile || uri.IsUnc)
             return new Snapshot(Hash((uri.IsFile && !uri.IsUnc ? uri.LocalPath.ToUpperInvariant() : uri.AbsoluteUri) + "|" + id), "", Array.Empty<Candidate>(), false);
