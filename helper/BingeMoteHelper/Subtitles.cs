@@ -102,7 +102,7 @@ internal static class Subtitles
 
             id += "|port:" + port + "|" + string.Join("|",processes.Select(p => {
                 try { return p.Id + ":" + p.StartTime.ToUniversalTime().Ticks; }
-                catch { return p.Id + ":unknown"; }
+                catch { if (enumerate) throw; return p.Id + ":unknown"; }
             }).OrderBy(v=>v));
         } finally { foreach (var process in processes) process.Dispose(); }
         if (!enumerate || !uri.IsFile || uri.IsUnc)
@@ -121,33 +121,33 @@ internal static class Subtitles
         } catch { return "{\"supported\":true,\"mediaId\":\"\",\"files\":[],\"unavailable\":true}"; }
     }
     internal static async Task<(int status, string body)> Load(string root, int port, string password, string mediaId, string candidateId) {
-        if (mediaId.Length != 64 || candidateId.Length != 64) return (400, "{\"error\":\"invalid selection\"}");
+        if (mediaId.Length != 64 || candidateId.Length != 64) return (400, "{\"error\":\"invalid selection\",\"unknown\":false}");
         var selection = Interlocked.Increment(ref latestSelection);
-        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
+        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\",\"unknown\":false}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         OperationToken.Value = deadline.Token;
         var mutationSent = false;
         try {
-            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\",\"unknown\":false}");
             var snapshot = await Current(root, port, password);
-            if (snapshot == null || snapshot.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
+            if (snapshot == null || snapshot.MediaId != mediaId) return (409, "{\"error\":\"movie changed\",\"unknown\":false}");
             var candidate = snapshot.Files.SingleOrDefault(c => c.Id == candidateId);
-            if (candidate == null) return (409, "{\"error\":\"subtitle changed\"}");
+            if (candidate == null) return (409, "{\"error\":\"subtitle changed\",\"unknown\":false}");
             var file = ConfinedFile(root, Path.Combine(Path.GetDirectoryName(snapshot.MediaPath)!, candidate.Name));
-            if (file == null) return (409, "{\"error\":\"subtitle unavailable\"}");
+            if (file == null) return (409, "{\"error\":\"subtitle unavailable\",\"unknown\":false}");
             // Re-check the actual VLC item immediately before sending the add command.
             var latest = await Current(root, port, password);
-            if (latest?.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
+            if (latest?.MediaId != mediaId) return (409, "{\"error\":\"movie changed\",\"unknown\":false}");
             using var currentStatus = await Get(port, password, "status.json");
             var currentIds = TrackIds(currentStatus);
-            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\",\"unknown\":false}");
             if (candidate.TrackIds.Length > 0 && candidate.TrackIds.All(currentIds.Contains)) {
                 mutationSent = true;
                 using var selected = await Get(port, password, "status.json?command=subtitle_track&val=" + candidate.TrackIds[0]);
                 return (200, JsonSerializer.Serialize(new { ok = true, trackIds = candidate.TrackIds }));
             }
             var beforeIds = currentIds;
-            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\",\"unknown\":false}");
             mutationSent = true;
             using var response = await Get(port, password, "status.json?command=addsubtitle&val=" + Uri.EscapeDataString(file));
             var added = TrackIds(response).Except(beforeIds).ToArray();
@@ -168,17 +168,17 @@ internal static class Subtitles
     // All subtitle mutations, including Off, share the same gate. The caller's HTTP
     // timeout cannot let a direct-VLC Off overtake a still-running sidecar operation.
     internal static async Task<(int status, string body)> Select(int port, string password, int trackId, string? root = null, string? mediaId = null) {
-        if (trackId < -1) return (400, "{\"error\":\"invalid track\"}");
+        if (trackId < -1) return (400, "{\"error\":\"invalid track\",\"unknown\":false}");
         var selection = Interlocked.Increment(ref latestSelection);
-        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
+        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\",\"unknown\":false}");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         OperationToken.Value = deadline.Token;
         var mutationSent = false;
         try {
-            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\",\"unknown\":false}");
             if (root != null) {
                 var current = await Current(root, port, password, false);
-                if (current == null || current.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
+                if (current == null || current.MediaId != mediaId) return (409, "{\"error\":\"movie changed\",\"unknown\":false}");
             }
             mutationSent = true;
             using var response = await Get(port, password, "status.json?command=subtitle_track&val=" + trackId);

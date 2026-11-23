@@ -161,7 +161,7 @@ object HelperClient {
             }
             val result = JSONObject(out.toString("UTF-8"))
             if (code !in 200..299) {
-                if (!result.optBoolean("unknown", code !in listOf(400,409,429))) throw SubtitleRejected(result.optString("error","Selection unavailable"))
+                if (!result.optBoolean("unknown", true)) throw SubtitleRejected(result.optString("error","Selection unavailable"))
                 throw Unreachable("Couldn't confirm the subtitle change.")
             }
             return result
