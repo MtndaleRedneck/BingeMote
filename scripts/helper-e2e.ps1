@@ -603,6 +603,25 @@ if ($env:BINGEMOTE_SHIP_SHA256) {
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 & $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
+# Inspect the actual installed payload extracted by the pinned installer, not
+# compressed setup bytes or a separately built helper. The single-file bundle
+# contains the managed metadata and literals uncompressed (default publish).
+$payload = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe'
+Assert (Test-Path $payload) "pinned shipping installer did not extract helper payload"
+$payloadHash = (Get-FileHash $payload -Algorithm SHA256).Hash.ToLower()
+$payloadVersion = (Get-Item $payload).VersionInfo.FileVersion
+Write-Host "exact installed payload: $payload"
+Write-Host "exact installed payload sha256: $payloadHash"
+Write-Host "exact installed payload file version: $payloadVersion"
+$payloadBytes = [IO.File]::ReadAllBytes($payload)
+$payloadAscii = [Text.Encoding]::UTF8.GetString($payloadBytes)
+$payloadUtf16 = [Text.Encoding]::Unicode.GetString($payloadBytes)
+foreach ($marker in @('--dialog-shots', '--window-shot', '--osd-shot', '/ci/hold', '/ci/blockstate', 'DialogCapture', 'BlockNoticeProbe', 'BINGEMOTE_WINDOW_SHOT')) {
+    Assert (-not $payloadAscii.Contains($marker) -and -not $payloadUtf16.Contains($marker)) "test hook leaked into exact shipping payload: $marker"
+    Write-Host "exact payload hook absent: $marker"
+}
+Assert ($payloadAscii.Contains('DarkDialog')) "exact payload missing production DarkDialog metadata"
+Write-Host 'exact payload production DarkDialog metadata present'
 $up = $false
 foreach ($i in 1..40) {
     try {
