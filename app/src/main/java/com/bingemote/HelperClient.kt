@@ -129,6 +129,22 @@ object HelperClient {
         return out
     }
 
+    data class SubtitleFile(val id: String, val name: String, val trackIds: List<Int> = emptyList())
+    data class SubtitleFolder(val mediaId: String, val files: List<SubtitleFile>, val unavailable: Boolean)
+    fun subtitleFiles(host: String, port: Int, token: String): SubtitleFolder {
+        val json = get(host, port, "/subtitles/list", token)
+        val arr = json.getJSONArray("files")
+        return SubtitleFolder(json.optString("mediaId"), (0 until arr.length()).map {
+            val item = arr.getJSONObject(it)
+            val ids = item.optJSONArray("trackIds")
+            SubtitleFile(item.getString("id"), item.getString("name"), if (ids == null) emptyList() else (0 until ids.length()).map { ids.getInt(it) })
+        }, json.optBoolean("unavailable"))
+    }
+    fun loadSubtitle(host: String, port: Int, token: String, mediaId: String, id: String): Boolean {
+        val json = JSONObject(postForBody(host, port, "/subtitles/load", JSONObject().put("mediaId", mediaId).put("id", id), token))
+        return json.optBoolean("ok") && !json.optBoolean("woke")
+    }
+
     /** The movies folder as set on the PC; null when the helper can't be asked (too old or down). */
     fun getMoviesFolder(host: String, port: Int, token: String): String? = try {
         get(host, port, "/config", token).optString("moviesFolder", "")

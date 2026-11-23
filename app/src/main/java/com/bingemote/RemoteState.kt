@@ -208,6 +208,8 @@ class RemoteState(
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
                 lastTitle = s.title; lastLengthSec = s.lengthSec
                 pickedSubtitle = null
+                pickedSubtitleFile = null
+                subtitleFolder = null
             }
             failures = 0
             unreachable = false
@@ -397,7 +399,55 @@ class RemoteState(
         }
     }
 
+    var subtitleFolder by mutableStateOf<HelperClient.SubtitleFolder?>(null); private set
+    var subtitleFilesLoading by mutableStateOf(false); private set
+    var subtitleFileError by mutableStateOf<String?>(null); private set
+    var pickedSubtitleFile by mutableStateOf<String?>(null); private set
+    private var subtitleRequest = 0
+
+    fun refreshSubtitleFiles() {
+        val request = ++subtitleRequest
+        subtitleFilesLoading = true
+        subtitleFileError = null
+        pickedSubtitleFile = null
+        val host = store.host; val port = store.helperPort; val token = store.helperToken
+        scope.launch {
+            try {
+                val folder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
+                if (request == subtitleRequest) {
+                    if (subtitleFolder?.mediaId != folder.mediaId) pickedSubtitleFile = null
+                    subtitleFolder = folder
+                    if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
+                }
+            } catch (_: Exception) {
+                if (request == subtitleRequest) subtitleFileError = "Folder subtitles need the updated PC app and a connection to it."
+            } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
+        }
+    }
+    fun loadSubtitleFile(file: HelperClient.SubtitleFile) {
+        val folder = subtitleFolder ?: return
+        val request = ++subtitleRequest
+        val host = store.host; val port = store.helperPort; val token = store.helperToken
+        subtitleFileError = null
+        subtitleFilesLoading = true
+        scope.launch {
+            try {
+                val loaded = withContext(Dispatchers.IO) { HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id) }
+                if (request == subtitleRequest) {
+                    if (loaded) {
+                        pickedSubtitle = null
+                        pickedSubtitleFile = file.id
+                        subtitleFolder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
+                    } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
+                }
+            } catch (_: Exception) {
+                if (request == subtitleRequest) subtitleFileError = "Couldn't load that subtitle. Check the movie and try again."
+            } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
+        }
+    }
+
     fun pickSubtitle(trackId: Int) {
+        pickedSubtitleFile = null
         pickedSubtitle = trackId
         fire("sub") { Vlc.setSubtitleTrack(store.host, store.vlcPort, store.vlcPassword, trackId) }
     }
