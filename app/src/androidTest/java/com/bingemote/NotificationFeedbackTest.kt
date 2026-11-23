@@ -332,7 +332,7 @@ class ImmediateFlipTest {
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue("initial connection missing", posts.count { !it.playing } >= 2)
             MediaControlsService.beforePollCommit = {
-                MediaControlsService.afterPollAttempt = { completed.countDown() }
+                MediaControlsService.observeHeldPoll?.invoke { completed.countDown() }
                 reached.countDown()
                 assertTrue("barrier release timeout", release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
@@ -401,7 +401,7 @@ class ImmediateFlipTest {
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue(posts.count { !it.playing } >= 2)
             MediaControlsService.beforePollFailure = {
-                MediaControlsService.afterPollAttempt = { done.countDown() }
+                MediaControlsService.observeHeldPoll?.invoke { done.countDown() }
                 reached.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
@@ -538,7 +538,7 @@ class ImmediateFlipTest {
             MediaControlsService.requestTestPoll?.invoke()
             assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
             // pollMutex guarantees this held network request is the sole active poll.
-            MediaControlsService.afterPollAttempt = { returned.countDown() }
+            MediaControlsService.observeHeldPoll?.invoke { returned.countDown() }
             awaitServiceDestroyed(ctx)
             posts.clear()
             release.countDown()
