@@ -125,7 +125,7 @@ class SubtitleClientTest {
 
     @Test fun pendingSubtitleChoicesCoalesceToLatestOff() = runBlocking {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
-        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
+        java.io.File(ctx.filesDir,"subtitle-operations.json").delete()
         Stub().use { stub ->
             HapticTickTest.seedPrefs(ctx,false,stub.port)
             val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
@@ -161,7 +161,7 @@ class SubtitleClientTest {
 
     @Test fun supersededLoadUnknownSurvivesLaterOffAndEmptyList() = runBlocking {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
-        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
+        java.io.File(ctx.filesDir,"subtitle-operations.json").delete()
         Stub().use {stub->
             HapticTickTest.seedPrefs(ctx,false,stub.port)
             val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
@@ -193,7 +193,7 @@ class SubtitleClientTest {
 
     @Test fun preDispatchMarkerSurvivesRecreationDuringSlowMutation() = runBlocking {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
-        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
+        java.io.File(ctx.filesDir,"subtitle-operations.json").delete()
         Stub().use{stub->
             HapticTickTest.seedPrefs(ctx,false,stub.port)
             val store=Store(ctx);store.helperToken="lifecycle-fixture";store.helperPort=stub.port
@@ -210,6 +210,10 @@ class SubtitleClientTest {
                 val repaired=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
                 assertFalse("different pair token must not inherit warning",repaired.subtitleOutcomeUnknown)
                 delay(3000)
+                store.helperToken="lifecycle-fixture"
+                withContext(Dispatchers.Main){recreated.refreshSubtitleFiles(quiet=true)}
+                delay(300)
+                assertFalse("completed request reconciles reconstructed state",recreated.subtitleOutcomeUnknown)
             }finally{scope.cancel()}
         }
     }
