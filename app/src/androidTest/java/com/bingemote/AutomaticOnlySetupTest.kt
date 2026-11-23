@@ -20,8 +20,14 @@ class AutomaticOnlySetupTest {
         device.takeScreenshot(java.io.File("/sdcard/bm-setup-before-selection.png"))
         device.findObject(By.textContains("MY-PC  (")).click()
         Thread.sleep(500)
+        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+            device.displayWidth / 2, device.displayHeight / 3, 25)
+        Thread.sleep(400)
         assertTrue(device.hasObject(By.text("Code from your PC")))
         device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-pc.png"))
+        device.swipe(device.displayWidth / 2, device.displayHeight / 3,
+            device.displayWidth / 2, device.displayHeight * 4 / 5, 25)
+        Thread.sleep(400)
         val fields = device.findObjects(By.clazz("android.widget.EditText"))
         fields.first().text = "192.0.2.20"
         Thread.sleep(500)
@@ -29,6 +35,9 @@ class AutomaticOnlySetupTest {
         device.pressBack()
         device.findObject(By.text("Use this address")).click()
         Thread.sleep(500)
+        device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+            device.displayWidth / 2, device.displayHeight / 2, 25)
+        Thread.sleep(400)
         assertTrue(device.hasObject(By.text("Code from your PC")))
         assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
         device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-address.png"))
