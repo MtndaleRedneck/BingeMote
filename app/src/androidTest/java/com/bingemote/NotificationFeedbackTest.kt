@@ -359,6 +359,48 @@ class ImmediateFlipTest {
         }
     }
 
+    @Test fun reversedDeliveryDoubleTapPreservesParity() {
+        val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
+        val firstHeld = java.util.concurrent.CountDownLatch(1)
+        val releaseFirst = java.util.concurrent.CountDownLatch(1)
+        val deliveries = java.util.concurrent.atomic.AtomicInteger()
+        try {
+            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue(posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePlaybackDelivery = {
+                if (deliveries.incrementAndGet() == 1) {
+                    firstHeld.countDown()
+                    assertTrue(releaseFirst.await(8, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }
+            posts.clear()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            assertTrue(firstHeld.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            val secondBy = System.currentTimeMillis() + 3000
+            while (stub.commands.isEmpty() && System.currentTimeMillis() < secondBy) Thread.sleep(20)
+            assertEquals("second command must pass held first", 1, stub.commands.size)
+            assertEquals("playing", stub.state)
+            Thread.sleep(2200)
+            assertTrue("pending first delivery lost double-tap target", posts.isNotEmpty() && !posts.last().playing)
+            MediaControlsService.beforePlaybackDelivery = null
+            releaseFirst.countDown()
+            val bothBy = System.currentTimeMillis() + 3000
+            while (stub.commands.size < 2 && System.currentTimeMillis() < bothBy) Thread.sleep(20)
+            assertEquals(2, stub.commands.size)
+            assertEquals("paused", stub.state)
+            Thread.sleep(1000)
+            assertTrue(!posts.last().playing)
+        } finally {
+            MediaControlsService.beforePlaybackDelivery = null
+            releaseFirst.countDown()
+            stub.stop()
+        }
+    }
+
     @Test fun lateFailureDoesNotStompNewerPress() {
         val stub = HapticTickTest.StatusStub(); stub.state = "paused"
         stub.commandDelayMs = 1500; stub.failCommands = 1 // press 1's command fails LATE
