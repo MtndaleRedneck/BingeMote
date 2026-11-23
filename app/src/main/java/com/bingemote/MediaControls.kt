@@ -161,8 +161,20 @@ class MediaControlsService : Service() {
                 val prev = lastPlaying
                 val epochAtPress = commandEpoch.get()
                 lastPlaying = !prev
-                postMediaNotification(lastPlaying, 0, 0, lastStatus?.title)
-                scope.launch {
+                try {
+                    if (BuildConfig.DEBUG && throwPlaybackPost) throw IllegalStateException("Forced notification post failure")
+                    postMediaNotification(lastPlaying, 0, 0, lastStatus?.title)
+                } catch (t: Throwable) {
+                    pendingPlayback--
+                    pollVersion.incrementAndGet()
+                    lastPlaying = prev
+                    if (BuildConfig.DEBUG) playbackPostFailure?.invoke()
+                    refreshNow()
+                    return START_STICKY
+                }
+                // Register completion before starting: cancellation before coroutine
+                // entry must release the pending count too, not only body finally.
+                val playbackJob = try { scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     try {
                         val store = Store(this@MediaControlsService)
                         if (BuildConfig.DEBUG) beforePlaybackDelivery?.invoke()
@@ -176,14 +188,23 @@ class MediaControlsService : Service() {
                                 postMediaNotification(prev, 0, 0, lastStatus?.title)
                             }
                         }
-                    } finally {
-                        synchronized(this@MediaControlsService) {
-                            pendingPlayback--
-                            pollVersion.incrementAndGet()
-                        }
+                    }
+                } } catch (t: Throwable) {
+                    pendingPlayback--
+                    pollVersion.incrementAndGet()
+                    lastPlaying = prev
+                    refreshNow()
+                    return START_STICKY
+                }
+                playbackJob.invokeOnCompletion {
+                    synchronized(this@MediaControlsService) {
+                        pendingPlayback--
+                        pollVersion.incrementAndGet()
                     }
                     refreshNow()
                 }
+                if (BuildConfig.DEBUG && cancelBeforePlaybackStart) playbackJob.cancel()
+                else playbackJob.start()
                 return START_STICKY
             }
             ACTION_MEDIA_VOL_DOWN -> { volumeBy(Store(this), -Vlc.VOLUME_STEP); return START_STICKY }
@@ -223,6 +244,10 @@ class MediaControlsService : Service() {
         internal var beforePlaybackDelivery: (() -> Unit)? = null
         internal var afterPollAttempt: (() -> Unit)? = null
         internal var beforePollFailure: (() -> Unit)? = null
+        internal var pendingPollSkipped: (() -> Unit)? = null
+        internal var playbackPostFailure: (() -> Unit)? = null
+        internal var throwPlaybackPost = false
+        internal var cancelBeforePlaybackStart = false
     }
 
     private suspend fun pollOnce() = pollMutex.withLock {
@@ -248,7 +273,10 @@ class MediaControlsService : Service() {
                 return
             }
             val epoch = synchronized(this@MediaControlsService) {
-                if (pendingPlayback > 0) return
+                if (pendingPlayback > 0) {
+                    if (BuildConfig.DEBUG) pendingPollSkipped?.invoke()
+                    return
+                }
                 pollVersion.get()
             }
             val st = try {
