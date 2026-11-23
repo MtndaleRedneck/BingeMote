@@ -81,11 +81,17 @@ internal class SubtitleJournal(context: Context) {
     fun isDegraded(pair:String):Boolean=synchronized(lock){pair in degradedPairs}
     fun entries(pair:String):List<Entry> = synchronized(lock){reconciled().filter{it.pair==pair}}
     fun begin(pair:String,media:String?,folderLoad:Boolean=false):String = synchronized(lock){
-        val entries=reconciled()
-        if(folderLoad)check(pair !in degradedPairs && entries.none{it.pair==pair && (it.media.isEmpty() || it.media==media)}){"A previous file load is still unconfirmed"}
-        check(entries.count{it.pair==pair && it.phase=="pending"}<16){"Subtitle requests still pending"}
-        val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);live.add(id);id
+        try {
+            val entries=reconciled()
+            if(folderLoad)check(pair !in degradedPairs && entries.none{it.pair==pair && (it.media.isEmpty() || it.media==media)}){"A previous file load is still unconfirmed"}
+            check(entries.count{it.pair==pair && it.phase=="pending"}<16){"Subtitle requests still pending"}
+            val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);live.add(id);id
+        } catch(e:Exception) {
+            if(!folderLoad)degradedPairs.add(pair)
+            throw e
+        }
     }
+
     /** Keeps a known outcome in process memory when durable cleanup needs retry. */
     fun finish(id:String,unknown:Boolean):Boolean = synchronized(lock){
         live.remove(id);completed[id]=unknown

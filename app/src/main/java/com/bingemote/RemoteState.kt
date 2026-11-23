@@ -437,7 +437,7 @@ class RemoteState(
         subtitleOutcomeUnknown=result.second || relevant.isNotEmpty()
         uncertainSubtitleMedia=relevant.map{it.media}.toSet()
         uncertainFolderMedia=relevant.firstOrNull{it.media==current}?.media ?: relevant.firstOrNull()?.media
-        if(result.second)subtitleMutationError="Subtitle safety history couldn't be read. New file loads are paused until storage is available."
+        if(result.second)subtitleMutationError="Subtitle safety history couldn't be read. New file loads are paused because their previous outcome cannot be established. Existing controls remain best-effort."
         else if(subtitleOutcomeUnknown)subtitleMutationError="Couldn't confirm the previous subtitle change. Existing controls are still available."
         else if(wasUnknown)subtitleMutationError=null
         return true
