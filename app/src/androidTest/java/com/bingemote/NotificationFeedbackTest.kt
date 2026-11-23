@@ -535,9 +535,10 @@ class ImmediateFlipTest {
                 held.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
-            MediaControlsService.afterPollAttempt = { returned.countDown() }
             MediaControlsService.requestTestPoll?.invoke()
             assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            // pollMutex guarantees this held network request is the sole active poll.
+            MediaControlsService.afterPollAttempt = { returned.countDown() }
             awaitServiceDestroyed(ctx)
             posts.clear()
             release.countDown()
@@ -565,7 +566,7 @@ class ImmediateFlipTest {
                 held.countDown()
                 assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
-            MediaControlsService.playbackCompleted = { assertTrue(it >= 0); completed.countDown() }
+            MediaControlsService.playbackCompleted = { assertEquals("held target pending count", 0, it); completed.countDown() }
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
             awaitServiceDestroyed(ctx)
