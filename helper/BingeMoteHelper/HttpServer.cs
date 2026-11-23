@@ -143,6 +143,24 @@ internal sealed class HttpServer : IDisposable
                     }
                     return;
 
+                case "/subtitles/list":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    if (req.HttpMethod != "GET") { Reply(res, 405, "{}"); return; }
+                    Reply(res, 200, await Subtitles.List(Program.MoviesFolder ?? "", 8080, VlcSetup.EffectivePassword() ?? ""));
+                    return;
+                case "/subtitles/load":
+                    if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+                    if (req.HttpMethod != "POST") { Reply(res, 405, "{}"); return; }
+                    {
+                        if (PowerWake.ShouldSwallowDiscrete()) { Reply(res, 200, "{\"woke\":true}"); return; }
+                        using var doc = JsonDocument.Parse(ReadBody(req));
+                        var data = doc.RootElement;
+                        var answer = await Subtitles.Load(Program.MoviesFolder ?? "", 8080, VlcSetup.EffectivePassword() ?? "",
+                            data.GetProperty("mediaId").GetString() ?? "", data.GetProperty("id").GetString() ?? "");
+                        Reply(res, answer.status, answer.body);
+                    }
+                    return;
+
                 case "/movies/list":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {

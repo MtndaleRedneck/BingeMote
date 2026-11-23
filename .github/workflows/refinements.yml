@@ -52,3 +52,32 @@ jobs:
             refinements-evidence/
             app/build/reports/tests/testDebugUnitTest/
           retention-days: 3
+
+  pc-subtitles:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: PC unit and path-confinement tests
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=pc-unit.trx'
+      - name: Install real VLC and media generator
+        run: choco install vlc ffmpeg --no-progress -y
+      - name: Real VLC sidecar loading test
+        shell: pwsh
+        run: |
+          & 'C:\ProgramData\chocolatey\bin\ffmpeg.exe' -f lavfi -i color=c=black:s=320x180:r=10 -t 60 -c:v mpeg4 -y "$env:RUNNER_TEMP\fixture.mp4"
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
+          $env:BINGEMOTE_SUBTITLE_VIDEO = "$env:RUNNER_TEMP\fixture.mp4"
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName~RealVlc' --logger 'trx;LogFileName=pc-real-vlc.trx'
+          if ($LASTEXITCODE -ne 0) { throw 'Real VLC test failed' }
+      - name: Compile production PC without test hooks
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PC-subtitle-test-evidence
+          path: helper/BingeMoteHelper.Tests/TestResults/*.trx
+          retention-days: 3
