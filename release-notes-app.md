@@ -1,3 +1,7 @@
+## v1.12.14
+
+- The "Trying to reconnect" banner now reads "Both devices need to be on the same network", tightened slightly so it fits on one line.
+
 ## v1.12.2
 
 - When the PC's screen is off, the first press of any button only brings the screen back - the press itself does nothing. The next press works as usual
