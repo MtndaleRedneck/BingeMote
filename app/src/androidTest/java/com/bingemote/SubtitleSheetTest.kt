@@ -30,5 +30,9 @@ class SubtitleSheetTest {
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet.png"))
         device.findObject(By.text("Off")).click()
         assertTrue(device.hasObject(By.text("Subtitles")))
+        device.executeShellCommand("settings put system font_scale 1.3")
+        Thread.sleep(1200)
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-large-font.png"))
+        device.executeShellCommand("settings put system font_scale 1.0")
     }
 }

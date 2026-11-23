@@ -95,4 +95,26 @@ public class SubtitleTests : IDisposable
         await server;Assert.Equal(new[]{"3","-1"},order);
     }
 
+    [Fact] public async Task SubtitleRoutesRequireTokenAndCorrectMethod() {
+        using var acl = Process.Start(new ProcessStartInfo("netsh", "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-1-0)") { UseShellExecute=false, CreateNoWindow=true });
+        acl!.WaitForExit();
+        using var server = new HttpServer();server.Start();
+        using var client = new HttpClient();
+        foreach(var path in new[]{"list","load","select"}) {
+            using var denied = await client.GetAsync("http://127.0.0.1:8488/subtitles/"+path);
+            Assert.Equal(System.Net.HttpStatusCode.Unauthorized,denied.StatusCode);
+        }
+        const string token="unit-subtitle-token";
+        lock(Program.PhonesLock) Program.Phones.Add(new Program.PairedPhone{Token=token,Name="test"});
+        try {
+            client.DefaultRequestHeaders.Add("X-BingeMote-Token",token);
+            foreach(var path in new[]{"load","select"}) {
+                using var wrong = await client.GetAsync("http://127.0.0.1:8488/subtitles/"+path);
+                Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,wrong.StatusCode);
+            }
+            using var listWrong=await client.PostAsync("http://127.0.0.1:8488/subtitles/list",new StringContent("{}"));
+            Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,listWrong.StatusCode);
+        } finally {lock(Program.PhonesLock) Program.Phones.RemoveAll(p=>p.Token==token);}
+    }
+
 }
