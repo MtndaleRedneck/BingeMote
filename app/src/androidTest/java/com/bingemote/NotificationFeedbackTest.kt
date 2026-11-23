@@ -123,6 +123,8 @@ class HapticTickTest {
         @Volatile var state = "paused"
         @Volatile var commandDelayMs = 0L
         @Volatile var statusDelayMs = 0L
+        /** Next N commands are NOT applied and answer 500 after their delay. */
+        @Volatile var failCommands = 0
         private val running = AtomicBoolean(true)
         private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val port = server.localPort
@@ -139,9 +141,16 @@ class HapticTickTest {
                                 while (true) { val h = r.readLine() ?: break; if (h.isEmpty()) break }
                                 val snap: String
                                 if (line.contains("command=")) {
-                                    if (line.contains("pl_pause")) state = if (state == "playing") "paused" else "playing"
+                                    val fail = failCommands > 0
+                                    if (fail) failCommands--
+                                    if (!fail && line.contains("pl_pause")) state = if (state == "playing") "paused" else "playing"
                                     commands += line.substringAfter('?', "")
                                     if (commandDelayMs > 0) Thread.sleep(commandDelayMs)
+                                    if (fail) {
+                                        val out = sock.getOutputStream()
+                                        out.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                                        out.flush(); sock.close(); return@thread
+                                    }
                                     snap = state
                                 } else {
                                     snap = state // snapshot at arrival: the response may be stale by send time
@@ -266,6 +275,31 @@ class ImmediateFlipTest {
             val flips = posts.dropWhile { !it.playing }
             assertTrue("no flip observed", flips.isNotEmpty())
             assertTrue("stale in-flight poll undid the flip: $posts", flips.none { !it.playing })
+        } finally { stub.stop() }
+    }
+
+    @Test fun lateFailureDoesNotStompNewerPress() {
+        val stub = HapticTickTest.StatusStub(); stub.state = "paused"
+        stub.commandDelayMs = 1500; stub.failCommands = 1 // press 1's command fails LATE
+        stub.start()
+        try {
+            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            Thread.sleep(3000)
+            posts.clear()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            Thread.sleep(400) // press 2 supersedes while press 1's command is still in flight
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            Thread.sleep(5000) // press 1 fails at ~1.5 s; press 2 succeeds ~1.9 s; polls reconcile
+            assertEquals("PC must see both commands", 2, stub.commands.count { it.contains("pl_pause") })
+            assertTrue("flip posts for both presses", posts.count { it.playing } >= 1)
+            // The late failure must not post a stale revert: exactly ONE pause-state
+            // post (press 2's flip). An unguarded revert would add a second one.
+            assertEquals("late failure stomped the newer press: $posts", 1, posts.count { !it.playing })
+            // press 1 was never applied, press 2 toggled: PC ends PLAYING, and the
+            // reconciliation poll must bring the glyph to that confirmed state.
+            assertEquals("playing", stub.state)
+            assertTrue("poll must reconcile glyph to the PC's real state: $posts", posts.last().playing)
         } finally { stub.stop() }
     }
 
