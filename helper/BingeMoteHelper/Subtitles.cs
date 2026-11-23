@@ -62,9 +62,18 @@ internal static class Subtitles
     private static async Task<JsonDocument> Get(int port, string password, string page) {
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(4) };
         client.DefaultRequestHeaders.Authorization = new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(":" + password)));
-        var text = await client.GetStringAsync($"http://127.0.0.1:{port}/requests/{page}");
-        if (text.Length > 2 * 1024 * 1024) throw new IOException("response too large");
-        return JsonDocument.Parse(text);
+        using var response = await client.GetAsync($"http://127.0.0.1:{port}/requests/{page}", HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        while (true) {
+            var count = await stream.ReadAsync(chunk);
+            if (count == 0) break;
+            if (buffer.Length + count > 2 * 1024 * 1024) throw new IOException("response too large");
+            buffer.Write(chunk, 0, count);
+        }
+        return JsonDocument.Parse(buffer.ToArray());
     }
     private static IEnumerable<JsonElement> Nodes(JsonElement e) {
         yield return e;
@@ -101,21 +110,24 @@ internal static class Subtitles
             // Re-check the actual VLC item immediately before sending the add command.
             var latest = await Current(root, port, password);
             if (latest?.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
-            if (candidate.TrackIds.Length > 0) {
+            using var currentStatus = await Get(port, password, "status.json");
+            var currentIds = TrackIds(currentStatus);
+            if (candidate.TrackIds.Length > 0 && candidate.TrackIds.All(currentIds.Contains)) {
                 using var selected = await Get(port, password, "status.json?command=subtitle_track&val=" + candidate.TrackIds[0]);
                 return (200, JsonSerializer.Serialize(new { ok = true, trackIds = candidate.TrackIds }));
             }
             using var before = await Get(port, password, "status.json");
             var beforeIds = TrackIds(before);
-            using var response = await Get(port, password, "status.json?command=addsubtitle&val=" + Uri.EscapeDataString(new Uri(file).AbsoluteUri));
+            using var response = await Get(port, password, "status.json?command=addsubtitle&val=" + Uri.EscapeDataString(file));
             var added = TrackIds(response).Except(beforeIds).ToArray();
-            if (added.Length == 0) {
-                await Task.Delay(150);
+            for (var attempt = 0; added.Length == 0 && attempt < 10; attempt++) {
+                await Task.Delay(100);
                 using var after = await Get(port, password, "status.json");
                 added = TrackIds(after).Except(beforeIds).ToArray();
             }
             if (added.Length == 0) return (503, "{\"error\":\"subtitle not confirmed\"}");
             if (Loaded.Count > 1000) Loaded.Clear();
+            using var selectedTrack = await Get(port, password, "status.json?command=subtitle_track&val=" + added[0]);
             Loaded[candidate.Id] = added;
             return (200, JsonSerializer.Serialize(new { ok = true, trackIds = added }));
         } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }

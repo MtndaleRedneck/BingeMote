@@ -54,7 +54,7 @@ public class SubtitleTests : IDisposable
             using (listing) {
                 var media = listing!.RootElement.GetProperty("mediaId").GetString()!;
                 var id = listing.RootElement.GetProperty("files")[0].GetProperty("id").GetString()!;
-                var loaded = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200, loaded.status);
+                var loaded = await Subtitles.Load(root,8099,"fixture",media,id); Assert.True(loaded.status == 200, loaded.body);
                 using var proof = JsonDocument.Parse(loaded.body); Assert.True(proof.RootElement.GetProperty("trackIds").GetArrayLength()>0);
                 var repeat = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200,repeat.status);
                 using var p2 = JsonDocument.Parse(repeat.body); Assert.Equal(proof.RootElement.GetProperty("trackIds").ToString(),p2.RootElement.GetProperty("trackIds").ToString());

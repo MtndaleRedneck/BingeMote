@@ -420,7 +420,10 @@ class RemoteState(
                     if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
                 }
             } catch (_: Exception) {
-                if (request == subtitleRequest) subtitleFileError = "Folder subtitles need the updated PC app and a connection to it."
+                if (request == subtitleRequest) {
+                    subtitleFolder = null
+                    subtitleFileError = "Folder subtitles need the updated PC app and a connection to it."
+                }
             } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
         }
     }
