@@ -72,6 +72,34 @@ public class SubtitleTests : IDisposable
                 var repeat = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200,repeat.status);
                 using var p2 = JsonDocument.Parse(repeat.body); Assert.Equal(proof.RootElement.GetProperty("trackIds").ToString(),p2.RootElement.GetProperty("trackIds").ToString());
                 var stale = await Subtitles.Load(root,8099,"fixture",new string('F',64),id); Assert.Equal(409,stale.status);
+                await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=subtitle_track&val=-1");
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(movie)!,"delayed.srt"),"1\r\n00:00:00,000 --> 00:01:00,000\r\nDelay fixture\r\n");
+                using var delayedList=JsonDocument.Parse(await Subtitles.List(root,8099,"fixture"));
+                var delayedId=delayedList.RootElement.GetProperty("files").EnumerateArray().Single(x=>x.GetProperty("name").GetString()=="delayed.srt").GetProperty("id").GetString()!;
+                using var proxy=new System.Net.HttpListener();proxy.Prefixes.Add("http://127.0.0.1:8100/");proxy.Start();
+                using var stopProxy=new CancellationTokenSource();var addSent=new TaskCompletionSource();
+                var proxyWork=Task.Run(async()=>{
+                    while(!stopProxy.IsCancellationRequested){
+                        System.Net.HttpListenerContext ctx;
+                        try{ctx=await proxy.GetContextAsync().WaitAsync(stopProxy.Token);}catch{break;}
+                        try{
+                            var bytes=await raw.GetByteArrayAsync("http://127.0.0.1:8099"+ctx.Request.RawUrl);
+                            if(ctx.Request.QueryString["command"]=="addsubtitle"){addSent.TrySetResult();await Task.Delay(2800);}
+                            ctx.Response.ContentLength64=bytes.Length;await ctx.Response.OutputStream.WriteAsync(bytes);ctx.Response.Close();
+                        }catch{try{ctx.Response.Abort();}catch{}}
+                    }
+                });
+                try{
+                    var slowLoad=Subtitles.Load(root,8100,"fixture",media,delayedId);
+                    await addSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    var finalOff=Subtitles.Select(8100,"fixture",-1,root,media);
+                    Assert.Equal(409,(await slowLoad).status);
+                    Assert.Equal(200,(await finalOff).status);
+                    using var finalProbe=JsonDocument.Parse(await raw.GetStringAsync("http://127.0.0.1:8099/requests/bm-subtitle-probe.json"));
+                    Assert.Equal(-1,finalProbe.RootElement.GetProperty("selected").GetInt32());
+                    Console.WriteLine("REAL_VLC_DELAYED_ADD_SUPERSEDED_SELECT_FINAL_OFF_PASS");
+                }finally{stopProxy.Cancel();proxy.Stop();await proxyWork;}
+
 
             }
         } finally { if (!process.HasExited) { process.Kill(true); process.WaitForExit(); } File.Delete(probePath); }
