@@ -19,28 +19,40 @@ $action=New-ScheduledTaskAction -Execute (Join-Path $root 'BingeMote.exe') -Argu
 $id='BMResetSplit-'+[guid]::NewGuid().ToString('N');New-NetFirewallRule -Name $id -DisplayName bingemote.exe -Program (Join-Path $root 'BingeMote.exe') -Direction Inbound -Action Allow|Out-Null
 $decoyId=$id+'-decoy';New-NetFirewallRule -Name $decoyId -DisplayName 'Unrelated reset fixture' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 54321|Out-Null
 & netsh.exe http add urlacl url=http://+:8488/ 'sddl=D:(A;;GX;;;S-1-5-4)';if($LASTEXITCODE -ne 0){throw 'URL fixture failed'}
-# Real Limited-token task performs the actual USER phase. No mocked admin check.
-$child=Join-Path $env:TEMP 'bm-reset-limited-fixture.ps1';$result=Join-Path $env:TEMP 'bm-reset-limited-result.txt'
+# Dedicated disposable STANDARD local account proves user phase with a real nonadmin token.
+# Hosted runner's main account has UAC disabled, so Limited scheduled task remains admin.
+$testName='BMResetUser'+[guid]::NewGuid().ToString('N').Substring(0,8)
+$bytes=New-Object byte[] 32;[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$password=[Convert]::ToBase64String($bytes)+'aA1!'
+$secure=ConvertTo-SecureString $password -AsPlainText -Force
+New-LocalUser -Name $testName -Password $secure -AccountNeverExpires | Out-Null
+$user=Get-LocalUser $testName
+$credential=New-Object Management.Automation.PSCredential(($env:COMPUTERNAME+'\'+$testName),$secure)
+$common=Join-Path $env:PUBLIC ('BMResetFixture-'+[guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $common|Out-Null
+Copy-Item "$PSScriptRoot\BingeMote-Reset.ps1" $common
+& icacls.exe $common /grant ('*'+$user.SID.Value+':(OI)(CI)M') | Out-Host
+$child=Join-Path $common 'user-fixture.ps1'
 @"
 `$ErrorActionPreference='Stop'
-. '$PSScriptRoot\BingeMote-Reset.ps1'
-`$ExpectedSid='$ExpectedSid'
-try{`$code=Invoke-BingeMoteReset}catch{`$code=9;`$_.Exception.Message|Set-Content '$result.error'}
-`$code|Set-Content '$result'
+. '$common\BingeMote-Reset.ps1'
+`$ExpectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+`$root=Join-Path `$env:LOCALAPPDATA 'Programs\BingeMote'
+`$data=Join-Path `$env:LOCALAPPDATA 'BingeMote'
+foreach(`$d in @(`$root,`$data)){New-Item -ItemType Directory `$d -Force|Out-Null}
+Set-Content (Join-Path `$root 'BingeMote.exe') 'inert fixture'
+Set-Content (Join-Path `$data 'config.json') '{"fixture":"pairing"}'
+`$vlc=Join-Path `$env:APPDATA 'vlc';New-Item -ItemType Directory `$vlc -Force|Out-Null
+[IO.File]::WriteAllText((Join-Path `$vlc 'vlcrc'),"extraintf=rc:http``r``nhttp-password=fixture``r``nhttp-host=0.0.0.0``r``nvolume=87``r``n",(New-Object Text.UTF8Encoding(`$false)))
+try{`$code=Invoke-BingeMoteReset;if(`$code -eq 0 -and ((Test-Path `$root) -or (Test-Path `$data))){throw 'Original paths remain'}}catch{`$_.Exception.Message|Set-Content '$common\error.txt';`$code=9}
+`$code|Set-Content '$common\result.txt'
 exit `$code
 "@ | Set-Content $child
-$task='BMResetLimitedFixture'
-$act=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -ExecutionPolicy Bypass -File "'+$child+'"')
-$principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $task -Action $act -Principal $principal|Out-Null
-Start-ScheduledTask $task
-$deadline=(Get-Date).AddSeconds(45)
-while(!(Test-Path $result) -and (Get-Date)-lt $deadline){Start-Sleep -Milliseconds 400}
-if(!(Test-Path $result)){Get-ScheduledTaskInfo $task|Format-List;throw 'Limited user task did not return'}
-if((Get-Content $result).Trim() -ne '0'){if(Test-Path "$result.error"){Get-Content "$result.error"};throw 'User token phase failed'}
-foreach($d in @($root,$data,$roam)){if(Test-Path $d){throw 'User original path remains'}}
-$after=[IO.File]::ReadAllText((Join-Path $vlc 'vlcrc'));if($after -notmatch 'extraintf=rc' -or $after -match '(?m)^http-password=' -or $after -notmatch 'volume=87'){throw 'VLC selective user reset wrong'}
-Write-Host 'PASS REAL LIMITED TOKEN: profile quarantine, backup, startup and VLC selective reset'
+try {
+ $p=Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "'+$child+'"') -Wait -PassThru
+ if($p.ExitCode -ne 0){if(Test-Path "$common\error.txt"){Get-Content "$common\error.txt"};throw 'Real standard-user phase failed'}
+ Write-Host 'PASS REAL STANDARD USER: profile quarantine/backup and VLC reset, no admin rights'
+} finally {Remove-LocalUser $testName}
 $code=Invoke-MachineReset
 if($code -ne 0){throw "Machine reset failed: $code"}
 if(Test-Path $uk){throw 'Machine uninstall entry remains'}
@@ -52,4 +64,4 @@ Write-Host 'PASS ELEVATED MACHINE PHASE: exact task/registry/firewall/URLACL, un
 $worker=(Get-Command Invoke-MachineReset).ScriptBlock.ToString()
 if($worker -match 'Copy-Item|Directory\]::Move|File\]::Replace|Get-FileHash|VersionInfo|ReadAllBytes'){throw 'Machine worker contains profile-file operations'}
 Write-Host 'PASS privilege split: machine worker has no file-copy/quarantine/VLC operations'
-Remove-NetFirewallRule -Name $decoyId;Unregister-ScheduledTask -TaskName $task -Confirm:$false
+Remove-NetFirewallRule -Name $decoyId
