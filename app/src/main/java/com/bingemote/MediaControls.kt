@@ -177,10 +177,12 @@ class MediaControlsService : Service() {
                 }
                 // Register completion before starting: cancellation before coroutine
                 // entry must release the pending count too, not only body finally.
+                val completionObserver = if (BuildConfig.DEBUG) playbackCompleted else null
+                val deliveryObserver = if (BuildConfig.DEBUG) beforePlaybackDelivery else null
                 val playbackJob = try { scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     try {
                         val store = Store(this@MediaControlsService)
-                        if (BuildConfig.DEBUG) beforePlaybackDelivery?.invoke()
+                        deliveryObserver?.invoke()
                         Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
@@ -205,7 +207,7 @@ class MediaControlsService : Service() {
                         pollVersion.incrementAndGet()
                         pendingPlayback
                     }
-                    if (BuildConfig.DEBUG) playbackCompleted?.invoke(remaining)
+                    completionObserver?.invoke(remaining)
                     refreshNow()
                 }
                 if (BuildConfig.DEBUG && cancelBeforePlaybackStart) playbackJob.cancel()
@@ -263,8 +265,8 @@ class MediaControlsService : Service() {
     private suspend fun pollOnce() = pollMutex.withLock {
         try { pollBody() } finally { if (BuildConfig.DEBUG) afterPollAttempt?.invoke() }
     }
-    private fun recordPollFailure(epoch: Long) {
-        if (BuildConfig.DEBUG) beforePollFailure?.invoke()
+    private fun recordPollFailure(epoch: Long, observer: (() -> Unit)?) {
+        observer?.invoke()
         synchronized(this@MediaControlsService) {
             if (destroyed || epoch != pollVersion.get() || pendingPlayback > 0) return
             lastConnectedAt = 0L
@@ -290,19 +292,22 @@ class MediaControlsService : Service() {
                 }
                 pollVersion.get()
             }
+            val failureObserver = if (BuildConfig.DEBUG) beforePollFailure else null
+            val commitObserver = if (BuildConfig.DEBUG) beforePollCommit else null
+            val committedObserver = if (BuildConfig.DEBUG) pollCommitted else null
             val st = try {
                 Vlc.status(store.host, store.vlcPort, store.vlcPassword)
             } catch (e: Vlc.BadAuth) {
                 // The one automatic heal: adopt the PC's current password once; never push ours.
                 if (VlcAuthRepair.tryHealOnce(store)) { return } // the next poll uses it
-                recordPollFailure(epoch)
+                recordPollFailure(epoch, failureObserver)
                 return
             } catch (e: Exception) { if (e is CancellationException) throw e;
-                recordPollFailure(epoch)
+                recordPollFailure(epoch, failureObserver)
                 return
             }
             if (epoch != pollVersion.get()) return
-            if (BuildConfig.DEBUG) beforePollCommit?.invoke()
+            commitObserver?.invoke()
             // One monitor protects epoch validation, state mutation and the post.
             // onStartCommand takes the same monitor before its epoch bump/flip.
             synchronized(this@MediaControlsService) {
@@ -313,7 +318,7 @@ class MediaControlsService : Service() {
                 lastStatus = st
                 lastPlaying = playing
                 postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
-                if (BuildConfig.DEBUG) pollCommitted?.invoke()
+                committedObserver?.invoke()
             }
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
