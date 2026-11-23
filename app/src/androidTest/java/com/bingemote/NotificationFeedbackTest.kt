@@ -33,6 +33,8 @@ class HapticTickTest {
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before fun setUp() {
+        ctx.stopService(Intent(ctx, MediaControlsService::class.java))
+        Thread.sleep(700) // wait for old service coroutine scope to cancel before probes
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         device.executeShellCommand("settings put system haptic_feedback_enabled 1")
@@ -194,6 +196,8 @@ class ImmediateFlipTest {
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before fun setUp() {
+        ctx.stopService(Intent(ctx, MediaControlsService::class.java))
+        Thread.sleep(700) // wait for old service coroutine scope to cancel before probes
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         posts.clear()
@@ -202,6 +206,7 @@ class ImmediateFlipTest {
 
     @After fun tearDown() {
         ctx.stopService(Intent(ctx, MediaControlsService::class.java))
+        Thread.sleep(700)
         MediaControlsService.postProbe = null
     }
 
@@ -276,7 +281,9 @@ class ImmediateFlipTest {
         try {
             HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
-            Thread.sleep(1000) // establish a successful connection first
+            val connectedBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < connectedBy) Thread.sleep(50)
+            assertTrue("initial successful status not posted", posts.count { !it.playing } >= 2)
             stub.statusDelayMs = 2000
             Thread.sleep(1500) // next poll is in flight with snapshot paused
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
