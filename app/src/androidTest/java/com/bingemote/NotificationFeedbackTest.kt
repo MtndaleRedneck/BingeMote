@@ -227,6 +227,8 @@ class ImmediateFlipTest {
         MediaControlsService.playbackPostFailure = null
         MediaControlsService.throwPlaybackPost = false
         MediaControlsService.cancelBeforePlaybackStart = false
+        MediaControlsService.playbackCompleted = null
+        MediaControlsService.pollCommitted = null
         MediaControlsService.postProbe = null
     }
 
@@ -486,12 +488,17 @@ class ImmediateFlipTest {
             MediaControlsService.cancelBeforePlaybackStart = !throwPost
             val postedFailure = java.util.concurrent.CountDownLatch(1)
             MediaControlsService.playbackPostFailure = { postedFailure.countDown() }
-            val pollsBefore = stub.polls.get()
+            val targetDone = java.util.concurrent.CountDownLatch(1)
+            val counts = java.util.concurrent.CopyOnWriteArrayList<Int>()
+            MediaControlsService.playbackCompleted = { counts += it; targetDone.countDown() }
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             if (throwPost) assertTrue(postedFailure.await(2, java.util.concurrent.TimeUnit.SECONDS))
-            val resumeBy = System.currentTimeMillis() + 5000
-            while (stub.polls.get() <= pollsBefore && System.currentTimeMillis() < resumeBy) Thread.sleep(30)
-            assertTrue("pending count stranded polling", stub.polls.get() > pollsBefore)
+            assertTrue("target action completion missing", targetDone.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue("pending accounting not zero/nonnegative: $counts", counts.isNotEmpty() && counts.all { it == 0 })
+            val committed = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pollCommitted = { committed.countDown() }
+            MediaControlsService.requestTestPoll?.invoke()
+            assertTrue("fresh post-completion poll did not commit", committed.await(3, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue("cancelled/failed prelaunch sent command", stub.commands.isEmpty())
             MediaControlsService.throwPlaybackPost = false
             MediaControlsService.cancelBeforePlaybackStart = false
@@ -503,7 +510,69 @@ class ImmediateFlipTest {
             MediaControlsService.throwPlaybackPost = false
             MediaControlsService.cancelBeforePlaybackStart = false
             MediaControlsService.playbackPostFailure = null
+            MediaControlsService.playbackCompleted = null
+            MediaControlsService.pollCommitted = null
             stub.stop()
+        }
+    }
+
+    @Test fun heldStatusReturnAfterDestructionCannotPost() {
+        val stub = HapticTickTest.StatusStub(); stub.start()
+        val held = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val returned = java.util.concurrent.CountDownLatch(1)
+        try {
+            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue(posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePollCommit = {
+                MediaControlsService.afterPollAttempt = { returned.countDown() }
+                held.countDown()
+                assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            MediaControlsService.requestTestPoll?.invoke()
+            assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            awaitServiceDestroyed(ctx)
+            posts.clear()
+            release.countDown()
+            assertTrue("held status never returned", returned.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue("destroyed service posted status", posts.isEmpty())
+        } finally {
+            MediaControlsService.beforePollCommit = null
+            MediaControlsService.afterPollAttempt = null
+            release.countDown(); stub.stop()
+        }
+    }
+
+    @Test fun heldPlaybackFailureAfterDestructionCannotRevert() {
+        val stub = HapticTickTest.StatusStub(); stub.failCommands = 1; stub.start()
+        val held = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val completed = java.util.concurrent.CountDownLatch(1)
+        try {
+            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue(posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePlaybackDelivery = {
+                held.countDown()
+                assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            MediaControlsService.playbackCompleted = { assertTrue(it >= 0); completed.countDown() }
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            assertTrue(held.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            awaitServiceDestroyed(ctx)
+            posts.clear()
+            release.countDown()
+            assertTrue(completed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue("destroyed service reverted glyph", posts.isEmpty())
+        } finally {
+            MediaControlsService.beforePlaybackDelivery = null
+            MediaControlsService.playbackCompleted = null
+            release.countDown(); stub.stop()
         }
     }
 
