@@ -144,15 +144,27 @@ class MediaControlsService : Service() {
             ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_FAST_FORWARD -> { jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
-                // The PC toggles its actual state immediately, without waiting for a status poll.
-                        scope.launch {
+                // the glyph used to wait for VLC's answer (1-2 s on a
+                // busy player). Flip on receipt for instant feedback. If the command
+                // never lands, revert - but only when no newer bar action superseded
+                // this press (a late failure must not stomp a later flip). The 2 s
+                // poll reconciles any remaining divergence with the PC's real state.
+                val prev = lastPlaying
+                val epochAtPress = commandEpoch.get()
+                lastPlaying = !prev
+                postMediaNotification(lastPlaying, 0, 0, lastStatus?.title)
+                scope.launch {
                     try {
                         val store = Store(this@MediaControlsService)
                         Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
-                        lastPlaying = !lastPlaying
-                        postMediaNotification(lastPlaying, 0, 0, lastStatus?.title)
-                        refreshNow()
-                    } catch (e: Exception) { if (e is CancellationException) throw e }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        if (epochAtPress == commandEpoch.get()) {
+                            lastPlaying = prev
+                            postMediaNotification(prev, 0, 0, lastStatus?.title)
+                        }
+                    }
+                    refreshNow()
                 }
                 return START_STICKY
             }
