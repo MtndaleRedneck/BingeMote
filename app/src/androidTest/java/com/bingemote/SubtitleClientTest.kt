@@ -9,6 +9,18 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 class SubtitleClientTest {
+    @org.junit.Before fun isolateFromForegroundPolling() {
+        val ctx=InstrumentationRegistry.getInstrumentation().targetContext
+        androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressHome()
+        ctx.stopService(android.content.Intent(ctx,MediaControlsService::class.java))
+        Thread.sleep(300)
+    }
+    private suspend fun awaitCondition(timeoutMs:Long=20000, predicate:()->Boolean) {
+        val end=System.currentTimeMillis()+timeoutMs
+        while(System.currentTimeMillis()<end){if(predicate())return;delay(50)}
+        assertTrue("condition not reached within $timeoutMs ms",predicate())
+    }
+
     private class Stub : AutoCloseable {
         val requests = CopyOnWriteArrayList<String>()
         private val server = ServerSocket(0)
@@ -115,8 +127,8 @@ class SubtitleClientTest {
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles()}
                 delay(2000)
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles(quiet=true)}
-                delay(1400)
-                assertEquals("opaque-movie",remote.subtitleFolder?.mediaId)
+                awaitCondition(8000){remote.subtitleFolder!=null || remote.subtitleFileError!=null}
+                assertEquals("listing error=${remote.subtitleFileError}; requests=${stub.requests}","opaque-movie",remote.subtitleFolder?.mediaId)
                 assertEquals(1,stub.requests.size)
                 assertFalse(remote.subtitleFilesLoading)
             } finally {scope.cancel()}
@@ -133,12 +145,12 @@ class SubtitleClientTest {
             try {
                 val remote=RemoteState(ctx,store,scope)
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles()}
-                delay(300)
+                awaitCondition(){remote.subtitleFolder!=null}
                 stub.delayMs=2800
                 withContext(Dispatchers.Main){remote.pickSubtitle(1)}
-                delay(300)
+                awaitCondition(){stub.requests.any{it.startsWith("POST /subtitles/select")}}
                 withContext(Dispatchers.Main){remote.pickSubtitle(2);remote.pickSubtitle(3);remote.pickSubtitle(-1)}
-                delay(6500)
+                awaitCondition(){!remote.subtitleFilesLoading && remote.pickedSubtitle == -1}
                 val selects=stub.requests.filter{it.startsWith("POST /subtitles/select")}
                 assertEquals(2,selects.size)
                 assertTrue(selects.last().contains("\"trackId\":-1"))
