@@ -313,7 +313,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         if($MachineOnly){$code=Invoke-MachineReset}
         else {
-            $ExpectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            if(!$ExpectedSid){$ExpectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value}
             $code=Invoke-BingeMoteReset
             if($code -eq 0) {
                 $argLine=(Get-ElevationArguments $PSCommandPath $ExpectedSid)+' -MachineOnly'
