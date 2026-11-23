@@ -83,6 +83,9 @@ adb shell am force-stop com.bingemote
 adb shell am start -n com.bingemote/.MainActivity --es screen setup --es pairdemo true >/dev/null
 sleep 8
 dismiss_anr
+adb exec-out screencap -p > "screenshots/setup-before-selection.png"
+adb shell input tap 540 680
+sleep 2
 adb exec-out screencap -p > "screenshots/setup-pair.png"
 # One screenful down: the code card and Pair button.
 adb shell input swipe 540 1900 540 700 400

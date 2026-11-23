@@ -46,7 +46,7 @@ fun SetupScreen(
     var found by remember {
         mutableStateOf(if (demoPair && demo) listOf(DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC")) else emptyList())
     }
-    var chosen by remember { mutableStateOf(if (demoPair && demo) found.firstOrNull() else null) }
+    var chosen by remember { mutableStateOf<DiscoveredHelper?>(null) }
     var manualHost by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var pairing by remember { mutableStateOf(false) }
@@ -67,6 +67,7 @@ fun SetupScreen(
     var checkRun by remember { mutableStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
+    var discoveryMessage by remember { mutableStateOf<String?>(null) }
     // The PC scan runs once when the pair screen opens; demos skip it so the renders are stable.
     var scannedOnce by remember { mutableStateOf(demoPair || demoVlcPending) }
 
@@ -97,11 +98,12 @@ fun SetupScreen(
 
     fun scan() {
         scanning = true
+        discoveryMessage = null
         say("", false)
         scope.launch {
             found = withContext(Dispatchers.IO) { HelperClient.discover() }
             scanning = false
-            if (found.isEmpty()) say("No PC answered. Check BingeMote is running on the PC, then try again - or type the PC's address below.", true)
+            if (found.isEmpty()) discoveryMessage = "No PC answered. Check BingeMote is running on the PC, then try again, or type its address."
         }
     }
 
@@ -111,15 +113,7 @@ fun SetupScreen(
     }
 
     fun pair() {
-        // A typed "host:port" keeps its own port instead of getting the default glued on.
-        val manual = manualHost.trim()
-        val target = chosen ?: run {
-            val h = manual.substringBeforeLast(':', "")
-            val p = manual.substringAfterLast(':', "").toIntOrNull()
-            if (h.isNotBlank() && p != null) DiscoveredHelper(h, p, "PC")
-            else DiscoveredHelper(manual, HelperClient.DEFAULT_PORT, "PC")
-        }
-        if (target.host.isBlank()) { say("Enter your PC's address or pick it above.", true); return }
+        val target = chosen ?: run { say("Select your PC first.", true); return }
         if (code.length != 4 && code.length != 6) { say("Enter the code BingeMote is showing on your PC - 4 digits, or 6 on an older BingeMote.", true); return }
         pairing = true
         say("", false)
@@ -232,7 +226,7 @@ fun SetupScreen(
                         Spacer(Modifier.height(8.dp))
                         val isSel = chosen == h
                         PressTile(
-                            onTap = { chosen = h; manualHost = "" },
+                            onTap = { chosen = h; manualHost = ""; code = ""; justPaired = false; continueVlc = false; say("", false) },
                             background = if (isSel) OrangeGradient else CardGradient,
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                         ) {
@@ -248,7 +242,7 @@ fun SetupScreen(
                     Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = manualHost,
-                        onValueChange = { manualHost = it; if (it.isNotBlank()) chosen = null },
+                        onValueChange = { manualHost = it; chosen = null; code = ""; justPaired = false; continueVlc = false; discoveryMessage = null; say("", false) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         placeholder = { Text("192.168.1.50", color = Muted) },
@@ -256,7 +250,28 @@ fun SetupScreen(
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri),
                         colors = fieldColors(),
                     )
+                    Spacer(Modifier.height(10.dp))
+                    OrangeButton("Use this address", enabled = manualHost.isNotBlank(), onClick = {
+                        val address = manualHost.trim()
+                        val host = address.substringBeforeLast(':', "")
+                        val port = address.substringAfterLast(':', "").toIntOrNull()
+                        if (address.contains(':') && (host.isBlank() || port == null || port !in 1..65535)) {
+                            discoveryMessage = "Enter a PC address, with an optional port from 1 to 65535."
+                        } else {
+                            chosen = if (port != null) DiscoveredHelper(host, port, "PC")
+                                else DiscoveredHelper(address, HelperClient.DEFAULT_PORT, "PC")
+                            discoveryMessage = null
+                            code = ""
+                            say("", false)
+                        }
+                    })
+                    chosen?.takeIf { manualHost.isNotBlank() }?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Selected: ${it.host}:${it.port}", color = TextC, fontSize = 13.sp)
+                    }
+                    SetupMessage(discoveryMessage, true)
                 }
+                if (chosen != null) {
                 Spacer(Modifier.height(14.dp))
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -271,7 +286,7 @@ fun SetupScreen(
                             code = it.filter(Char::isDigit).take(6)
                             // One less tap: a full 6th digit (older BingeMote) pairs right away; a 4-digit
                             // code goes with the Pair button below, since 4 is a prefix of 6.
-                            if (code.length == 6 && !pairing && (chosen != null || manualHost.isNotBlank())) pair()
+                            if (code.length == 6 && !pairing && chosen != null) pair()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
@@ -285,6 +300,8 @@ fun SetupScreen(
                     OrangeButton(if (pairing) "Pairing\u2026" else "Pair", enabled = !pairing, onClick = { pair() })
                     // Right under the button, not below Back where the keyboard hid it.
                     SetupMessage(message, messageIsError)
+                }
+
                 }
 
                 // The confirmation lives below the form, not on its

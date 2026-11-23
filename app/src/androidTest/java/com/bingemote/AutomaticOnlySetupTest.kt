@@ -9,6 +9,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AutomaticOnlySetupTest {
+    @Test fun pairEntryNeedsSelectedPcOrConfirmedAddress() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "setup").putExtra("pairdemo", "true"))
+        assertTrue(device.wait(Until.hasObject(By.text("Find your PC")), 10000))
+        assertFalse(device.hasObject(By.text("Code from your PC")))
+        device.takeScreenshot(java.io.File("/sdcard/bm-setup-before-selection.png"))
+        device.findObject(By.textContains("MY-PC  (")).click()
+        Thread.sleep(500)
+        assertTrue(device.hasObject(By.text("Code from your PC")))
+        device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-pc.png"))
+        val fields = device.findObjects(By.clazz("android.widget.EditText"))
+        fields.first().text = "192.0.2.20"
+        Thread.sleep(500)
+        assertFalse(device.hasObject(By.text("Code from your PC")))
+        device.pressBack()
+        device.findObject(By.text("Use this address")).click()
+        Thread.sleep(500)
+        assertTrue(device.hasObject(By.text("Code from your PC")))
+        assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
+        device.takeScreenshot(java.io.File("/sdcard/bm-setup-selected-address.png"))
+    }
+
     @Test fun pendingAutomaticSetupHasDoneAndNoManualVlcFields() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
