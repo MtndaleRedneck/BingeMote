@@ -20,4 +20,15 @@ adb shell am instrument -w -e class com.bingemote.AutomaticOnlySetupTest,com.bin
 for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings updates-success updates-expired; do
   adb exec-out cat "/sdcard/Android/data/com.bingemote/files/bm-$capture.png" > "focused-ui/$capture.png"
 done
+
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen main --es lockcontrols true
+sleep 8
+adb shell uiautomator dump /sdcard/status-icon.xml
+sleep 2
+adb exec-out screencap -p > focused-ui/status-icon-native.png
+adb shell cmd statusbar expand-notifications
+sleep 3
+adb exec-out screencap -p > focused-ui/status-icon-shade.png
+adb shell cmd statusbar collapse
 grep -q '^OK (' focused-ui/tests.txt
