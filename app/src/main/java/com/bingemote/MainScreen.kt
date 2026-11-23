@@ -192,7 +192,7 @@ private fun HomeContent(
                 maxLines = 2,
             )
             Text(
-                if (refused) "If you changed it on the PC, re-pair in Settings or set it back by hand"
+                if (refused) "Pair again in Settings to get the password from your PC"
                 else if (lost) "Both devices need to be on the same network"
                 else if (vlcOut) "Pick a film in Movies and it starts by itself"
                 else when (s?.state) {

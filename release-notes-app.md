@@ -1,5 +1,7 @@
 ## v1.12.14
 
+- Removed manual VLC configuration and password-entry setup. Pairing handles setup; the manual PC-address option remains.
+
 - The "Trying to reconnect" banner now reads "Both devices need to be on the same network", tightened slightly so it fits on one line.
 
 ## v1.12.2

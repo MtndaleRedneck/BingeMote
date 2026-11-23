@@ -55,11 +55,6 @@ fun SetupScreen(
     var pairedName by remember { mutableStateOf(if (demoVlcPending && demo) "MY-PC" else "") }
     // An earlier pairing continued to the VLC hand-off without a fresh code.
     var continueVlc by remember { mutableStateOf(false) }
-    var vlcPassword by remember { mutableStateOf("") }
-    var moviesPath by remember { mutableStateOf("") }
-    var testing by remember { mutableStateOf(false) }
-    // VLC was open when the PC tried to write vlcrc: the PC finishes it when VLC closes.
-    var vlcFinishPending by remember { mutableStateOf(false) }
     // Automatic-first VLC setup (helper 1.7+): the PC picked the password at pairing time.
     // "checking" while the phone verifies it, then "ok" or "refused".
     var autoSetup by remember { mutableStateOf(demoVlcPending && demo) }
@@ -70,8 +65,6 @@ fun SetupScreen(
     var autoNotOpen by remember { mutableStateOf(false) }
     // Bump to re-run the automatic check after the PC was unreachable.
     var checkRun by remember { mutableStateOf(0) }
-    // The manual password card stays as the backup, collapsed while the automatic path runs.
-    var showManual by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
     // The PC scan runs once when the pair screen opens; demos skip it so the renders are stable.
@@ -139,12 +132,15 @@ fun SetupScreen(
                 store.pcName = paired.name.ifBlank { target.name }
                 remote.publishAddress(target.host, target.port, paired.token)
                 // Automatic-first: the PC generated the VLC password and handed it over with
-                // the pair. An old helper says nothing and the manual card stays.
+                // the pair. Older helpers need an update before automatic setup can finish.
                 if (paired.vlcPassword != null) {
                     store.vlcPassword = paired.vlcPassword
                     autoSetup = true
                     autoState = "checking"
                     autoPending = paired.vlcPending
+                } else {
+                    autoSetup = false
+                    autoState = "unsupported"
                 }
                 pairing = false
                 pairedName = store.pcName
@@ -166,48 +162,8 @@ fun SetupScreen(
         code = ""
         justPaired = false
         autoSetup = false
-        showManual = false
+        continueVlc = false
         say("", false)
-    }
-
-    fun finish() {
-        if (vlcPassword.isBlank()) { say("Enter the password you set in VLC's web interface.", true); return }
-        if (store.helperToken.isBlank()) { say("Pair with your PC first.", true); return }
-        store.vlcPassword = vlcPassword
-        store.moviesPath = moviesPath.trim().ifBlank { store.moviesPath }
-        testing = true
-        say("", false)
-        scope.launch {
-            val vlcOk = try {
-                withContext(Dispatchers.IO) { Vlc.status(store.host, store.vlcPort, store.vlcPassword) }
-                true
-            } catch (e: Exception) { false }
-            val helperOk = try {
-                withContext(Dispatchers.IO) { HelperClient.ping(store.host, store.helperPort, store.helperToken) }
-            } catch (e: Exception) { false }
-            testing = false
-            when {
-                vlcOk && helperOk -> {
-                    // Hand the password to the PC: it writes vlcrc so a hand-opened VLC has
-                    // the web remote too. VLC is open right now, so the PC defers the write
-                    // and does it when VLC closes - say so, then let him leave with Done.
-                    val deferred = withContext(Dispatchers.IO) {
-                        try {
-                            HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) == "vlc running"
-                        } catch (e: Exception) { false }
-                    }
-                    store.setupDone = true
-                    if (deferred) vlcFinishPending = true else onDone()
-                }
-                !vlcOk && helperOk -> {
-                    // VLC may just be closed: the PC writes vlcrc so the next hand-open has the remote.
-                    scope.launch(Dispatchers.IO) { try { HelperClient.setupVlc(store.host, store.helperPort, store.helperToken, store.vlcPassword) } catch (e: Exception) {} }
-                    say("BingeMote answers, but VLC didn't. Check the password and that VLC is open with the web interface on.", true)
-                }
-                vlcOk && !helperOk -> say("VLC answers, but BingeMote didn't. Mouse mode won't work until BingeMote is running on the PC.", true)
-                else -> say("Nothing answered. Check the PC is awake, VLC is open, and both are on the same Wi-Fi.", true)
-            }
-        }
     }
 
     Column(
@@ -254,7 +210,13 @@ fun SetupScreen(
                         Spacer(Modifier.height(8.dp))
                         Text("Continue to the VLC step below, or enter a new code to pair again - only needed for a new phone, or if this phone was removed on the PC.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                         Spacer(Modifier.height(12.dp))
-                        OrangeButton("Continue", onClick = { say("", false); continueVlc = true })
+                        OrangeButton("Continue", onClick = {
+                            say("", false)
+                            autoSetup = store.vlcPassword.isNotBlank()
+                            autoState = if (autoSetup) "checking" else "unsupported"
+                            continueVlc = true
+                            checkRun++
+                        })
                     }
                     Spacer(Modifier.height(14.dp))
                 }
@@ -329,17 +291,15 @@ fun SetupScreen(
                 // own screen: paired, then the VLC hand-off under it.
                 if (successVisible) {
                     Spacer(Modifier.height(14.dp))
-                    // The card itself only has content for a fresh pair or the automatic
-                    // VLC path; a continued old pairing goes straight to the manual cards.
-                    if (justPaired || autoSetup) SetupCard {
+                    SetupCard {
                         if (justPaired) {
                             Text("\u2713 Paired with $pairedName", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(10.dp))
                         }
                         if (!autoSetup) {
-                            if (justPaired) {
-                                Text("One more step: turn on VLC's web remote below.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                            }
+                            Text("Update BingeMote on your PC, then pair again to set up VLC automatically.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                            Spacer(Modifier.height(12.dp))
+                            OrangeButton("Pair again", onClick = { retryPair() })
                         } else when (autoState) {
                             "checking" -> {
                                 if (!justPaired) { Text("Setting up VLC remote control\u2026", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(10.dp)) }
@@ -374,72 +334,14 @@ fun SetupScreen(
                             else -> {
                                 Text("VLC refused the password", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(10.dp))
-                                Text("If you changed it on the PC, re-pair or set it by hand.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                                Text("Pair again to get the password from BingeMote on your PC. If VLC is still running with old settings, close and reopen it.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                                 Spacer(Modifier.height(12.dp))
                                 OrangeButton("Pair again", onClick = { retryPair() })
                                 SetupMessage(message, messageIsError)
                             }
                         }
                     }
-                    if (autoSetup && autoState != "refused") {
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = { showManual = !showManual }) {
-                            Text(if (showManual) "Hide the manual setup" else "Set the password by hand instead", color = Muted)
-                        }
-                    }
                     Spacer(Modifier.height(6.dp))
-                }
-                if (successVisible && (!autoSetup || showManual || autoState == "refused")) {
-                SetupCard {
-                    Text("Turn on VLC's web remote", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(10.dp))
-                    Text("1. Open VLC on your PC.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("2. Tools - Preferences - at the bottom left, under \"Show settings\", pick All.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("3. Go to Interface - Main interfaces and tick Web.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("4. Under Main interfaces open Lua, and in Lua HTTP set a password. Type the same one below.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text("5. Save and restart VLC. If Windows asks about the firewall, allow Private networks.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
-                }
-                Spacer(Modifier.height(14.dp))
-                SetupCard {
-                    Text("VLC password", color = TextC, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = vlcPassword,
-                        onValueChange = { vlcPassword = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("The password from step 4", color = Muted) },
-                        colors = fieldColors(),
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Text("Movies folder (optional)", color = TextC, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = moviesPath,
-                        onValueChange = { moviesPath = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("C:\\Users\\you\\Videos", color = Muted) },
-                        colors = fieldColors(),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    if (vlcFinishPending) {
-                        OrangeButton("Done", onClick = { onDone() })
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "VLC is open on the PC - BingeMote will finish setting it up when VLC closes.",
-                            color = Muted, fontSize = 13.sp,
-                        )
-                    } else {
-                        OrangeButton(if (testing) "Checking\u2026" else "Finish", enabled = !testing, onClick = { finish() })
-                    }
-                    SetupMessage(message, messageIsError)
-                }
                 }
                 Spacer(Modifier.height(14.dp))
                 TextButton(onClick = { say("", false); if (reentry) onCancel?.invoke() else step = 1 }) { Text("Back", color = Muted) }
