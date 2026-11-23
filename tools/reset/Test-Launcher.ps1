@@ -29,7 +29,8 @@ $psi=New-Object Diagnostics.ProcessStartInfo
 $psi.FileName="$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe";$psi.Arguments=Get-ElevationArguments "$PSScriptRoot\BingeMote-Reset.ps1" 'S-1-5-0';$psi.UseShellExecute=$false;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
 $p=[Diagnostics.Process]::Start($psi);$p.StandardInput.WriteLine();$p.StandardInput.Close()
 if(!$p.WaitForExit(15000)){$p.Kill();throw 'Guard child timed out'}
-Write-Host $p.StandardOutput.ReadToEnd();Write-Host $p.StandardError.ReadToEnd()
+$childOut=$p.StandardOutput.ReadToEnd();$childErr=$p.StandardError.ReadToEnd();Write-Host $childOut;Write-Host $childErr
+if($childOut -notmatch 'Different Windows account' -or $childOut -match 'cannot be retrieved'){throw 'Wrong-profile child failed for wrong reason'}
 if($p.ExitCode -ne 1){throw 'Real child profile refusal exit incorrect'}
 Write-Host 'PASS real Windows PowerShell child profile guard/error exit'
 Write-Host 'NOT COVERED: interactive UAC consent dialog or human desktop pixels on hosted service runner.'

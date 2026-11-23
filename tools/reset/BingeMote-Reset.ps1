@@ -1,6 +1,6 @@
 # BingeMote-only reset. Windows PowerShell 5.1. No network access.
 [CmdletBinding()]
-param([string]$ExpectedSid)
+param([string]$ExpectedSid,[switch]$MachineOnly)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
