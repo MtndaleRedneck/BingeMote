@@ -245,7 +245,10 @@ fun SetupScreen(
             }
 
             else -> Column {
-                if (store.helperToken.isNotBlank() && !justPaired) {
+                // Mid-setup recovery only: a pairing exists but setup never finished, so
+                // offer continuing to the VLC step. A finished setup re-entering from
+                // Your PC -> Pair again gets just the pair form - no wizard loop.
+                if (store.helperToken.isNotBlank() && !store.setupDone && !justPaired) {
                     SetupCard {
                         Text("Already paired" + (if (store.pcName.isNotBlank()) " with ${store.pcName}" else ""), color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
@@ -326,7 +329,9 @@ fun SetupScreen(
                 // own screen: paired, then the VLC hand-off under it.
                 if (successVisible) {
                     Spacer(Modifier.height(14.dp))
-                    SetupCard {
+                    // The card itself only has content for a fresh pair or the automatic
+                    // VLC path; a continued old pairing goes straight to the manual cards.
+                    if (justPaired || autoSetup) SetupCard {
                         if (justPaired) {
                             Text("\u2713 Paired with $pairedName", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.height(10.dp))
