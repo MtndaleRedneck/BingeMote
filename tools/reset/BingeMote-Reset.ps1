@@ -93,11 +93,9 @@ function Native-Checked([string]$Exe,[string[]]$Arguments) {
 function Invoke-BingeMoteReset {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if (!$ExpectedSid -or $sid -ne $ExpectedSid) { throw 'Different Windows account at elevation. Cancelled to protect the wrong profile. Run from the account that uses BingeMote.' }
-    if (!(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Administrator permission is required. Use the CMD launcher.' }
-    $installRoots = @((Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'),(Join-Path $env:ProgramFiles 'BingeMote'))
-    if (${env:ProgramFiles(x86)}) { $installRoots += Join-Path ${env:ProgramFiles(x86)} 'BingeMote' }
-    $installRoots += Join-Path $env:LOCALAPPDATA 'Programs\BingeMoteHelper'
-    $dataRoots = @((Join-Path $env:LOCALAPPDATA 'BingeMote'),(Join-Path $env:LOCALAPPDATA 'BingeMoteHelper'),(Join-Path $env:APPDATA 'BingeMote'),(Join-Path $env:ProgramData 'BingeMote'))
+    if ((New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Open the reset normally, NOT as administrator. User-file operations refuse elevated execution.' }
+    $installRoots = @((Join-Path $env:LOCALAPPDATA 'Programs\BingeMote'),(Join-Path $env:LOCALAPPDATA 'Programs\BingeMoteHelper'))
+    $dataRoots = @((Join-Path $env:LOCALAPPDATA 'BingeMote'),(Join-Path $env:LOCALAPPDATA 'BingeMoteHelper'),(Join-Path $env:APPDATA 'BingeMote'))
     $roots = @($installRoots+$dataRoots | Select-Object -Unique)
     foreach ($r in $roots) { Assert-PlainTree $r }
     if (@(Get-Process -Name vlc -ErrorAction SilentlyContinue).Count) { throw 'Close VLC first, then run the reset again. No changes made.' }
@@ -114,55 +112,17 @@ function Invoke-BingeMoteReset {
         Write-Host 'BingeMote reset: removes installs/pairing/settings and resets VLC web-remote values only.'
         Write-Host "Local recovery backup: $backup"
         # Complete inventory before stopping anything or removing state.
-        $tasks = @(Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' -and $_.TaskName -in @('BingeMote Watchdog','BingeMote Input Broker') })
-        foreach ($t in $tasks) {
-            foreach ($a in $t.Actions) {
-                if (!(In-Root ([string]$a.Execute).Trim('"') $installRoots) -or [IO.Path]::GetFileName(([string]$a.Execute).Trim('"')) -ne 'BingeMote.exe') { throw 'Known task name has an unexpected action; no reset performed.' }
+        $userUninstall=@()
+        $rr='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+        if(Test-Path $rr){foreach($k in Get-ChildItem $rr){
+            $v=Get-ItemProperty -LiteralPath $k.PSPath
+            if($v.PSObject.Properties['DisplayName'] -and [string]$v.DisplayName -match '^BingeMote(?: Helper)?(?: [0-9][0-9A-Za-z. -]*)?$'){
+                if(!$v.PSObject.Properties['InstallLocation'] -or !@($installRoots | Where-Object {Same-Path $_ ([string]$v.InstallLocation)}).Count){throw 'Unknown user uninstall path.'}
+                $userUninstall+=$k;Native-Checked reg.exe @('export',$k.Name,(Join-Path $backup ('user-uninstall-'+$userUninstall.Count+'.reg')),'/y')
             }
-            if (@($t.Actions).Count -eq 0) { throw 'Empty task action; no reset performed.' }
-            Export-ScheduledTask -TaskName $t.TaskName -TaskPath '\' | Set-Content -LiteralPath (Join-Path $backup ($t.TaskName+'.xml')) -Encoding Unicode
-        }
-        # No BingeMote version in reviewed history installs a Windows service.
-        # Refuse an unexpected BingeMote service instead of deleting by substring.
-        if (@(Get-CimInstance Win32_Service | Where-Object { $_.Name -match 'BingeMote' -or $_.DisplayName -match 'BingeMote' }).Count) { throw 'Unexpected BingeMote-named Windows service. No reset performed; inspection needed.' }
-        $rulePlan = @()
-        foreach ($r in @(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object { $_.DisplayName -match 'BingeMote' })) {
-            $r | Export-Clixml -LiteralPath (Join-Path $backup ('rule-'+[guid]::NewGuid().ToString('N')+'.xml'))
-            $a = $r | Get-NetFirewallApplicationFilter
-            $p = $r | Get-NetFirewallPortFilter
-            $decision = Get-RuleDecision $r $a $p $installRoots
-            $rulePlan += [pscustomobject]@{ID=$r.Name;DisplayName=$r.DisplayName;Program=$a.Program;Protocol=$p.Protocol;LocalPort=$p.LocalPort;Decision=$decision}
-            if ($decision -ne 'remove') { $issues.Add('Preserved ambiguous firewall rule: '+$r.Name) }
-        }
-        $rulePlan | Export-Clixml -LiteralPath (Join-Path $backup 'firewall-plan.xml')
-        Native-Checked netsh.exe @('advfirewall','export',(Join-Path $backup 'firewall-before.wfw'))
-        $url = & netsh.exe http show urlacl 2>&1
-        if ($LASTEXITCODE -ne 0) { throw 'URL reservation inventory failed.' }
-        $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
-        # Match the literal URL, independent of localized netsh field labels.
-        $urlPresent = [bool](($url -join "`n") -match '(?m)http://\+:8488/\s*$')
-        $knownAcl=$false
-        if ($urlPresent) {
-            $detail=& netsh.exe http show urlacl url=http://+:8488/ 2>&1
-            if ($LASTEXITCODE -ne 0) { throw 'Exact URL reservation read failed.' }
-            $descriptors=@([regex]::Matches(($detail -join "`n"),'(?m)^\s*SDDL\s*:\s*([^\r\n]+)\s*$') | ForEach-Object { $_.Groups[1].Value.Trim() })
-            $knownAcl=($descriptors.Count -eq 1 -and (Known-UrlAcl $descriptors[0]))
-        }
-        $regRoots = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall')
-        $uninstall = @()
-        foreach ($rr in $regRoots) {
-            if (!(Test-Path $rr)) { continue }
-            foreach ($k in Get-ChildItem $rr) {
-                $v=Get-ItemProperty -LiteralPath $k.PSPath
-                if ($v.PSObject.Properties['DisplayName'] -and [string]$v.DisplayName -match '^BingeMote(?: Helper)?(?: [0-9][0-9A-Za-z. -]*)?$') {
-                    if (!$v.PSObject.Properties['InstallLocation'] -or !@($installRoots | Where-Object { Same-Path $_ ([string]$v.InstallLocation) }).Count) { throw 'BingeMote uninstall entry has unknown install path; no reset performed.' }
-                    $uninstall += $k
-                    Native-Checked reg.exe @('export',$k.Name,(Join-Path $backup ('uninstall-'+$uninstall.Count+'.reg')),'/y')
-                }
-            }
-        }
+        }}
         $runPlan=@()
-        foreach ($rk in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run','HKLM:\Software\Microsoft\Windows\CurrentVersion\Run')) {
+        foreach ($rk in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run')) {
             if (!(Test-Path $rk)) { continue }
             $v=Get-ItemProperty -LiteralPath $rk
             foreach ($n in @('BingeMote','BingeMoteHelper')) {
@@ -177,7 +137,7 @@ function Invoke-BingeMoteReset {
         $runPlan | Export-Clixml -LiteralPath (Join-Path $backup 'startup-before.xml')
         $links=@()
         $shell=New-Object -ComObject WScript.Shell
-        foreach ($dir in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('CommonDesktopDirectory'),[Environment]::GetFolderPath('CommonPrograms'),[Environment]::GetFolderPath('Startup'))) {
+        foreach ($dir in @([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Startup'))) {
             if (!$dir -or !(Test-Path -LiteralPath $dir)) { continue }
             foreach ($n in @('BingeMote.lnk','BingeMote Helper.lnk')) {
                 $l=Join-Path $dir $n
@@ -202,7 +162,7 @@ function Invoke-BingeMoteReset {
             if ((Get-FileHash -LiteralPath $vlcPath).Hash -ne (Get-FileHash -LiteralPath (Join-Path $backup 'vlcrc-before')).Hash) { throw 'VLC backup verification failed.' }
         }
         # Stop only identified executables. No taskkill by name or service wildcard.
-        foreach ($t in $tasks) { Stop-ScheduledTask -TaskName $t.TaskName -TaskPath '\' }
+
         foreach ($p in @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('BingeMote.exe','BingeMoteHelper.exe') })) {
             if (!$p.ExecutablePath -or !(In-Root $p.ExecutablePath $installRoots)) { throw 'Running BingeMote-named process outside known install paths; reset stopped.' }
             Stop-Process -Id $p.ProcessId -Force
@@ -221,16 +181,9 @@ function Invoke-BingeMoteReset {
         $manifest | Export-Clixml -LiteralPath (Join-Path $backup 'folder-manifest.xml')
         $i=0;foreach ($l in $links) { Copy-Item -LiteralPath $l -Destination (Join-Path $backup ('shortcut-'+(++$i)+'.lnk')) }
         # All backups complete. Mutations below are restricted to the captured plan.
-        foreach ($t in $tasks) { Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -Confirm:$false }
-        foreach ($r in $rulePlan | Where-Object { $_.Decision -eq 'remove' }) { Remove-NetFirewallRule -PolicyStore PersistentStore -Name $r.ID }
-        if ($urlPresent) {
-            $listener=@(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq 8488 })
-            Write-Host ('URLACL safety check: known install='+$hadInstall+' known SDDL='+$knownAcl+' remaining listeners='+$listener.Count)
-            if ($hadInstall -and $knownAcl -and !$listener.Count) { Native-Checked netsh.exe @('http','delete','urlacl','url=http://+:8488/') }
-            else { $issues.Add('Preserved URL reservation: ownership/listener could not be established after stopping BingeMote.') }
-        }
+        foreach($k in $userUninstall){Remove-Item -LiteralPath $k.PSPath -Recurse -Force}
         foreach ($r in $runPlan) { Remove-ItemProperty -LiteralPath $r.Key -Name $r.Name }
-        foreach ($k in $uninstall) { Remove-Item -LiteralPath $k.PSPath -Recurse -Force }
+
         foreach ($l in $links) { Remove-Item -LiteralPath $l -Force }
         foreach ($m in $manifest) {
             Assert-PlainTree $m.Original
@@ -258,7 +211,7 @@ function Invoke-BingeMoteReset {
             $issues | Set-Content -LiteralPath (Join-Path $backup 'PARTIAL.txt')
             return 2
         }
-        Write-Host 'BingeMote reset complete. Install the current BingeMote PC app to set up again.' -ForegroundColor Green
+        Write-Host 'USER PHASE COMPLETE: profile files, pairing/settings and VLC web remote reset. Machine phase still required.' -ForegroundColor Green
         return 0
     } catch {
         Write-Host ('RESET STOPPED / MAY BE PARTIAL: '+$_.Exception.Message) -ForegroundColor Red
@@ -270,16 +223,107 @@ function Invoke-BingeMoteReset {
         Stop-Transcript | Out-Null
     }
 }
+function Invoke-MachineReset {
+    $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if (!$ExpectedSid -or $sid -ne $ExpectedSid) { throw 'Different account at elevation. Machine phase refused.' }
+    if (!(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Machine phase requires elevation.' }
+    # This worker never opens, backs up, modifies or deletes ANY user-profile file.
+    $profileKey='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\'+$sid
+    $profile=[Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath $profileKey).ProfileImagePath)
+    $pf=[Environment]::GetFolderPath('ProgramFiles')
+    $pfx=[Environment]::GetFolderPath('ProgramFilesX86')
+    $roots=@((Join-Path $profile 'AppData\Local\Programs\BingeMote'),(Join-Path $profile 'AppData\Local\Programs\BingeMoteHelper'),(Join-Path $pf 'BingeMote'))
+    if ($pfx) { $roots+=Join-Path $pfx 'BingeMote' }
+    # GUID backup directory is created directly under the protected Program Files parent.
+    # No user-chosen backup path is accepted by the elevated worker.
+    $backup=Join-Path $pf ('BingeMote-Reset-Recovery-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($backup) | Out-Null
+    $issues=New-Object 'System.Collections.Generic.List[string]'
+    Start-Transcript -LiteralPath (Join-Path $backup 'machine-log.txt') | Out-Null
+    try {
+        Native-Checked icacls.exe @($backup,'/inheritance:r','/grant:r',('*'+$sid+':(OI)(CI)RX'),'*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F')
+        $tasks=@(Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' -and $_.TaskName -in @('BingeMote Watchdog','BingeMote Input Broker') })
+        foreach($t in $tasks) {
+            if (!@($t.Actions).Count) { throw 'Known task has no verifiable action.' }
+            foreach($a in $t.Actions) {
+                $exe=([string]$a.Execute).Trim('"')
+                if (!(In-Root $exe $roots) -or [IO.Path]::GetFileName($exe) -ne 'BingeMote.exe') { throw 'Known task has unrecognized action.' }
+            }
+            Export-ScheduledTask -TaskName $t.TaskName -TaskPath '\' | Set-Content -LiteralPath (Join-Path $backup ($t.TaskName+'.xml')) -Encoding Unicode
+        }
+        if (@(Get-CimInstance Win32_Service | Where-Object { $_.Name -match 'BingeMote' -or $_.DisplayName -match 'BingeMote' }).Count) { throw 'Unexpected BingeMote service, machine reset refused.' }
+        $rulePlan=@()
+        foreach($r in @(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object { $_.DisplayName -match 'BingeMote' })) {
+            $a=$r | Get-NetFirewallApplicationFilter;$p=$r | Get-NetFirewallPortFilter
+            # Do not inspect an executable or call Test-Path on profile paths while elevated.
+            $program=[Environment]::ExpandEnvironmentVariables([string]$a.Program).Trim('"')
+            $decision='keep-ambiguous'
+            $leaf=[IO.Path]::GetFileName($program)
+            if ($program -eq 'Any') { $decision=Get-RuleDecision $r $a $p @() }
+            elseif ($leaf -in @('BingeMote.exe','BingeMoteHelper.exe','BingeMoteHelper-v1.0.1.exe') -and (In-Root $program $roots) -and $r.DisplayName -in @('BingeMote','BingeMote Helper','bingemote.exe','bingemotehelper.exe','bingemotehelper-v1.0.1.exe')) { $decision='remove' }
+            $rulePlan += [pscustomobject]@{ID=$r.Name;Program=$program;Decision=$decision}
+            if($decision -ne 'remove') { $issues.Add('Preserved ambiguous firewall rule: '+$r.Name) }
+        }
+        $rulePlan | Export-Clixml -LiteralPath (Join-Path $backup 'firewall-plan.xml')
+        Native-Checked netsh.exe @('advfirewall','export',(Join-Path $backup 'firewall-before.wfw'))
+        $url=& netsh.exe http show urlacl 2>&1
+        if($LASTEXITCODE -ne 0){throw 'URLACL inventory failed.'}
+        $url | Set-Content -LiteralPath (Join-Path $backup 'urlacl-before.txt')
+        $urlPresent=[bool](($url -join "`n") -match '(?m)http://\+:8488/\s*$')
+        $knownAcl=$false
+        if($urlPresent) {
+            $detail=& netsh.exe http show urlacl url=http://+:8488/ 2>&1
+            if($LASTEXITCODE -ne 0){throw 'Exact URLACL inventory failed.'}
+            $d=@([regex]::Matches(($detail -join "`n"),'(?m)^\s*SDDL\s*:\s*([^\r\n]+)\s*$') | ForEach-Object {$_.Groups[1].Value.Trim()})
+            $knownAcl=($d.Count -eq 1 -and (Known-UrlAcl $d[0]))
+        }
+        $uninstall=@()
+        foreach($rr in @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
+            if(!(Test-Path $rr)){continue}
+            foreach($k in Get-ChildItem $rr) {
+                $v=Get-ItemProperty -LiteralPath $k.PSPath
+                if($v.PSObject.Properties['DisplayName'] -and [string]$v.DisplayName -match '^BingeMote(?: Helper)?(?: [0-9][0-9A-Za-z. -]*)?$') {
+                    if(!$v.PSObject.Properties['InstallLocation'] -or !@($roots | Where-Object { Same-Path $_ ([string]$v.InstallLocation) }).Count){throw 'Unknown BingeMote machine uninstall path.'}
+                    $uninstall+=$k
+                    Native-Checked reg.exe @('export',$k.Name,(Join-Path $backup ('uninstall-'+$uninstall.Count+'.reg')),'/y')
+                }
+            }
+        }
+        # Never recursively operate on ProgramFiles/Data app trees from this worker.
+        # Current user has already removed profile files with their own token.
+        foreach($r in @((Join-Path $pf 'BingeMote'),(Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BingeMote'))) {
+            if(Test-Path -LiteralPath $r) { $issues.Add('Protected machine app/data folder remains; manual review needed: '+$r) }
+        }
+        foreach($t in $tasks){Stop-ScheduledTask -TaskName $t.TaskName -TaskPath '\';Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath '\' -Confirm:$false}
+        foreach($r in $rulePlan | Where-Object {$_.Decision -eq 'remove'}){Remove-NetFirewallRule -PolicyStore PersistentStore -Name $r.ID}
+        if($urlPresent) {
+            $listener=@(Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -eq 8488})
+            if($knownAcl -and !$listener.Count -and ($uninstall.Count -gt 0 -or $tasks.Count -gt 0 -or @($rulePlan | Where-Object {$_.Decision -eq 'remove'}).Count -gt 0)){Native-Checked netsh.exe @('http','delete','urlacl','url=http://+:8488/')}
+            else{$issues.Add('URL reservation preserved: ownership or remaining listener unresolved.')}
+        }
+        foreach($k in $uninstall){Remove-Item -LiteralPath $k.PSPath -Recurse -Force}
+        if($issues.Count){Write-Host 'PARTIAL MACHINE RESET' -ForegroundColor Yellow;$issues | ForEach-Object {Write-Host $_};$issues | Set-Content -LiteralPath (Join-Path $backup 'PARTIAL.txt');return 2}
+        Write-Host 'MACHINE PHASE COMPLETE' -ForegroundColor Green
+        return 0
+    } catch {Write-Host ('MACHINE RESET STOPPED / MAY BE PARTIAL: '+$_.Exception.Message) -ForegroundColor Red;return 1}
+    finally {Write-Host ('Machine recovery backup: '+$backup);Stop-Transcript | Out-Null}
+}
 if ($MyInvocation.InvocationName -ne '.') {
-    if (!$ExpectedSid) {
-        try {
-            $ownerSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-            $argLine=Get-ElevationArguments $PSCommandPath $ownerSid
-            $child=Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $argLine -PassThru -Wait
-            exit $child.ExitCode
-        } catch { Write-Host 'Administrator approval cancelled or elevation failed. Nothing was reset.' -ForegroundColor Red; Read-Host 'Press Enter to close' | Out-Null; exit 1 }
-    }
-    try { $code=Invoke-BingeMoteReset } catch { Write-Host $_.Exception.Message -ForegroundColor Red; $code=1 }
+    $code=1
+    try {
+        if($MachineOnly){$code=Invoke-MachineReset}
+        else {
+            $ExpectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            $code=Invoke-BingeMoteReset
+            if($code -eq 0) {
+                $argLine=(Get-ElevationArguments $PSCommandPath $ExpectedSid)+' -MachineOnly'
+                $child=Start-Process powershell.exe -Verb RunAs -ArgumentList $argLine -PassThru -Wait
+                $code=$child.ExitCode
+                if($code -eq 0){Write-Host 'BINGEMOTE RESET COMPLETE. Install the current PC app to set up again.' -ForegroundColor Green}
+                else{Write-Host 'MACHINE PHASE INCOMPLETE. Do not assume a cold setup.' -ForegroundColor Yellow}
+            }
+        }
+    } catch {Write-Host $_.Exception.Message -ForegroundColor Red;$code=1}
     Read-Host 'Press Enter to close' | Out-Null
     exit $code
 }

@@ -14,6 +14,8 @@ jobs:
       - name: Parse with Windows PowerShell 5.1
         shell: powershell
         run: |
+          Get-FileHash ./tools/reset/BingeMote-Reset.ps1 -Algorithm SHA256 | Format-List
+          Write-Host "RUN $env:GITHUB_RUN_ID COMMIT $env:GITHUB_SHA"
           $errors=$null
           $null=[Management.Automation.Language.Parser]::ParseFile("$pwd/tools/reset/BingeMote-Reset.ps1",[ref]$null,[ref]$errors)
           if($errors){$errors|Format-List;throw 'Parse errors'}
@@ -22,7 +24,7 @@ jobs:
         run: ./tools/reset/Test-Reset.ps1
       - name: Disposable full reset and failed-read fixtures
         shell: powershell
-        run: ./tools/reset/Test-FullReset.ps1
+        run: ./tools/reset/Test-SplitReset.ps1
       - name: Native CMD launcher and child argument/error tests
         shell: powershell
         run: ./tools/reset/Test-Launcher.ps1
