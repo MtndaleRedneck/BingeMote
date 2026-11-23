@@ -28,12 +28,12 @@ $native=@(Get-NetFirewallRule -PolicyStore PersistentStore | Select-Object -Firs
 foreach ($item in $native) { $null=$item | Get-NetFirewallApplicationFilter; $null=$item | Get-NetFirewallPortFilter }
 Assert ($native.Count -gt 0) 'native NetSecurity pipeline works'
 $prefix='BMResetFixture-'+[guid]::NewGuid().ToString('N')
-$ids=@($prefix+'-a',$prefix+'-b',$prefix+'-decoy')
+$ids=@(($prefix+'-a'),($prefix+'-b'),($prefix+'-decoy'))
 try {
  New-NetFirewallRule -Name $ids[0] -DisplayName BingeMote -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8488 | Out-Null
  New-NetFirewallRule -Name $ids[1] -DisplayName BingeMote -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8488 | Out-Null
  New-NetFirewallRule -Name $ids[2] -DisplayName 'BingeMote Unrelated' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 54321 | Out-Null
- $found=@();foreach($id in $ids) {$fr=Get-NetFirewallRule -PolicyStore PersistentStore -Name $id;$fa=$fr|Get-NetFirewallApplicationFilter;$fp=$fr|Get-NetFirewallPortFilter;if ((Get-RuleDecision $fr $fa $fp $roots) -eq 'remove') {$found+=$fr.Name}}
+ $found=@();foreach($id in $ids) {$fr=Get-NetFirewallRule -PolicyStore PersistentStore -Name $id;$fa=$fr|Get-NetFirewallApplicationFilter;$fp=$fr|Get-NetFirewallPortFilter;Write-Host ('FIXTURE '+$fr.Name+' app='+$fa.Program+' port='+$fp.LocalPort+' proto='+$fp.Protocol+' decision='+(Get-RuleDecision $fr $fa $fp $roots));if ((Get-RuleDecision $fr $fa $fp $roots) -eq 'remove') {$found+=$fr.Name}}
  Assert ($found.Count -eq 2 -and $found -contains $ids[0] -and $found -contains $ids[1]) 'duplicate display names keep unique identities and decoy'
 } finally { foreach($id in $ids) { Remove-NetFirewallRule -Name $id -ErrorAction SilentlyContinue } }
 # Different-admin guard is tested without doing any mutation.
