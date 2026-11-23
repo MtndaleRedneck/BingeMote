@@ -208,6 +208,7 @@ class ImmediateFlipTest {
         ctx.stopService(Intent(ctx, MediaControlsService::class.java))
         Thread.sleep(700)
         MediaControlsService.beforePollCommit = null
+        MediaControlsService.beforePlaybackDelivery = null
         MediaControlsService.postProbe = null
     }
 
@@ -321,6 +322,38 @@ class ImmediateFlipTest {
             assertTrue("old poll overwrote newer Play: $posts", posts.none { !it.playing })
         } finally {
             MediaControlsService.beforePollCommit = null
+            release.countDown()
+            stub.stop()
+        }
+    }
+
+    @Test fun pollCannotRevertPlayBeforeCommandDelivery() {
+        val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
+        val reached = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue("initial connection missing", posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePlaybackDelivery = {
+                reached.countDown()
+                assertTrue("delivery barrier timed out", release.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            posts.clear()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            assertTrue(reached.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            Thread.sleep(2600) // at least one normal poll cycle before delivery
+            assertTrue("same-epoch poll reverted optimistic Play: $posts", posts.isNotEmpty() && posts.all { it.playing })
+            assertEquals("paused", stub.state)
+            MediaControlsService.beforePlaybackDelivery = null
+            release.countDown()
+            Thread.sleep(1200)
+            assertEquals("playing", stub.state)
+            assertTrue(posts.all { it.playing })
+        } finally {
+            MediaControlsService.beforePlaybackDelivery = null
             release.countDown()
             stub.stop()
         }
