@@ -125,6 +125,7 @@ class SubtitleClientTest {
 
     @Test fun pendingSubtitleChoicesCoalesceToLatestOff() = runBlocking {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
+        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
         Stub().use { stub ->
             HapticTickTest.seedPrefs(ctx,false,stub.port)
             val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
@@ -160,6 +161,7 @@ class SubtitleClientTest {
 
     @Test fun supersededLoadUnknownSurvivesLaterOffAndEmptyList() = runBlocking {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
+        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
         Stub().use {stub->
             HapticTickTest.seedPrefs(ctx,false,stub.port)
             val store=Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
@@ -181,6 +183,9 @@ class SubtitleClientTest {
                 stub.emptyMedia=false
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles()};delay(300)
                 assertTrue("same media resume must not clear uncertainty",remote.subtitleOutcomeUnknown)
+                val recreated=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                assertTrue("recreation must preserve uncertainty",recreated.subtitleOutcomeUnknown)
+                assertNotNull(recreated.subtitleFileError)
             } finally {scope.cancel()}
         }
     }
