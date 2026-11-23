@@ -23,6 +23,7 @@ internal static class DialogCapture
         void CheckKey(string name, string key)
         {
             bool fired = false;
+            bool timedOut = false;
             using var timer = new System.Windows.Forms.Timer { Interval = 700 };
             using var timeout = new System.Windows.Forms.Timer { Interval = 5000 };
             timer.Tick += (_, _) => {
@@ -33,12 +34,12 @@ internal static class DialogCapture
                 fired = true;
                 SendKeys.SendWait(key);
             };
-            timeout.Tick += (_, _) => { timeout.Stop(); Form.ActiveForm?.Close(); };
+            timeout.Tick += (_, _) => { timedOut = true; timeout.Stop(); Form.ActiveForm?.Close(); };
             timer.Start(); timeout.Start();
             bool removed = ConfirmDialog.Ask(owner, "Harmless test phone fixture. No phone is removed by this check.", "Remove");
             timeout.Stop();
-            File.WriteAllText(Path.Combine(directory, "dialog-key-" + name + ".txt"), $"key={name}; fired={fired}; confirmed={removed}");
-            if (!fired || removed) throw new Exception("Initial " + name + " confirmed destructive action");
+            File.WriteAllText(Path.Combine(directory, "dialog-key-" + name + ".txt"), $"key={name}; fired={fired}; timedOut={timedOut}; confirmed={removed}");
+            if (!fired || timedOut || removed) throw new Exception("Initial " + name + " confirmed destructive action");
         }
 
         void Capture(string name, Action show)
