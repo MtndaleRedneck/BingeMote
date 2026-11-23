@@ -266,6 +266,7 @@ jobs:
 
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
+        timeout-minutes: 6
         env:
           BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
           BINGEMOTE_SHIPPING_ONLY: ${{ inputs.shipping_testlab_asset_id != '' && '1' || '0' }}
@@ -309,7 +310,10 @@ jobs:
         if: failure()
         with:
           name: BingeMote-PC-e2e-diag
-          path: helper/e2e-diag/
+          path: |
+            helper/e2e-diag/
+            shipping-install.log
+            shipping-upgrade.log
           if-no-files-found: ignore
 
       - name: VLC control tests (real VLC, app request shapes)

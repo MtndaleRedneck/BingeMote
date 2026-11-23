@@ -132,7 +132,8 @@ Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
-& $unins /VERYSILENT /NORESTART | Out-Null
+$uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART' -PassThru
+if (-not $uninstall.WaitForExit(60000)) { Stop-Process -Id $uninstall.Id -Force; throw 'Uninstall exceeded60seconds' }
 Start-Sleep -Seconds 3
 try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
 if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind" }
@@ -609,7 +610,8 @@ Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /N
 $initialInstaller = $ship.FullName
 $prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.7.13.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($prior) { $initialInstaller = $prior.FullName; Write-Host 'Initial install: exact prior1.7.13 for paired upgrade retention' }
-$shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -Wait -PassThru
+$shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -PassThru
+if (-not $shipInstall.WaitForExit(90000)) { Stop-Process -Id $shipInstall.Id -Force; Get-Content shipping-install.log -Tail 40; throw 'Initial installer exceeded90seconds' }
 if ($shipInstall.ExitCode -ne 0) { Get-Content shipping-install.log -Tail 40; throw "shipping install failed: $($shipInstall.ExitCode)" }
 $global:LASTEXITCODE = 0
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
@@ -779,7 +781,8 @@ Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
 Write-Host 'Exact prior1.7.13 -> pinned1.7.14 upgrade begins'
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
-$upgrade = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-upgrade.log' -Wait -PassThru
+$upgrade = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-upgrade.log' -PassThru
+if (-not $upgrade.WaitForExit(90000)) { Stop-Process -Id $upgrade.Id -Force; Get-Content shipping-upgrade.log -Tail 40; throw 'Upgrade installer exceeded90seconds' }
 if ($upgrade.ExitCode -ne 0) { Get-Content shipping-upgrade.log -Tail 40; throw "exact shipping upgrade failed: $($upgrade.ExitCode)" }
 # Inspect the actual installed payload extracted by the pinned installer, not
 # compressed setup bytes or a separately built helper. The single-file bundle
@@ -841,7 +844,8 @@ foreach ($key in @('{ENTER}', '{ESC}')) {
 
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
-& $unins /VERYSILENT /NORESTART | Out-Null
+$uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART' -PassThru
+if (-not $uninstall.WaitForExit(60000)) { Stop-Process -Id $uninstall.Id -Force; throw 'Uninstall exceeded60seconds' }
 Start-Sleep -Seconds 3
 try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
 if ($rule -match 'BingeMote') { throw "shipping uninstall left the firewall rule behind" }
