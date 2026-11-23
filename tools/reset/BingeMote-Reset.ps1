@@ -4,6 +4,10 @@ param([string]$ExpectedSid)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
+function Get-ElevationArguments([string]$ScriptPath,[string]$Sid) {
+    if ($Sid -notmatch '^S-1-[0-9-]+$' -or $ScriptPath.Contains('"')) { throw 'Invalid launch identity/path.' }
+    return '-NoProfile -ExecutionPolicy Bypass -File "'+$ScriptPath+'" -ExpectedSid '+$Sid
+}
 function Same-Path([string]$A,[string]$B) {
     if (!$A -or !$B) { return $false }
     return [IO.Path]::GetFullPath($A).TrimEnd('\').Equals([IO.Path]::GetFullPath($B).TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase)
@@ -252,7 +256,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     if (!$ExpectedSid) {
         try {
             $ownerSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-            $argLine='-NoProfile -ExecutionPolicy Bypass -File "'+$PSCommandPath+'" -ExpectedSid '+$ownerSid
+            $argLine=Get-ElevationArguments $PSCommandPath $ownerSid
             $child=Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $argLine -PassThru -Wait
             exit $child.ExitCode
         } catch { Write-Host 'Administrator approval cancelled or elevation failed. Nothing was reset.' -ForegroundColor Red; Read-Host 'Press Enter to close' | Out-Null; exit 1 }

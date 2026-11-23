@@ -23,3 +23,6 @@ jobs:
       - name: Disposable full reset and failed-read fixtures
         shell: powershell
         run: ./tools/reset/Test-FullReset.ps1
+      - name: Native CMD launcher and child argument/error tests
+        shell: powershell
+        run: ./tools/reset/Test-Launcher.ps1
