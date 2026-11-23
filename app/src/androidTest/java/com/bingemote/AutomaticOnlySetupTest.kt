@@ -29,6 +29,7 @@ class AutomaticOnlySetupTest {
         }
         val version = device.findObject(By.text("Version " + BuildConfig.VERSION_NAME))
         val success = device.findObject(By.text("You're up to date."))
+        assertFalse(device.hasObject(By.text("Updates")))
         assertNotNull(version)
         assertNotNull(success)
         assertEquals(version.visibleBounds.centerY(), success.visibleBounds.centerY())
