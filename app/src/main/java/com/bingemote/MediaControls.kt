@@ -122,7 +122,7 @@ class MediaControlsService : Service() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    @Synchronized override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!MediaControls.allowed(this)) {
                 stopSelf()
             return START_NOT_STICKY
@@ -165,10 +165,12 @@ class MediaControlsService : Service() {
                         Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        lastConnectedAt = 0L
-                        if (epochAtPress == commandEpoch.get()) {
-                            lastPlaying = prev
-                            postMediaNotification(prev, 0, 0, lastStatus?.title)
+                        synchronized(this@MediaControlsService) {
+                            if (epochAtPress == commandEpoch.get()) {
+                                lastConnectedAt = 0L
+                                lastPlaying = prev
+                                postMediaNotification(prev, 0, 0, lastStatus?.title)
+                            }
                         }
                     }
                     refreshNow()
@@ -207,6 +209,8 @@ class MediaControlsService : Service() {
 
         /** Test seam: instrumented tests watch every real bar post (true = play glyph). */
         internal var postProbe: ((Boolean) -> Unit)? = null
+        /** Debug-only barrier before atomic poll commit, never a production hook. */
+        internal var beforePollCommit: (() -> Unit)? = null
     }
 
     private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
@@ -238,12 +242,18 @@ class MediaControlsService : Service() {
                 return
             }
             if (epoch != commandEpoch.get()) return
-            failures = 0
-            lastConnectedAt = android.os.SystemClock.elapsedRealtime()
-            val playing = st.playing
-            lastStatus = st
-            lastPlaying = playing
-            postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
+            if (BuildConfig.DEBUG) beforePollCommit?.invoke()
+            // One monitor protects epoch validation, state mutation and the post.
+            // onStartCommand takes the same monitor before its epoch bump/flip.
+            synchronized(this@MediaControlsService) {
+                if (epoch != commandEpoch.get()) return
+                failures = 0
+                lastConnectedAt = android.os.SystemClock.elapsedRealtime()
+                val playing = st.playing
+                lastStatus = st
+                lastPlaying = playing
+                postMediaNotification(playing, st.timeSec, st.lengthSec, st.title)
+            }
         } catch (t: Throwable) {
             if (t is CancellationException) throw t
             }

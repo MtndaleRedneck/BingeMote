@@ -207,6 +207,7 @@ class ImmediateFlipTest {
     @After fun tearDown() {
         ctx.stopService(Intent(ctx, MediaControlsService::class.java))
         Thread.sleep(700)
+        MediaControlsService.beforePollCommit = null
         MediaControlsService.postProbe = null
     }
 
@@ -292,6 +293,37 @@ class ImmediateFlipTest {
             assertTrue("no flip observed", flips.isNotEmpty())
             assertTrue("stale in-flight poll undid the flip: $posts", flips.none { !it.playing })
         } finally { stub.stop() }
+    }
+
+    @Test fun pollPausedAfterEpochCheckCannotOverwriteNewerPlay() {
+        val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
+        val reached = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue("initial connection missing", posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePollCommit = {
+                reached.countDown()
+                assertTrue("barrier release timeout", release.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            assertTrue("poll never reached pre-commit barrier", reached.await(6, java.util.concurrent.TimeUnit.SECONDS))
+            posts.clear()
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            val flippedBy = System.currentTimeMillis() + 2000
+            while (posts.none { it.playing } && System.currentTimeMillis() < flippedBy) Thread.sleep(20)
+            assertTrue("connected Play did not respond while old poll paused", posts.any { it.playing })
+            MediaControlsService.beforePollCommit = null
+            release.countDown()
+            Thread.sleep(1000)
+            assertTrue("old poll overwrote newer Play: $posts", posts.none { !it.playing })
+        } finally {
+            MediaControlsService.beforePollCommit = null
+            release.countDown()
+            stub.stop()
+        }
     }
 
     @Test fun lateFailureDoesNotStompNewerPress() {
