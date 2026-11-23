@@ -68,7 +68,7 @@ class SubtitleClientTest {
             assertFalse(request.contains("Movie.en.srt"))
         }
     }
-    @Test fun oldPcFailureKeepsExistingLoadedTracks() = runBlocking {
+    @Test fun oldPcFailureHidesFolderQuietlyAndKeepsExistingLoadedTracks() = runBlocking {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         Stub().use { stub ->
             stub.oldPc = true
@@ -78,8 +78,13 @@ class SubtitleClientTest {
             try {
                 val remote = RemoteState(ctx,store,scope)
                 withContext(Dispatchers.Main) { remote.debugSeedStatus();remote.refreshSubtitleFiles() }
-                repeat(100) { if (remote.subtitleFileError != null) return@repeat; delay(30) }
-                assertNotNull(remote.subtitleFileError)
+                // The request must actually have happened before we assert the quiet outcome.
+                repeat(100) { if (stub.requests.isNotEmpty()) return@repeat; delay(30) }
+                assertTrue("subtitle list was never requested", stub.requests.isNotEmpty())
+                awaitCondition(8000) { !remote.subtitleFilesLoading }
+                // Owner's rule: no PC connection or an older PC app hides folder
+                // subtitles silently - no error line, no Retry, loaded tracks untouched.
+                assertNull(remote.subtitleFileError)
                 assertNull(remote.subtitleFolder)
                 assertNotNull("loaded status must survive old PC",remote.status)
             } finally { scope.cancel() }

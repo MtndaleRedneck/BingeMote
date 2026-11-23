@@ -511,8 +511,10 @@ class RemoteState(
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
+                    // No connection to the PC (or an older PC app without folder
+                    // subtitles): folder entries simply stay hidden, exactly like
+                    // before the feature existed. No error line, no Retry.
                     subtitleFolder = null
-                    subtitleListError = "Folder subtitles need the updated PC app and a connection to it."
                 }
             } finally { subtitleListInFlight = false; if (request == subtitleListRequest) subtitleListLoading = false }
         }
