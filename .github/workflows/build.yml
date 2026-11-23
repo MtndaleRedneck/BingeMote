@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [tmp/pc-1712]
+    branches: [tmp/pc-1712, tmp/pairing-refresh]
   workflow_dispatch:
     inputs:
       publish:
@@ -19,6 +19,14 @@ on:
         type: choice
         options: [all, pc-e2e]
         default: all
+      shipping_run_id:
+        description: Run ID whose BingeMote-PC artifact the e2e shipping leg tests (leave empty to skip that leg)
+        type: string
+        default: ''
+      shipping_sha256:
+        description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -139,12 +147,12 @@ jobs:
 
       # The real previous release, built from its own source with no hooks: the e2e
       # installs it first and then upgrades, so the upgrade path under test is the
-      # actual 1.7.11 -> 1.7.12 one, not simulated leftovers. The baseline is the
-      # clean/pc-1711 commit, an ancestor of this branch (pinned sha; the branch
+      # actual 1.7.12 -> 1.7.13 one, not simulated leftovers. The baseline is the
+      # tmp/pc-1712 commit, an ancestor of this branch (pinned sha; the branch
       # itself is not kept on the remote).
-      - name: Build the real 1.7.11 installer (upgrade baseline)
+      - name: Build the real 1.7.12 installer (upgrade baseline)
         run: |
-          git worktree add old ef1fe62e008a821a09b364bd3877be0a92c7cdf3
+          git worktree add old 2d3b54e9eb66dda5c1870331e76e342fde2f8d2a
           dotnet publish old/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o old/helper/out
           $v = Select-String -Path old/helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" old/helper/installer.iss
@@ -152,18 +160,19 @@ jobs:
           New-Item -ItemType Directory -Force helper/Output-old | Out-Null
           Copy-Item old/helper/Output/BingeMote-PC-*.exe helper/Output-old/
 
-      # The exact shipping installer (no hooks), pinned to the artifact of run
-      # 45010240309 - those bytes ARE the hidden TestLab draft 454319653 asset
-      # 778650981 (sha256 verified against the draft), so the e2e shipping leg
-      # tests the distributed bytes themselves, and the e2e script asserts the
-      # installer hash before installing.
-      - name: Download the shipping installer (exact TestLab draft bytes)
+      # The exact shipping installer (no hooks). Runs only when a publish run is
+      # pinned via the shipping_run_id dispatch input: those bytes are the ones
+      # bound for the hidden TestLab draft, and the e2e shipping leg asserts the
+      # installer hash (shipping_sha256 input) before installing. Skipped on
+      # source-only push runs, where no published artifact exists yet.
+      - name: Download the shipping installer (exact TestLab-bound bytes)
+        if: ${{ inputs.shipping_run_id != '' }}
         uses: actions/download-artifact@v4
         with:
           name: BingeMote-PC
           path: helper/Shipping
           repository: MtndaleRedneck/BingeMote
-          run-id: 45010240309
+          run-id: ${{ inputs.shipping_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Render the window for layout review (CI only)
@@ -190,6 +199,8 @@ jobs:
           if-no-files-found: error
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
+        env:
+          BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
         run: pwsh -File scripts/helper-e2e.ps1
 
       - name: Upload e2e failure diagnostics

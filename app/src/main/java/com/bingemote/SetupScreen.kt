@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * First-run setup as a real wizard, one step on screen at a time:
- * 1) install the helper on the PC, 2) find the PC and pair with its 6-digit code,
+ * 1) install the helper on the PC, 2) find the PC and pair with its one-time code,
  * 3) VLC password + movies folder. Back always works, and a saved pairing can be
  * continued or discarded - nobody gets stuck between steps.
  */
@@ -113,7 +113,7 @@ fun SetupScreen(
             else DiscoveredHelper(manual, HelperClient.DEFAULT_PORT, "PC")
         }
         if (target.host.isBlank()) { say("Enter your PC's address or pick it above.", true); return }
-        if (code.length != 6) { say("Enter the 6-digit code BingeMote is showing on your PC.", true); return }
+        if (code.length != 4 && code.length != 6) { say("Enter the code BingeMote is showing on your PC - 4 digits, or 6 on an older PC.", true); return }
         pairing = true
         say("", false)
         scope.launch {
@@ -224,7 +224,7 @@ fun SetupScreen(
                     Spacer(Modifier.height(10.dp))
                     Text("3. The installer asks for Windows permission once during install - that is the only admin prompt, and it only opens BingeMote to your home network.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("4. Leave BingeMote running (it sits in the tray, by the clock, and starts with Windows). It shows a 6-digit code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("4. Leave BingeMote running (it sits in the tray, by the clock, and starts with Windows). Open it, type a name under Pair new phone, and tap Pair - it shows a code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                 }
                 Spacer(Modifier.height(18.dp))
                 OrangeButton("BingeMote is running", onClick = { say("", false); step = 2 })
@@ -285,18 +285,19 @@ fun SetupScreen(
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Enter the 6-digit code BingeMote is showing on your PC. It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Text("Enter the code BingeMote is showing on your PC (4 digits, or 6 on an older PC). It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,
                         onValueChange = {
                             code = it.filter(Char::isDigit).take(6)
-                            // One less tap: a full 6th digit pairs right away (needs a picked or typed PC).
+                            // One less tap: a full 6th digit (older PC) pairs right away; a 4-digit
+                            // code goes with the Pair button below, since 4 is a prefix of 6.
                             if (code.length == 6 && !pairing && (chosen != null || manualHost.isNotBlank())) pair()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        placeholder = { Text("6-digit code", color = Muted) },
+                        placeholder = { Text("Code from your PC", color = Muted) },
                         // Number pad for the code (it opened the full keyboard).
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
                         visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,

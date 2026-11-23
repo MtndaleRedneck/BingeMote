@@ -41,13 +41,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.launch
 
-// UI spec tokens for the settings components (mockup colors at 3x density).
+// One orange everywhere: the settings components use the theme's own tokens.
 private val OnOrange = Color(0xFF281300)
-private val ToggleOnTrack = Color(0xFFF87C02)
+private val ToggleOnTrack = Orange
 private val ThumbDark = Color(0xFF1B1B1D)
-private val ThumbRim = Color(0xFFE5882B)
-private val PillGradient = Brush.verticalGradient(listOf(Color(0xFFFC9E2C), Color(0xFFFF9700)))
-private val SegmentOnGradient = Brush.verticalGradient(listOf(Color(0xFFFB9F30), Color(0xFFF87C02)))
+private val PillGradient = OrangeGradient
+private val SegmentOnGradient = OrangeGradient
 
 @Composable
 fun SettingsScreen(
@@ -64,11 +63,24 @@ fun SettingsScreen(
     var secondarySkip by remember { mutableStateOf(store.skipSecondarySec) }
     var haptics by remember { mutableStateOf(store.haptics) }
     var lockControls by remember { mutableStateOf(store.lockScreenControls) }
+    var permissionPopup by remember { mutableStateOf(false) }
     var showVolumeOnPc by remember { mutableStateOf(store.showVolumeOnPc) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
     var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
     var keepAwake by remember { mutableStateOf(store.keepAwake) }
+    if (permissionPopup) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { permissionPopup = false },
+            title = { Text("Enable notification controls?") },
+            text = { Text("Allow notifications to show the playback controls in your notification shade.") },
+            confirmButton = { TextButton(onClick = {
+                permissionPopup = false
+                (context as? android.app.Activity)?.let(MediaControls::requestOrOpenSettings)
+            }) { Text("Enable notifications") } },
+            dismissButton = { TextButton(onClick = { permissionPopup = false }) { Text("Not now") } },
+        )
+    }
     val configScope = rememberCoroutineScope()
     // The helper owns the real state: read it back so both toggles reflect the PC, not
     // just the phone's memory. Helpers without a key leave it absent and the phone-local
@@ -179,8 +191,9 @@ fun SettingsScreen(
         SettingsSection("Feel") {
             ToggleRow("Vibrate on press", haptics, haptics, buzzWhenEnabling = true) { haptics = it; store.haptics = it }
             Spacer(Modifier.height(9.dp))
-            ToggleRow("Controls on lock screen", lockControls, haptics) {
+            ToggleRow("Notification shade controls", lockControls, haptics) {
                 lockControls = it; store.lockScreenControls = it
+                if (it && !MediaControls.allowed(context)) permissionPopup = true
                 MediaControls.sync(context, store)
             }
             Spacer(Modifier.height(9.dp))
@@ -243,8 +256,6 @@ fun SettingsScreen(
                     contentDescription = null, tint = Muted, modifier = Modifier.size(24.dp),
                 )
             }
-            Spacer(Modifier.height(6.dp))
-            Text("You see exactly what is sent before you send it.", color = Muted, fontSize = 12.sp)
         }
         Spacer(Modifier.height(14.dp))
 
@@ -356,7 +367,9 @@ fun ToggleRow(label: String, checked: Boolean, haptics: Boolean, buzzWhenEnablin
 @Composable
 fun SettingToggle(checked: Boolean) {
     val track by animateColorAsState(if (checked) ToggleOnTrack else TrackGray, tween(190, easing = FastOutSlowInEasing), label = "track")
-    val thumbPad by animateDpAsState(if (checked) (52f - 68f / 3f - 14f / 3f).dp else (14f / 3f).dp, tween(190, easing = FastOutSlowInEasing), label = "thumb")
+    // Whole-dp geometry: a fractional 22.67dp thumb with a 0.33dp rim antialiased into a
+    // fuzzy ball. 24dp thumb with 4dp margins rasterizes cleanly at every density.
+    val thumbPad by animateDpAsState(if (checked) 24.dp else 4.dp, tween(190, easing = FastOutSlowInEasing), label = "thumb")
     Box(
         Modifier
             .width(52.dp)
@@ -368,10 +381,9 @@ fun SettingToggle(checked: Boolean) {
             Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = thumbPad)
-                .size((68f / 3f).dp)
+                .size(24.dp)
                 .clip(CircleShape)
-                .background(if (checked) ThumbDark else TextC)
-                .then(if (checked) Modifier.border((1f / 3f).dp, ThumbRim, CircleShape) else Modifier),
+                .background(if (checked) ThumbDark else TextC),
         )
     }
 }

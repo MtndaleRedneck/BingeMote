@@ -27,22 +27,24 @@ function Invoke-HelperGet($path, $token) {
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 
-# --- Part 0: the real upgrade path: install the actual 1.7.11 build (Everyone grant),
-# silent-upgrade to this build, pair the instance the installer launches, run the
-# blocked-input notice checks on that installed instance, then uninstall and verify ---
-Write-Host "== real 1.7.11 -> 1.7.12 upgrade =="
+# --- Part 0: the real upgrade path: install the actual 1.7.12 build (already scoped
+# to interactive users), silent-upgrade to this build, pair the instance the installer
+# launches, run the blocked-input notice checks on that installed instance, then
+# uninstall and verify ---
+Write-Host "== real 1.7.12 -> 1.7.13 upgrade =="
 # Set before any install so the app the installer relaunches inherits the fixed pair
 # code (the pair-code hook exists only in this CI build, never in shipping bytes).
-$env:BINGEMOTE_PAIR_CODE = '424242'
+$env:BINGEMOTE_PAIR_CODE = '4242'
 $old = Get-ChildItem "helper/Output-old/BingeMote-PC-*.exe" | Select-Object -First 1
-if (-not $old) { throw "1.7.11 baseline installer missing in helper/Output-old" }
+if (-not $old) { throw "1.7.12 baseline installer missing in helper/Output-old" }
 & $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "1.7.11 baseline install failed with exit $LASTEXITCODE" }
+if ($LASTEXITCODE -ne 0) { throw "1.7.12 baseline install failed with exit $LASTEXITCODE" }
 $acl = (netsh http show urlacl) | Out-String
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
-if (-not $aclBlock) { throw "1.7.11 did not add its listen permission" }
-if ($aclBlock -notmatch 'Everyone|S-1-1-0') { throw "1.7.11 baseline was expected to grant Everyone: $aclBlock" }
-Write-Host "ok: 1.7.11 baseline installed with the old Everyone grant"
+if (-not $aclBlock) { throw "1.7.12 did not add its listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { throw "1.7.12 baseline grants Everyone (expected interactive-users): $aclBlock" }
+if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "1.7.12 baseline not scoped to interactive users: $aclBlock" }
+Write-Host "ok: 1.7.12 baseline installed with the interactive-users grant"
 
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
@@ -56,7 +58,7 @@ $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Re
 if (-not $aclBlock) { throw "upgrade did not add the listen permission" }
 if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission still grants Everyone after the real upgrade: $aclBlock" }
 if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
-Write-Host "ok: real upgrade replaced the Everyone grant with the interactive-users grant"
+Write-Host "ok: real upgrade kept the interactive-users grant"
 
 # Pair the instance the installer relaunched, under the retained installer-created state.
 $up = $false
@@ -69,9 +71,9 @@ foreach ($i in 1..40) {
 if (-not $up) { throw "installer-launched helper did not start listening on 8488" }
 $r = Invoke-Helper '/ping' '{}' $null
 Assert ($r.code -eq 401) "installed instance: ping without token is 401"
-$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+$r = Invoke-Helper '/pair' '{"code":"0000"}' $null
 Assert ($r.code -eq 403) "installed instance: pair with wrong code is 403"
-$r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+$r = Invoke-Helper '/pair' '{"code":"4242"}' $null
 Assert ($r.code -eq 200) "installed instance pairs under the installer-created state"
 $instToken = ($r.body | ConvertFrom-Json).token
 
@@ -164,7 +166,7 @@ if ($aclBlock2 -notmatch 'S-1-5-4|INTERACTIVE') { throw "helper setup did not sc
 
 # --- Part 2: run the helper and drive its HTTP API over loopback ---
 Write-Host "== helper runtime =="
-$env:BINGEMOTE_PAIR_CODE = '424242'
+$env:BINGEMOTE_PAIR_CODE = '4242'
 $p = Start-Process $exe -PassThru
 try {
     $up = $false
@@ -180,10 +182,10 @@ try {
     $r = Invoke-Helper '/ping' '{}' $null
     Assert ($r.code -eq 401) "ping without token is 401"
 
-    $r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+    $r = Invoke-Helper '/pair' '{"code":"0000"}' $null
     Assert ($r.code -eq 403) "pair with wrong code is 403"
 
-    $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+    $r = Invoke-Helper '/pair' '{"code":"4242"}' $null
     Write-Host "right-code pair -> $($r.code): $(Redact-Secrets $r.body)"
     if ($r.code -ne 200) {
         Get-Process | Where-Object { $_.ProcessName -like '*BingeMote*' } | ForEach-Object { Write-Host "process: $($_.ProcessName) pid=$($_.Id) path=$($_.Path)" }
@@ -224,7 +226,7 @@ try {
     $cfgText = Get-Content $cfg -Raw
     Assert ($cfgText -match '"name":"Phone 1"') "first paired phone gets a default name"
 
-    $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+    $r = Invoke-Helper '/pair' '{"code":"4242"}' $null
     Assert ($r.code -eq 403) "pairing code is single-use"
 
     $r = Invoke-Helper '/ping' '{}' $token
@@ -315,7 +317,7 @@ try {
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart" }
-    $r = Invoke-Helper '/pair' '{"code":"424242"}' $null
+    $r = Invoke-Helper '/pair' '{"code":"4242"}' $null
     Assert ($r.code -eq 403) "no live pair code after pairing (got $($r.code))"
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "saved token still works after restart"
@@ -328,7 +330,7 @@ try {
     Write-Host "== multi-phone pairing =="
     Stop-Process -Id $p.Id -Force
     Start-Sleep -Seconds 1
-    $env:BINGEMOTE_PAIR_CODE = '123456'
+    $env:BINGEMOTE_PAIR_CODE = '1234'
     $p = Start-Process $exe -PassThru
     $up = $false
     foreach ($i in 1..40) {
@@ -338,7 +340,7 @@ try {
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart for second pairing" }
-    $r = Invoke-Helper '/pair' '{"code":"123456"}' $null
+    $r = Invoke-Helper '/pair' '{"code":"1234"}' $null
     Assert ($r.code -eq 200) "second phone pairs with a fresh code"
     $token2 = ($r.body | ConvertFrom-Json).token
     Assert ($token2 -ne $token) "second phone gets its own token"
@@ -412,7 +414,7 @@ try {
     try {
         Stop-Process -Id $p.Id -Force
         Start-Sleep -Seconds 1
-        $env:BINGEMOTE_PAIR_CODE = '555555'
+        $env:BINGEMOTE_PAIR_CODE = '5555'
         $p = Start-Process $exe -PassThru
         $up = $false
         foreach ($i in 1..40) {
@@ -425,7 +427,7 @@ try {
         $r = Invoke-HelperGet '/vlc/setup-status' $token
         $ss = $r.body | ConvertFrom-Json
         Assert ($ss.configured -eq $false -and $ss.pending -eq $false) "with vlcrc deleted, setup-status attests neither configured nor pending"
-        $r = Invoke-Helper '/pair' '{"code":"555555"}' $null
+        $r = Invoke-Helper '/pair' '{"code":"5555"}' $null
         Assert ($r.code -eq 200) "third phone pairs while VLC is running"
         $paired3 = $r.body | ConvertFrom-Json
         Assert ($paired3.vlcPending -eq $true) "pair reports the vlcrc write is pending while VLC runs"
@@ -467,7 +469,7 @@ try {
         Assert (-not $fakeVlc2.HasExited) "the simulated VLC is running for the re-pair test"
         Stop-Process -Id $p.Id -Force
         Start-Sleep -Seconds 1
-        $env:BINGEMOTE_PAIR_CODE = '777777'
+        $env:BINGEMOTE_PAIR_CODE = '7777'
         $p = Start-Process $exe -PassThru
         $up = $false
         foreach ($i in 1..40) {
@@ -477,7 +479,7 @@ try {
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $up) { throw "helper did not restart for the re-pair test" }
-        $r = Invoke-Helper '/pair' '{"code":"777777"}' $null
+        $r = Invoke-Helper '/pair' '{"code":"7777"}' $null
         Assert ($r.code -eq 200) "fourth phone pairs while VLC runs with the settings already written"
         Assert ((($r.body | ConvertFrom-Json).vlcPending) -ne $true) "no false pending when vlcrc already has the settings"
         $r = Invoke-HelperGet '/vlc/setup-status' $token
@@ -582,14 +584,22 @@ try {
 # exercised here; its coverage above used the hook build. ---
 Write-Host "== shipping-bytes smoke =="
 $ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" | Select-Object -First 1
-if (-not $ship) { throw "shipping installer artifact missing in helper/Shipping" }
+if (-not $ship) {
+    # Source-only push runs publish no installer, so there is nothing to pin yet.
+    # The leg runs on dispatch runs that pass shipping_run_id (+ shipping_sha256).
+    Write-Host "skipping shipping-bytes leg: helper/Shipping is empty (no publish run pinned)"
+} else {
 # Tested-to-distributed identity is an ASSERTION, not an attestation: the workflow
-# downloads the exact artifact (run 45010240309) whose bytes are the hidden TestLab
-# draft 454319653 asset 778650981, and this run proves it is testing those bytes.
+# downloads the exact artifact of the pinned publish run, and this run proves it is
+# testing those bytes when BINGEMOTE_SHIP_SHA256 pins the expected hash.
 $shipHash = (Get-FileHash $ship.FullName -Algorithm SHA256).Hash.ToLower()
 Write-Host "shipping installer: $($ship.FullName)"
 Write-Host "shipping installer sha256: $shipHash"
-Assert ($shipHash -eq 'c063406786594bc31e23af22dada8460d8841751d5f222c85188af28ec57483f') "shipping installer is the TestLab draft 454319653 asset 778650981 bytes"
+if ($env:BINGEMOTE_SHIP_SHA256) {
+    Assert ($shipHash -eq $env:BINGEMOTE_SHIP_SHA256.ToLower()) "shipping installer bytes differ from the pinned TestLab-bound hash"
+} else {
+    Write-Host "BINGEMOTE_SHIP_SHA256 unset: shipping identity assertion skipped this run"
+}
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 & $ship.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "shipping install failed with exit $LASTEXITCODE" }
@@ -603,7 +613,7 @@ foreach ($i in 1..40) {
 if (-not $up) { throw "shipping helper did not start listening on 8488" }
 $r = Invoke-Helper '/ping' '{}' $null
 Assert ($r.code -eq 401) "shipping bytes: ping without token is 401"
-$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+$r = Invoke-Helper '/pair' '{"code":"0000"}' $null
 Assert ($r.code -eq 403) "shipping bytes: pair with wrong code is 403"
 
 # Genuine no-hook first-run pairing: Part 0 deleted config.json, so the shipping
@@ -690,7 +700,7 @@ $code = $null
 $pairClicked = $false
 foreach ($i in 1..24) {
     foreach ($t in [WinScan]::ChildTexts('BingeMote')) {
-        if ($t -match '^\d{6}$') { $code = $t; break }
+        if ($t -match '^\d{4}$') { $code = $t; break }
     }
     if ($code) { break }
     if ($i -eq 3) { & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') }
@@ -731,7 +741,7 @@ if (-not $code) {
         $bmp.Save('helper/e2e-diag/shipping-pairing-screen.png')
         Write-Host "screen captured to helper/e2e-diag/shipping-pairing-screen.png"
     } catch { Write-Host "screen capture failed: $($_.Exception.Message)" }
-    throw "shipping pairing: no 6-digit code label found in any BingeMote window"
+    throw "shipping pairing: no 4-digit code label found in any BingeMote window"
 }
 $r = Invoke-Helper '/pair' (@{ code = $code } | ConvertTo-Json -Compress) $null
 Assert ($r.code -eq 200) "shipping bytes: pairing succeeds with the code shown in the window"
@@ -752,7 +762,7 @@ foreach ($i in 1..40) {
 if (-not $up) { throw "shipping install-over: helper did not start listening on 8488" }
 $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping upgrade: the window-paired token survives install-over"
-$r = Invoke-Helper '/pair' '{"code":"000000"}' $null
+$r = Invoke-Helper '/pair' '{"code":"0000"}' $null
 Assert ($r.code -eq 403) "shipping upgrade: no live pair code after install-over (paired state retained)"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
@@ -764,3 +774,4 @@ try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8488/') { throw "shipping uninstall left the listen permission behind" }
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls, uninstall clean"
+}

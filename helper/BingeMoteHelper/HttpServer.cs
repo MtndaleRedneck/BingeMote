@@ -264,8 +264,8 @@ internal sealed class HttpServer : IDisposable
         }
         var body = ReadBody(req);
         var code = JsonDocument.Parse(body).RootElement.GetProperty("code").GetString() ?? "";
+        // One-shot and rate-limited, but never timed: the code stays valid until it pairs or is canceled.
         var valid = Program.PairCode != null
-                    && DateTime.UtcNow <= Program.PairCodeExpires
                     && ConstantTimeEq(code, Program.PairCode);
         if (!valid)
         {
