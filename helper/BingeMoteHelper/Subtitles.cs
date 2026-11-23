@@ -11,8 +11,10 @@ internal static class Subtitles
 {
     internal sealed record Candidate(string Id, string Name, int[] TrackIds);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]> Loaded = new();
-    internal sealed record Snapshot(string MediaId, string MediaPath, Candidate[] Files);
+    internal sealed record Snapshot(string MediaId, string MediaPath, Candidate[] Files, bool Truncated);
     private static readonly SemaphoreSlim LoadGate = new(1, 1);
+    private static readonly AsyncLocal<CancellationToken> OperationToken = new();
+    private static long latestSelection;
     private static string Hash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)));
 
     internal static string? ConfinedFile(string root, string file)
@@ -39,7 +41,9 @@ internal static class Subtitles
         var mediaId = Hash(f.ToUpperInvariant() + "|" + playbackId);
         var entries = new List<Candidate>();
         // One directory only. Bound entries before serializing to the phone.
-        foreach (var entry in Directory.EnumerateFiles(Path.GetDirectoryName(f)!).Take(4096)) {
+        var scanned = 0; var truncated = false;
+        foreach (var entry in Directory.EnumerateFiles(Path.GetDirectoryName(f)!)) {
+            if (++scanned > 4096) { truncated = true; break; }
             if (!Path.GetExtension(entry).Equals(".srt", StringComparison.OrdinalIgnoreCase)) continue;
             var safe = ConfinedFile(root, entry);
             if (safe == null) continue;
@@ -47,9 +51,9 @@ internal static class Subtitles
             if (name.Length > 255) continue;
             var candidateId = Hash(mediaId + "|" + name.ToUpperInvariant());
             entries.Add(new Candidate(candidateId, name, Loaded.TryGetValue(candidateId, out var ids) ? ids : Array.Empty<int>()));
-            if (entries.Count >= 200) break;
+            if (entries.Count >= 200) { truncated = true; break; }
         }
-        return new Snapshot(mediaId, f, entries.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToArray());
+        return new Snapshot(mediaId, f, entries.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToArray(), truncated);
     }
 
     private static int[] TrackIds(JsonDocument status) {
@@ -62,7 +66,8 @@ internal static class Subtitles
     private static async Task<JsonDocument> Get(int port, string password, string page) {
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(4) };
         client.DefaultRequestHeaders.Authorization = new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(":" + password)));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(OperationToken.Value);
+        timeout.CancelAfter(TimeSpan.FromSeconds(4));
         using var response = await client.GetAsync($"http://127.0.0.1:{port}/requests/{page}", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync();
@@ -102,13 +107,17 @@ internal static class Subtitles
     internal static async Task<string> List(string root, int port, string password) {
         try {
             var snapshot = await Current(root, port, password);
-            return JsonSerializer.Serialize(new { supported = true, mediaId = snapshot?.MediaId ?? "", files = snapshot?.Files ?? Array.Empty<Candidate>() }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            return JsonSerializer.Serialize(new { supported = true, mediaId = snapshot?.MediaId ?? "", files = snapshot?.Files ?? Array.Empty<Candidate>(), truncated = snapshot?.Truncated ?? false }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         } catch { return "{\"supported\":true,\"mediaId\":\"\",\"files\":[],\"unavailable\":true}"; }
     }
     internal static async Task<(int status, string body)> Load(string root, int port, string password, string mediaId, string candidateId) {
         if (mediaId.Length != 64 || candidateId.Length != 64) return (400, "{\"error\":\"invalid selection\"}");
-        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(1))) return (429, "{\"error\":\"subtitle busy\"}");
+        var selection = Interlocked.Increment(ref latestSelection);
+        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        OperationToken.Value = deadline.Token;
         try {
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             var snapshot = await Current(root, port, password);
             if (snapshot == null || snapshot.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
             var candidate = snapshot.Files.SingleOrDefault(c => c.Id == candidateId);
@@ -124,21 +133,38 @@ internal static class Subtitles
                 using var selected = await Get(port, password, "status.json?command=subtitle_track&val=" + candidate.TrackIds[0]);
                 return (200, JsonSerializer.Serialize(new { ok = true, trackIds = candidate.TrackIds }));
             }
-            using var before = await Get(port, password, "status.json");
-            var beforeIds = TrackIds(before);
+            var beforeIds = currentIds;
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             using var response = await Get(port, password, "status.json?command=addsubtitle&val=" + Uri.EscapeDataString(file));
             var added = TrackIds(response).Except(beforeIds).ToArray();
             for (var attempt = 0; added.Length == 0 && attempt < 10; attempt++) {
-                await Task.Delay(100);
+                await Task.Delay(100, deadline.Token);
                 using var after = await Get(port, password, "status.json");
                 added = TrackIds(after).Except(beforeIds).ToArray();
             }
             if (added.Length == 0) return (503, "{\"error\":\"subtitle not confirmed\"}");
             if (Loaded.Count > 1000) Loaded.Clear();
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
             using var selectedTrack = await Get(port, password, "status.json?command=subtitle_track&val=" + added[0]);
             Loaded[candidate.Id] = added;
             return (200, JsonSerializer.Serialize(new { ok = true, trackIds = added }));
         } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }
-        finally { LoadGate.Release(); }
+        finally { OperationToken.Value = default; LoadGate.Release(); }
     }
+    // All subtitle mutations, including Off, share the same gate. The caller's HTTP
+    // timeout cannot let a direct-VLC Off overtake a still-running sidecar operation.
+    internal static async Task<(int status, string body)> Select(int port, string password, int trackId) {
+        if (trackId < -1) return (400, "{\"error\":\"invalid track\"}");
+        var selection = Interlocked.Increment(ref latestSelection);
+        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(30))) return (429, "{\"error\":\"subtitle busy\"}");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        OperationToken.Value = deadline.Token;
+        try {
+            if (selection != Volatile.Read(ref latestSelection)) return (409, "{\"error\":\"selection changed\"}");
+            using var response = await Get(port, password, "status.json?command=subtitle_track&val=" + trackId);
+            return (200, "{\"ok\":true}");
+        } catch { return (503, "{\"error\":\"subtitle unavailable\"}"); }
+        finally { OperationToken.Value = default; LoadGate.Release(); }
+    }
+
 }

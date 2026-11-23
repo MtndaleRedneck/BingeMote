@@ -300,7 +300,7 @@ class RemoteState(
                         if (nxt.kind == "volume") { Diag.volumeCoalesced.incrementAndGet(); c = nxt }
                         else { pushback = nxt; break }
                     }
-                } else if (System.currentTimeMillis() - c.ts > CmdPolicy.EXPIRY_MS) {
+                } else if (c.kind != "sub" && System.currentTimeMillis() - c.ts > CmdPolicy.EXPIRY_MS) {
                     Diag.cmdsExpired.incrementAndGet()
                     if (c.kind == "sub") scope.launch { subtitleFilesLoading = false }
                     continue
@@ -427,9 +427,10 @@ class RemoteState(
             try {
                 val folder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
                 if (request == subtitleRequest) {
-                    if (subtitleFolder?.mediaId != folder.mediaId) pickedSubtitleFile = null
+                    if (subtitleFolder?.mediaId != folder.mediaId) { pickedSubtitleFile = null; pickedSubtitle = null }
                     subtitleFolder = folder
                     if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
+                    else if (folder.truncated) subtitleFileError = "This folder is large. Only some subtitle files are shown."
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
@@ -451,13 +452,14 @@ class RemoteState(
         cmds.trySend(Cmd("sub", System.currentTimeMillis()) {
             try {
                 val loaded = HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id)
-                val refreshed = if (loaded) HelperClient.subtitleFiles(host, port, token) else null
+                val refreshed = if (loaded) try { HelperClient.subtitleFiles(host, port, token) } catch (_: Exception) { null } else null
                 scope.launch {
                     if (request == subtitleRequest && host == store.host && token == store.helperToken) {
                         if (loaded) {
                             pickedSubtitle = null
                             pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
                             subtitleFolder = refreshed
+                            if (refreshed == null) subtitleFileError = "Subtitle loaded. Couldn't refresh the list. Tap Retry."
                         } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
                         subtitleFilesLoading = false
                     }
@@ -476,8 +478,31 @@ class RemoteState(
     fun pickSubtitle(trackId: Int) {
         subtitleRequest++
         subtitleFilesLoading = false
-        pickedSubtitleFile = null
-        pickedSubtitle = trackId
-        fire("sub") { Vlc.setSubtitleTrack(store.host, store.vlcPort, store.vlcPassword, trackId) }
+        val request = subtitleRequest
+        val host = store.host; val port = store.helperPort; val token = store.helperToken
+        val vlcPort = store.vlcPort; val password = store.vlcPassword
+        subtitleFileError = null
+        subtitleFilesLoading = true
+        cmds.trySend(Cmd("sub", System.currentTimeMillis()) {
+            try {
+                if (!HelperClient.selectSubtitle(host, port, token, trackId)) {
+                    if (HelperClient.screenIsDark(host, port, token)) {
+                        HelperClient.wakeDisplay(host, port, token)
+                        throw IllegalStateException("wake only")
+                    }
+                    Vlc.setSubtitleTrack(host, vlcPort, password, trackId)
+                }
+                scope.launch {
+                    if (request == subtitleRequest) { pickedSubtitleFile = null; pickedSubtitle = trackId; subtitleFilesLoading = false }
+                }
+            } catch (_: Exception) {
+                scope.launch {
+                    if (request == subtitleRequest) {
+                        subtitleFileError = "Couldn't change subtitles. Check the movie and try again."
+                        subtitleFilesLoading = false
+                    }
+                }
+            }
+        })
     }
 }

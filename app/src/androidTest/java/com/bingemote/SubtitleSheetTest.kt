@@ -29,6 +29,6 @@ class SubtitleSheetTest {
         assertTrue(second.bottom < loaded.top)
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet.png"))
         device.findObject(By.text("Off")).click()
-        assertTrue(device.wait(Until.gone(By.text("Subtitles")), 5000))
+        assertTrue(device.hasObject(By.text("Subtitles")))
     }
 }

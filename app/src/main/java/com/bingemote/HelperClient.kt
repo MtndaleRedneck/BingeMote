@@ -24,7 +24,8 @@ object HelperClient {
     private const val DISCOVER_MAGIC = "BINGEMOTE_DISCOVER_V1"
     private const val REPLY_MAGIC = "BINGEMOTE_HERE_V1"
 
-    class Unreachable(val msg: String) : Exception(msg)
+    open class Unreachable(val msg: String) : Exception(msg)
+    class MissingRoute : Unreachable("BingeMote PC is too old for this app.")
     /** Shown to the user. The raw socket text ("failed to connect to /192.168.1.5 (port 8488) after 2500ms") used to leak into Movies. */
     private const val NO_PC = "Can't reach BingeMote on the PC. Check that the PC is on and BingeMote is open."
     class BadToken(val msg: String) : Exception(msg)
@@ -106,7 +107,7 @@ object HelperClient {
                 ?.takeIf { it.isNotBlank() }
         } catch (e: Exception) { null }
         if (detail != null) return Unreachable(detail)
-        if (code == 404) return Unreachable("BingeMote PC is too old for this app.")
+        if (code == 404) return MissingRoute()
         return Unreachable("BingeMote PC answered with error $code.")
     }
 
@@ -129,21 +130,65 @@ object HelperClient {
         return out
     }
 
+    /** Subtitle-only bounded transport. Cleanup closes rather than draining an untrusted body. */
+    private fun subtitleRequest(host: String, port: Int, token: String, path: String, body: JSONObject? = null, timeoutMs: Int = 6000): JSONObject {
+        val c = URL("http://$host:$port$path").openConnection() as HttpURLConnection
+        val deadline = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+        val stopper = deadline.schedule({ c.disconnect() }, timeoutMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+        try {
+            c.connectTimeout = minOf(timeoutMs, 5000); c.readTimeout = timeoutMs
+            c.instanceFollowRedirects = false
+            c.setRequestProperty("X-BingeMote-Token",token)
+            if (body != null) {
+                c.requestMethod = "POST"; c.doOutput = true; c.setRequestProperty("Content-Type","application/json")
+                val bytes = body.toString().toByteArray(Charsets.UTF_8); c.setFixedLengthStreamingMode(bytes.size)
+                c.outputStream.use { it.write(bytes) }
+            }
+            val code = c.responseCode
+            if (code == 404) throw MissingRoute()
+            if (code == 401 || code == 403) throw BadToken("The PC rejected the pairing token.")
+            if (code !in 200..299) throw Unreachable("Couldn't change subtitles. PC error $code.")
+            if (c.contentLengthLong > 131072) throw Unreachable("Subtitle response too large.")
+            val out = java.io.ByteArrayOutputStream()
+            c.inputStream.use { input ->
+                val buf = ByteArray(4096)
+                while (true) {
+                    val n = input.read(buf); if (n < 0) break
+                    if (out.size() + n > 131072) throw Unreachable("Subtitle response too large.")
+                    out.write(buf,0,n)
+                }
+            }
+            return JSONObject(out.toString("UTF-8"))
+        } finally { stopper.cancel(false); c.disconnect(); deadline.shutdownNow() }
+    }
+
     data class SubtitleFile(val id: String, val name: String, val trackIds: List<Int> = emptyList())
-    data class SubtitleFolder(val mediaId: String, val files: List<SubtitleFile>, val unavailable: Boolean)
+    data class SubtitleFolder(val mediaId: String, val files: List<SubtitleFile>, val unavailable: Boolean, val truncated: Boolean = false)
     fun subtitleFiles(host: String, port: Int, token: String): SubtitleFolder {
-        val json = get(host, port, "/subtitles/list", token)
+        val json = subtitleRequest(host, port, token, "/subtitles/list")
         val arr = json.getJSONArray("files")
+        require(arr.length() <= 200) { "Too many subtitle files" }
         return SubtitleFolder(json.optString("mediaId"), (0 until arr.length()).map {
             val item = arr.getJSONObject(it)
+            require(item.getString("name").length <= 255 && item.getString("id").length <= 64)
             val ids = item.optJSONArray("trackIds")
+            require((ids?.length() ?: 0) <= 200)
             SubtitleFile(item.getString("id"), item.getString("name"), if (ids == null) emptyList() else (0 until ids.length()).map { ids.getInt(it) })
-        }, json.optBoolean("unavailable"))
+        }, json.optBoolean("unavailable"), json.optBoolean("truncated"))
     }
     fun loadSubtitle(host: String, port: Int, token: String, mediaId: String, id: String): Boolean {
-        val json = JSONObject(postForBody(host, port, "/subtitles/load", JSONObject().put("mediaId", mediaId).put("id", id), token))
+        val json = subtitleRequest(host,port,token,"/subtitles/load",JSONObject().put("mediaId",mediaId).put("id",id),35000)
         return json.optBoolean("ok") && !json.optBoolean("woke")
     }
+
+    /** False only for an explicit missing route. Never bypass an in-flight helper
+     * operation with a direct VLC command after a timeout or an auth failure. */
+    fun selectSubtitle(host: String, port: Int, token: String, trackId: Int): Boolean = try {
+        val json = subtitleRequest(host,port,token,"/subtitles/select",JSONObject().put("trackId",trackId),40000)
+        if (json.optBoolean("woke")) throw Unreachable("Screen woken. Tap the subtitle again.")
+        if (!json.optBoolean("ok")) throw Unreachable("Couldn't change subtitles.")
+        true
+    } catch (_: MissingRoute) { false }
 
     /** The movies folder as set on the PC; null when the helper can't be asked (too old or down). */
     fun getMoviesFolder(host: String, port: Int, token: String): String? = try {

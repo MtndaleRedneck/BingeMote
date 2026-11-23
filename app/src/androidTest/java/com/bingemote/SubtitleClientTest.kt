@@ -14,6 +14,8 @@ class SubtitleClientTest {
         private val server = ServerSocket(0)
         val port = server.localPort
         @Volatile var oldPc = false
+        @Volatile var responseBytes = 0
+        @Volatile var delayMs = 0L
         @Volatile var running = true
         init { thread(isDaemon = true) {
             while (running) try {
@@ -28,7 +30,8 @@ class SubtitleClientTest {
                     requests.add(line + "\n" + headers.joinToString("\n") + "\n" + String(body))
                     val json = if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else """{"ok":true}"""
                     val code = if (oldPc) "404 Not Found" else "200 OK"
-                    val bytes = json.toByteArray()
+                    if (delayMs > 0) Thread.sleep(delayMs)
+                    val bytes = if (responseBytes > 0) ByteArray(responseBytes) { 32 } else json.toByteArray()
                     sock.getOutputStream().write("HTTP/1.1 $code\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray()+bytes)
                 }
             } catch (_: Exception) { }
@@ -66,4 +69,20 @@ class SubtitleClientTest {
             } finally { scope.cancel() }
         }
     }
+    @Test fun selectFallsBackOnlyForExplicit404() {
+        Stub().use { stub ->
+            stub.oldPc = true
+            assertFalse(HelperClient.selectSubtitle("127.0.0.1",stub.port,"fixture",-1))
+            stub.oldPc = false
+            assertTrue(HelperClient.selectSubtitle("127.0.0.1",stub.port,"fixture",-1))
+        }
+    }
+    @Test fun oversizedSubtitleResponseIsRejected() {
+        Stub().use { stub ->
+            stub.responseBytes = 131073
+            try { HelperClient.subtitleFiles("127.0.0.1",stub.port,"fixture"); fail("oversize accepted") }
+            catch (_: HelperClient.Unreachable) { }
+        }
+    }
+
 }

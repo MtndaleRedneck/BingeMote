@@ -41,7 +41,7 @@ public class SubtitleTests : IDisposable
     }
     [Fact] public async Task RealVlcAddsSidecarWithoutRestartAndReusesLoadedTrack() {
         var fixture = Environment.GetEnvironmentVariable("BINGEMOTE_SUBTITLE_VIDEO");
-        if (string.IsNullOrEmpty(fixture)) return; // CI sets this explicitly in the real-VLC job.
+        Assert.False(string.IsNullOrEmpty(fixture), "Real VLC test requires an explicit video fixture");
         var movie = Path.Combine(root, "Movie", "movie.mp4"); Directory.CreateDirectory(Path.GetDirectoryName(movie)!); File.Copy(fixture, movie);
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(movie)!, "manual.en.srt"), "1\r\n00:00:00,000 --> 00:01:00,000\r\nSubtitle fixture\r\n");
         var vlc = @"C:\Program Files\VideoLAN\VLC\vlc.exe";
@@ -62,4 +62,37 @@ public class SubtitleTests : IDisposable
             }
         } finally { if (!process.HasExited) { process.Kill(true); process.WaitForExit(); } }
     }
+    [Fact] public async Task BoundedRequestBodyRejectsOversizeAndMalformedStream() {
+        using var oversized = new MemoryStream(new byte[65537]);
+        await Assert.ThrowsAsync<InvalidDataException>(() => HttpServer.ReadBoundedBody(oversized));
+        using var valid = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"trackId\":-1}"));
+        Assert.Contains("trackId",await HttpServer.ReadBoundedBody(valid));
+    }
+    [Fact] public async Task RealVlcSlowLoadThenOffLeavesOffFinal() {
+        // A delayed fake VLC models a sidecar command continuing after the phone
+        // has stopped waiting. Select must wait on the same server mutation gate.
+        using var listener = new System.Net.HttpListener();
+        var tcp = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);
+        tcp.Start(); var port=((System.Net.IPEndPoint)tcp.LocalEndpoint).Port; tcp.Stop();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");listener.Start();
+        var arrived = new TaskCompletionSource();var finish = new TaskCompletionSource();
+        var order = new List<string>();
+        var server=Task.Run(async () => {
+            for(var n=0;n<2;n++) {
+                var ctx=await listener.GetContextAsync();var val=ctx.Request.QueryString["val"]!;
+                if(n==0) { arrived.SetResult(); await finish.Task; }
+                order.Add(val);
+                var bytes=System.Text.Encoding.UTF8.GetBytes("{}");ctx.Response.ContentLength64=bytes.Length;
+                await ctx.Response.OutputStream.WriteAsync(bytes);ctx.Response.Close();
+            }
+        });
+        var first=Subtitles.Select(port,"fixture",3);
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var off=Subtitles.Select(port,"fixture",-1);
+        await Task.Delay(2300);Assert.False(off.IsCompleted);
+        finish.SetResult();
+        Assert.Equal(200,(await first).status);Assert.Equal(200,(await off).status);
+        await server;Assert.Equal(new[]{"3","-1"},order);
+    }
+
 }
