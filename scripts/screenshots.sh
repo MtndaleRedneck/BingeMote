@@ -69,6 +69,23 @@ adb shell input swipe 540 1900 540 700 400
 sleep 2
 adb exec-out screencap -p > "screenshots/setup-vlcpending.png"
 
+# Your PC status screen (the Settings pill's new destination): paired + connected demo.
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen yourpc --es pcdemo true >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > "screenshots/yourpc.png"
+# The single pair screen with a discovered PC selected (demo, no real network needed).
+adb shell am force-stop com.bingemote
+adb shell am start -n com.bingemote/.MainActivity --es screen setup --es pairdemo true >/dev/null
+sleep 8
+dismiss_anr
+adb exec-out screencap -p > "screenshots/setup-pair.png"
+# One screenful down: the code card and Pair button.
+adb shell input swipe 540 1900 540 700 400
+sleep 2
+adb exec-out screencap -p > "screenshots/setup-pair-lower.png"
+
 # Lock-screen media controls (Phone 8): seeded session + media notification,
 # then the system media surface itself: the quick-settings media card (the same
 # controls the lock screen hosts; this emulator has no keyguard to capture).

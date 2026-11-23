@@ -388,16 +388,17 @@ fun SettingToggle(checked: Boolean) {
     }
 }
 
-/** Zephyr's Connected Sources row, ported: the orange pill (128x55, 15dp corner, same
+/** Zephyr's Connected Sources row, ported: the orange pill (128x48, 15dp corner, same
  * gradient/text as Zephyr's VLC PC pill) is the tappable entry point; the value sits
- * right-aligned next to it. */
+ * right-aligned next to it. Ezzy's call: 48dp tall, back to the pre-Nov-4 height - the
+ * 55dp version read too tall to him. */
 @Composable
 fun SourceRow(label: String, value: String, hapticsOn: Boolean, onLabelClick: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         PressTile(
             onTap = onLabelClick,
             background = PillGradient,
-            modifier = Modifier.width(128.dp).height(55.dp),
+            modifier = Modifier.width(128.dp).height(48.dp),
             corner = 15.dp,
             hapticsOn = hapticsOn,
         ) {

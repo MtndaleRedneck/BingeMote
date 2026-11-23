@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
             // coming back lands you where you were instead of back at the top.
             val settingsScroll = rememberScrollState()
             val setupScroll = rememberScrollState()
+            val yourpcScroll = rememberScrollState()
             val feedbackScroll = rememberScrollState()
             val moviesListState = rememberLazyListState()
             val pickerListState = rememberLazyListState()
@@ -111,8 +112,9 @@ class MainActivity : ComponentActivity() {
                         remote,
                         setupScroll,
                         onDone = { remote.start(); current.value = "main" },
-                        onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
+                        onCancel = if (store.setupDone) ({ current.value = "yourpc" }) else null,
                         demoVlcPending = BuildConfig.DEBUG && intent.hasExtra("vlcpending"),
+                        demoPair = BuildConfig.DEBUG && intent.hasExtra("pairdemo"),
                     )
                     "mouse" -> MouseScreen(remote) { current.value = "main" }
                     // CI screenshot states (debug builds only): open with the sheet forced open.
@@ -132,8 +134,14 @@ class MainActivity : ComponentActivity() {
                         settingsScroll,
                         pickerListState,
                         onBack = { current.value = "main" },
-                        onRepair = { current.value = "setup" },
+                        onRepair = { current.value = "yourpc" },
                         onFeedback = { current.value = "feedback" },
+                    )
+                    "yourpc" -> YourPCScreen(
+                        remote,
+                        yourpcScroll,
+                        onBack = { current.value = "settings" },
+                        onPairAgain = { current.value = "setup" },
                     )
                     "feedback" -> FeedbackScreen(feedbackScroll) { current.value = "settings" }
                     else -> MainScreen(

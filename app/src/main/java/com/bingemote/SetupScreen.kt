@@ -3,7 +3,6 @@ package com.bingemote
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -22,10 +21,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * First-run setup as a real wizard, one step on screen at a time:
- * 1) install the helper on the PC, 2) find the PC and pair with its one-time code,
- * 3) VLC password + movies folder. Back always works, and a saved pairing can be
- * continued or discarded - nobody gets stuck between steps.
+ * First-run setup: 1) install the helper on the PC, 2) one pair screen - find the PC,
+ * enter its one-time code, and the success confirmation appears right below the form,
+ * with the VLC hand-off under it. Ezzy's settled flow: no separate finish screen. Back
+ * always works, and a saved pairing can be continued or replaced by a fresh code.
  */
 @Composable
 fun SetupScreen(
@@ -34,23 +33,28 @@ fun SetupScreen(
     onDone: () -> Unit,
     onCancel: (() -> Unit)? = null,
     demoVlcPending: Boolean = false,
+    demoPair: Boolean = false,
 ) {
     val store = remote.store
     val scope = rememberCoroutineScope()
+    val demo = BuildConfig.DEBUG
 
-    // Re-entering setup with a saved pairing opens on the pair step, which offers to continue with it.
-    var step by remember {
-        mutableStateOf(
-            // CI screenshot state (debug builds only): straight to the finish step.
-            if (demoVlcPending && BuildConfig.DEBUG) 3 else if (store.helperToken.isBlank()) 1 else 2,
-        )
-    }
+    // Re-entering setup with a saved pairing opens on the pair screen. The pair-screen
+    // demos open there directly even with no saved pairing.
+    var step by remember { mutableStateOf(if ((demoPair || demoVlcPending) && demo) 2 else if (store.helperToken.isBlank()) 1 else 2) }
     var scanning by remember { mutableStateOf(false) }
-    var found by remember { mutableStateOf<List<DiscoveredHelper>>(emptyList()) }
-    var chosen by remember { mutableStateOf<DiscoveredHelper?>(null) }
+    var found by remember {
+        mutableStateOf(if (demoPair && demo) listOf(DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC")) else emptyList())
+    }
+    var chosen by remember { mutableStateOf(if (demoPair && demo) found.firstOrNull() else null) }
     var manualHost by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var pairing by remember { mutableStateOf(false) }
+    // A code just paired on this screen: the success confirmation shows below the form.
+    var justPaired by remember { mutableStateOf(demoVlcPending && demo) }
+    var pairedName by remember { mutableStateOf(if (demoVlcPending && demo) "MY-PC" else "") }
+    // An earlier pairing continued to the VLC hand-off without a fresh code.
+    var continueVlc by remember { mutableStateOf(false) }
     var vlcPassword by remember { mutableStateOf("") }
     var moviesPath by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
@@ -58,10 +62,10 @@ fun SetupScreen(
     var vlcFinishPending by remember { mutableStateOf(false) }
     // Automatic-first VLC setup (helper 1.7+): the PC picked the password at pairing time.
     // "checking" while the phone verifies it, then "ok" or "refused".
-    var autoSetup by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
-    var autoState by remember { mutableStateOf(if (demoVlcPending && BuildConfig.DEBUG) "ok" else "checking") }
+    var autoSetup by remember { mutableStateOf(demoVlcPending && demo) }
+    var autoState by remember { mutableStateOf(if (demoVlcPending && demo) "ok" else "checking") }
     // VLC is still running with its old settings: control starts when VLC reopens.
-    var autoPending by remember { mutableStateOf(demoVlcPending && BuildConfig.DEBUG) }
+    var autoPending by remember { mutableStateOf(demoVlcPending && demo) }
     // VLC is simply closed (the PC attests the settings are written): control starts when it opens.
     var autoNotOpen by remember { mutableStateOf(false) }
     // Bump to re-run the automatic check after the PC was unreachable.
@@ -70,14 +74,18 @@ fun SetupScreen(
     var showManual by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
+    // The PC scan runs once when the pair screen opens; demos skip it so the renders are stable.
+    var scannedOnce by remember { mutableStateOf(demoPair || demoVlcPending) }
 
     fun say(text: String, isError: Boolean) { message = text; messageIsError = isError }
 
-    // The real check, run once when step 3 opens after an automatic pair (and again per
-    // Try again). The PC attests what is configured; a network error never becomes a
-    // green Done on its own. The demo preview state starts at "ok" and skips this.
-    LaunchedEffect(step, autoSetup, checkRun) {
-        if (step != 3 || !autoSetup || autoState != "checking") return@LaunchedEffect
+    val successVisible = justPaired || continueVlc
+
+    // The real check, run once when the success section opens after an automatic pair (and
+    // again per Try again). The PC attests what is configured; a network error never becomes
+    // a green Done on its own. The demo preview state starts at "ok" and skips this.
+    LaunchedEffect(successVisible, autoSetup, checkRun) {
+        if (!successVisible || !autoSetup || autoState != "checking") return@LaunchedEffect
         when (withContext(Dispatchers.IO) { AutoSetupCheck.run(store) }) {
             AutoSetupCheck.Outcome.OK -> { autoPending = false; autoNotOpen = false; autoState = "ok" }
             AutoSetupCheck.Outcome.OK_DEFERRED -> { autoPending = true; autoNotOpen = false; autoState = "ok" }
@@ -87,10 +95,11 @@ fun SetupScreen(
         }
     }
 
-    // Back walks the steps, and on step 1 leaves setup entirely when there is a
-    // pairing to fall back on (re-entry from Settings offers Cancel).
+    // Re-entry from Your PC has a working setup to fall back on: Back leaves instead of
+    // walking to the install step. First run: Back walks pair -> install.
+    val reentry = store.setupDone && onCancel != null
     BackHandler(enabled = step > 1 || onCancel != null) {
-        if (step > 1) { step -= 1; say("", false) } else onCancel?.invoke()
+        if (step > 1 && !reentry) { step -= 1; say("", false) } else onCancel?.invoke()
     }
 
     fun scan() {
@@ -101,6 +110,11 @@ fun SetupScreen(
             scanning = false
             if (found.isEmpty()) say("No PC answered. Check BingeMote is running on the PC, then try again - or type the PC's address below.", true)
         }
+    }
+
+    // Auto-scan once when the pair screen opens; the button re-scans on demand.
+    LaunchedEffect(step) {
+        if (step == 2 && !scannedOnce) { scannedOnce = true; scan() }
     }
 
     fun pair() {
@@ -125,7 +139,7 @@ fun SetupScreen(
                 store.pcName = paired.name.ifBlank { target.name }
                 remote.publishAddress(target.host, target.port, paired.token)
                 // Automatic-first: the PC generated the VLC password and handed it over with
-                // the pair. An old helper says nothing and step 3 stays the manual card.
+                // the pair. An old helper says nothing and the manual card stays.
                 if (paired.vlcPassword != null) {
                     store.vlcPassword = paired.vlcPassword
                     autoSetup = true
@@ -133,8 +147,9 @@ fun SetupScreen(
                     autoPending = paired.vlcPending
                 }
                 pairing = false
+                pairedName = store.pcName
+                justPaired = true
                 say("", false)
-                step = 3
             } catch (e: HelperClient.BadPairCode) {
                 pairing = false
                 say("That code didn't work. Get a fresh one: on your PC, open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", true)
@@ -145,16 +160,14 @@ fun SetupScreen(
         }
     }
 
-    fun startOver() {
-        store.host = ""
-        store.helperToken = ""
-        store.pcName = ""
-        remote.publishAddress("", HelperClient.DEFAULT_PORT, "")
+    // A refused automatic password: back to the code field for a fresh pair. The saved
+    // pairing stays until the new one lands - nothing working is thrown away early.
+    fun retryPair() {
         code = ""
-        chosen = null
-        manualHost = ""
-        found = emptyList()
-        say("Pairing cleared. On your PC, open BingeMote from the icon by the clock, type a name under Pair new phone, tap Pair, then enter the new code here.", false)
+        justPaired = false
+        autoSetup = false
+        showManual = false
+        say("", false)
     }
 
     fun finish() {
@@ -210,7 +223,7 @@ fun SetupScreen(
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            "Step $step of 3",
+            "Step $step of 2",
             color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(18.dp))
@@ -231,16 +244,14 @@ fun SetupScreen(
                 SetupMessage(message, messageIsError)
             }
 
-            2 -> Column {
-                if (store.helperToken.isNotBlank()) {
+            else -> Column {
+                if (store.helperToken.isNotBlank() && !justPaired) {
                     SetupCard {
                         Text("Already paired" + (if (store.pcName.isNotBlank()) " with ${store.pcName}" else ""), color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
-                        Text("This phone paired with your PC earlier. Continue with it, or start over to pair again with a new code.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                        Text("Continue to the VLC step below, or enter a new code to pair again - only needed for a new phone, or if this phone was removed on the PC.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                         Spacer(Modifier.height(12.dp))
-                        OrangeButton("Continue with this PC", onClick = { say("", false); step = 3 })
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = { startOver() }) { Text("Start over with a new code", color = Muted) }
+                        OrangeButton("Continue", onClick = { say("", false); continueVlc = true })
                     }
                     Spacer(Modifier.height(14.dp))
                 }
@@ -285,13 +296,15 @@ fun SetupScreen(
                 SetupCard {
                     Text("Pair", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Enter the code BingeMote is showing on your PC (4 digits, or 6 on an older BingeMote). It only works once. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    // Ezzy's call: no digit-count/older-version/one-use explanation - the field
+                    // and its error carry that when it matters. Validation is unchanged.
+                    Text("Enter the code BingeMote is showing on your PC. No code on screen? Open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = code,
                         onValueChange = {
                             code = it.filter(Char::isDigit).take(6)
-                            // One less tap: a full 6th digit (older PC) pairs right away; a 4-digit
+                            // One less tap: a full 6th digit (older BingeMote) pairs right away; a 4-digit
                             // code goes with the Pair button below, since 4 is a prefix of 6.
                             if (code.length == 6 && !pairing && (chosen != null || manualHost.isNotBlank())) pair()
                         },
@@ -308,17 +321,23 @@ fun SetupScreen(
                     // Right under the button, not below Back where the keyboard hid it.
                     SetupMessage(message, messageIsError)
                 }
-                Spacer(Modifier.height(14.dp))
-                TextButton(onClick = { say("", false); step = 1 }) { Text("Back", color = Muted) }
-            }
 
-            else -> Column {
-                if (autoSetup) {
+                // The confirmation lives below the form (Ezzy's settled flow), not on its
+                // own screen: paired, then the VLC hand-off under it.
+                if (successVisible) {
+                    Spacer(Modifier.height(14.dp))
                     SetupCard {
-                        when (autoState) {
+                        if (justPaired) {
+                            Text("\u2713 Paired with $pairedName", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(10.dp))
+                        }
+                        if (!autoSetup) {
+                            if (justPaired) {
+                                Text("One more step: turn on VLC's web remote below.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                            }
+                        } else when (autoState) {
                             "checking" -> {
-                                Text("Setting up VLC remote control\u2026", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(10.dp))
+                                if (!justPaired) { Text("Setting up VLC remote control\u2026", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(10.dp)) }
                                 Text("Your PC picked the password. Checking it once\u2026", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                             }
                             "ok" -> {
@@ -352,12 +371,12 @@ fun SetupScreen(
                                 Spacer(Modifier.height(10.dp))
                                 Text("If you changed it on the PC, re-pair or set it by hand.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                                 Spacer(Modifier.height(12.dp))
-                                OrangeButton("Pair again", onClick = { startOver(); step = 2 })
+                                OrangeButton("Pair again", onClick = { retryPair() })
                                 SetupMessage(message, messageIsError)
                             }
                         }
                     }
-                    if (autoState != "refused") {
+                    if (autoSetup && autoState != "refused") {
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = { showManual = !showManual }) {
                             Text(if (showManual) "Hide the manual setup" else "Set the password by hand instead", color = Muted)
@@ -365,7 +384,7 @@ fun SetupScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                 }
-                if (!autoSetup || showManual || autoState == "refused") {
+                if (successVisible && (!autoSetup || showManual || autoState == "refused")) {
                 SetupCard {
                     Text("Turn on VLC's web remote", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(10.dp))
@@ -418,7 +437,7 @@ fun SetupScreen(
                 }
                 }
                 Spacer(Modifier.height(14.dp))
-                TextButton(onClick = { say("", false); step = 2 }) { Text("Back", color = Muted) }
+                TextButton(onClick = { say("", false); if (reentry) onCancel?.invoke() else step = 1 }) { Text("Back", color = Muted) }
             }
         }
 
