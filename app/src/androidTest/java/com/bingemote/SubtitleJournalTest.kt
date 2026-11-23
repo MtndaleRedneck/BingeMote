@@ -63,4 +63,13 @@ class SubtitleJournalTest {
         try{journal.begin("pair","currentMovie",true);fail("coarse uncertainty allowed folder add")}catch(_:Exception){}
     }
 
+    @Test fun degradedHistoryBlocksFolderTransactionButNotExistingControlSlot(){
+        reset();val journal=SubtitleJournal(ctx)
+        journal.markDegraded("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        try{journal.begin("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","movie",true);fail("degraded folder add accepted")}catch(_:Exception){}
+        val id=journal.begin("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","movie",false)
+        assertTrue(journal.finish(id,false))
+        assertTrue(SubtitleJournal(ctx).isDegraded("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+    }
+
 }

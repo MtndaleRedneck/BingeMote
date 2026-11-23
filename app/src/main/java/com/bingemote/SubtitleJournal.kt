@@ -14,6 +14,7 @@ internal class SubtitleJournal(context: Context) {
         private val lock = Any()
         private val live = mutableSetOf<String>()
         private val completed = mutableMapOf<String,Boolean>()
+        private val degradedPairs=mutableSetOf<String>()
         private const val MAX_BYTES = 262144
     }
     data class Entry(val id: String, val pair: String, val media: String, val phase: String)
@@ -76,10 +77,12 @@ internal class SubtitleJournal(context: Context) {
         }
         return compact(entries).toMutableList()
     }
+    fun markDegraded(pair:String)=synchronized(lock){degradedPairs.add(pair);Unit}
+    fun isDegraded(pair:String):Boolean=synchronized(lock){pair in degradedPairs}
     fun entries(pair:String):List<Entry> = synchronized(lock){reconciled().filter{it.pair==pair}}
     fun begin(pair:String,media:String?,folderLoad:Boolean=false):String = synchronized(lock){
         val entries=reconciled()
-        if(folderLoad)check(entries.none{it.pair==pair && (it.media.isEmpty() || it.media==media)}){"A previous file load is still unconfirmed"}
+        if(folderLoad)check(pair !in degradedPairs && entries.none{it.pair==pair && (it.media.isEmpty() || it.media==media)}){"A previous file load is still unconfirmed"}
         check(entries.count{it.pair==pair && it.phase=="pending"}<16){"Subtitle requests still pending"}
         val id=UUID.randomUUID().toString();entries.add(Entry(id,pair,media.orEmpty(),"pending"));write(entries);live.add(id);id
     }
