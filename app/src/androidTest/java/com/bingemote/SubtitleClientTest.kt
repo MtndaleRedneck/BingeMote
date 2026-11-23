@@ -183,10 +183,34 @@ class SubtitleClientTest {
                 stub.emptyMedia=false
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles()};delay(300)
                 assertTrue("same media resume must not clear uncertainty",remote.subtitleOutcomeUnknown)
+                store.host="127.0.0.2" // same paired token, rediscovered address
                 val recreated=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
                 assertTrue("recreation must preserve uncertainty",recreated.subtitleOutcomeUnknown)
                 assertNotNull(recreated.subtitleFileError)
             } finally {scope.cancel()}
+        }
+    }
+
+    @Test fun preDispatchMarkerSurvivesRecreationDuringSlowMutation() = runBlocking {
+        val ctx=InstrumentationRegistry.getInstrumentation().targetContext
+        ctx.getSharedPreferences("subtitle-warnings",0).edit().clear().commit()
+        Stub().use{stub->
+            HapticTickTest.seedPrefs(ctx,false,stub.port)
+            val store=Store(ctx);store.helperToken="lifecycle-fixture";store.helperPort=stub.port
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
+            try{
+                val remote=RemoteState(ctx,store,scope)
+                withContext(Dispatchers.Main){remote.refreshSubtitleFiles()};delay(300)
+                stub.delayMs=2500
+                withContext(Dispatchers.Main){remote.loadSubtitleFile(remote.subtitleFolder!!.files.single())}
+                delay(300)
+                val recreated=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                assertTrue("in-flight marker must exist before response",recreated.subtitleOutcomeUnknown)
+                store.helperToken="repaired-fixture"
+                val repaired=withContext(Dispatchers.Main){RemoteState(ctx,store,scope)}
+                assertFalse("different pair token must not inherit warning",repaired.subtitleOutcomeUnknown)
+                delay(3000)
+            }finally{scope.cancel()}
         }
     }
 
