@@ -127,6 +127,7 @@ class HapticTickTest {
         @Volatile var statusDelayMs = 0L
         /** Next N commands are NOT applied and answer 500 after their delay. */
         @Volatile var failCommands = 0
+        @Volatile var failStatus = false
         private val running = AtomicBoolean(true)
         private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val port = server.localPort
@@ -155,6 +156,11 @@ class HapticTickTest {
                                     }
                                     snap = state
                                 } else {
+                                    if (failStatus) {
+                                        val out = sock.getOutputStream()
+                                        out.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                                        out.flush(); sock.close(); return@thread
+                                    }
                                     snap = state // snapshot at arrival: the response may be stale by send time
                                     polls.incrementAndGet()
                                     if (statusDelayMs > 0) Thread.sleep(statusDelayMs)
@@ -209,6 +215,8 @@ class ImmediateFlipTest {
         Thread.sleep(700)
         MediaControlsService.beforePollCommit = null
         MediaControlsService.beforePlaybackDelivery = null
+        MediaControlsService.afterPollAttempt = null
+        MediaControlsService.beforePollFailure = null
         MediaControlsService.postProbe = null
     }
 
@@ -300,6 +308,7 @@ class ImmediateFlipTest {
         val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
         val reached = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
+        val completed = java.util.concurrent.CountDownLatch(1)
         try {
             HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
@@ -307,6 +316,7 @@ class ImmediateFlipTest {
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue("initial connection missing", posts.count { !it.playing } >= 2)
             MediaControlsService.beforePollCommit = {
+                MediaControlsService.afterPollAttempt = { completed.countDown() }
                 reached.countDown()
                 assertTrue("barrier release timeout", release.await(8, java.util.concurrent.TimeUnit.SECONDS))
             }
@@ -318,10 +328,11 @@ class ImmediateFlipTest {
             assertTrue("connected Play did not respond while old poll paused", posts.any { it.playing })
             MediaControlsService.beforePollCommit = null
             release.countDown()
-            Thread.sleep(1000)
+            assertTrue("old poll never completed", completed.await(4, java.util.concurrent.TimeUnit.SECONDS))
             assertTrue("old poll overwrote newer Play: $posts", posts.none { !it.playing })
         } finally {
             MediaControlsService.beforePollCommit = null
+            MediaControlsService.afterPollAttempt = null
             release.countDown()
             stub.stop()
         }
@@ -356,6 +367,43 @@ class ImmediateFlipTest {
             MediaControlsService.beforePlaybackDelivery = null
             release.countDown()
             stub.stop()
+        }
+    }
+
+    @Test fun staleFailedPollCannotInvalidateNewerAction() {
+        val stub = HapticTickTest.StatusStub(); stub.start()
+        val reached = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val done = java.util.concurrent.CountDownLatch(1)
+        try {
+            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            ctx.startService(Intent(ctx, MediaControlsService::class.java))
+            val readyBy = System.currentTimeMillis() + 8000
+            while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
+            assertTrue(posts.count { !it.playing } >= 2)
+            MediaControlsService.beforePollFailure = {
+                MediaControlsService.afterPollAttempt = { done.countDown() }
+                reached.countDown()
+                assertTrue(release.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            stub.failStatus = true
+            assertTrue(reached.await(4, java.util.concurrent.TimeUnit.SECONDS))
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            val commandBy = System.currentTimeMillis() + 1500
+            while (stub.commands.isEmpty() && System.currentTimeMillis() < commandBy) Thread.sleep(20)
+            assertEquals(1, stub.commands.size)
+            MediaControlsService.beforePollFailure = null
+            stub.failStatus = false
+            release.countDown()
+            assertTrue(done.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
+            val bothBy = System.currentTimeMillis() + 1500
+            while (stub.commands.size < 2 && System.currentTimeMillis() < bothBy) Thread.sleep(20)
+            assertEquals("stale failure disabled newer connected tap", 2, stub.commands.size)
+        } finally {
+            MediaControlsService.beforePollFailure = null
+            MediaControlsService.afterPollAttempt = null
+            release.countDown(); stub.stop()
         }
     }
 
