@@ -18,6 +18,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
+private fun awaitServiceDestroyed(ctx: Context) {
+    val done = java.util.concurrent.CountDownLatch(1)
+    MediaControlsService.serviceDestroyed = { done.countDown() }
+    ctx.stopService(Intent(ctx, MediaControlsService::class.java))
+    if (MediaControlsService.testServiceAlive)
+        assertTrue("prior service destruction not acknowledged", done.await(5, java.util.concurrent.TimeUnit.SECONDS))
+    MediaControlsService.serviceDestroyed = null
+}
+
 /**
  * Ezzy 2026-11-22 "Add haptic": a bar button press must tick, and nothing else may.
  * The real Vibrator is replaced by a recorder through the MediaControlsService.performTick
@@ -33,8 +42,7 @@ class HapticTickTest {
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before fun setUp() {
-        ctx.stopService(Intent(ctx, MediaControlsService::class.java))
-        Thread.sleep(700) // wait for old service coroutine scope to cancel before probes
+        awaitServiceDestroyed(ctx)
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         device.executeShellCommand("settings put system haptic_feedback_enabled 1")
@@ -202,8 +210,7 @@ class ImmediateFlipTest {
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before fun setUp() {
-        ctx.stopService(Intent(ctx, MediaControlsService::class.java))
-        Thread.sleep(700) // wait for old service coroutine scope to cancel before probes
+        awaitServiceDestroyed(ctx)
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         posts.clear()
@@ -211,8 +218,7 @@ class ImmediateFlipTest {
     }
 
     @After fun tearDown() {
-        ctx.stopService(Intent(ctx, MediaControlsService::class.java))
-        Thread.sleep(700)
+        awaitServiceDestroyed(ctx)
         MediaControlsService.beforePollCommit = null
         MediaControlsService.beforePlaybackDelivery = null
         MediaControlsService.afterPollAttempt = null
