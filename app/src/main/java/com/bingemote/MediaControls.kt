@@ -138,7 +138,7 @@ class MediaControlsService : Service() {
             }
         }
         }
-        if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) commandEpoch.incrementAndGet()
+        if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) { commandEpoch.incrementAndGet(); tick() }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
             ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
@@ -165,6 +165,18 @@ class MediaControlsService : Service() {
 
     @Volatile private var lastPlaying = false
     private fun refreshNow() { scope.launch { pollOnce() } }
+
+    /** short confirmation tick on each bar button press. Honors
+     * the system haptic-feedback switch; the notification channel itself never
+     * vibrates, and the status poll path never calls this. */
+    private fun tick() {
+        try {
+            if (android.provider.Settings.System.getInt(contentResolver,
+                    android.provider.Settings.System.HAPTIC_FEEDBACK_ENABLED, 1) != 1) return
+            getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+                ?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+        } catch (_: Exception) { }
+    }
 
     private suspend fun pollOnce() = pollMutex.withLock { pollBody() }
     private suspend fun pollBody() {
