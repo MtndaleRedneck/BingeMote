@@ -298,12 +298,19 @@ fun SettingsScreen(
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }
-            if (result.isNotEmpty()) {
+            if (result.isNotEmpty() && result != "You're up to date.") {
                 Spacer(Modifier.height(8.dp))
                 Text(result, color = Muted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
-            Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 12.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Version ${BuildConfig.VERSION_NAME}", color = Muted, fontSize = 12.sp)
+                Spacer(Modifier.weight(1f))
+                if (result == "You're up to date.") {
+                    Spacer(Modifier.width(8.dp))
+                    Text(result, color = Muted, fontSize = 12.sp)
+                }
+            }
         }
         // Bottom gap = the screen's own 16.dp padding, same as the sides (the old
         // extra 28.dp spacer left a visibly bigger gap under the last card).
