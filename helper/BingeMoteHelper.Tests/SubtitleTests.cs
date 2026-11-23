@@ -54,6 +54,15 @@ public class SubtitleTests : IDisposable
             using (listing) {
                 var media = listing!.RootElement.GetProperty("mediaId").GetString()!;
                 var id = listing.RootElement.GetProperty("files")[0].GetProperty("id").GetString()!;
+                using var raw = new HttpClient();
+                raw.DefaultRequestHeaders.Authorization = new("Basic",Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(":fixture")));
+                await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=subtitle_track&val=-1");
+                var addPath=Path.Combine(Path.GetDirectoryName(movie)!,"manual.en.srt");
+                await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=addsubtitle&val="+Uri.EscapeDataString(addPath));
+                await Task.Delay(800);
+                var xml=await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.xml");
+                File.WriteAllText(Path.Combine(root,"add-only-status.xml"),xml);
+                Console.WriteLine("ADD_ONLY_STATUS="+xml);
                 var loaded = await Subtitles.Load(root,8099,"fixture",media,id); Assert.True(loaded.status == 200, loaded.body);
                 using var proof = JsonDocument.Parse(loaded.body); Assert.True(proof.RootElement.GetProperty("trackIds").GetArrayLength()>0);
                 var repeat = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200,repeat.status);
