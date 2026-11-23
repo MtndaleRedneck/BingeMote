@@ -83,7 +83,7 @@ class MediaControlsService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (BuildConfig.DEBUG) { testServiceAlive = true; requestTestPoll = { refreshNow() } }
+        if (BuildConfig.DEBUG) { testServiceAlive = true; requestTestPoll = { refreshNow() }; observeHeldPoll = { observer -> activePollObserver = observer } }
         // A prior version's session is released when its process is replaced.
         // No new session is created here, so the row cannot supply a media token.
     }
@@ -250,6 +250,7 @@ class MediaControlsService : Service() {
         internal var beforePollCommit: (() -> Unit)? = null
         internal var beforePlaybackDelivery: (() -> Unit)? = null
         internal var afterPollAttempt: (() -> Unit)? = null
+        internal var observeHeldPoll: (((() -> Unit)) -> Unit)? = null
         internal var beforePollFailure: (() -> Unit)? = null
         internal var pendingPollSkipped: (() -> Unit)? = null
         internal var playbackPostFailure: (() -> Unit)? = null
@@ -262,8 +263,14 @@ class MediaControlsService : Service() {
         internal var pollCommitted: (() -> Unit)? = null
     }
 
+    private var activePollObserver: (() -> Unit)? = null
     private suspend fun pollOnce() = pollMutex.withLock {
-        try { pollBody() } finally { if (BuildConfig.DEBUG) afterPollAttempt?.invoke() }
+        activePollObserver = if (BuildConfig.DEBUG) afterPollAttempt else null
+        try { pollBody() } finally {
+            val observer = activePollObserver
+            activePollObserver = null
+            observer?.invoke()
+        }
     }
     private fun recordPollFailure(epoch: Long, observer: (() -> Unit)?) {
         observer?.invoke()
@@ -432,6 +439,6 @@ class MediaControlsService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         scope.cancel()
         super.onDestroy()
-        if (BuildConfig.DEBUG) { testServiceAlive = false; requestTestPoll = null; serviceDestroyed?.invoke() }
+        if (BuildConfig.DEBUG) { testServiceAlive = false; requestTestPoll = null; observeHeldPoll = null; serviceDestroyed?.invoke() }
     }
 }
