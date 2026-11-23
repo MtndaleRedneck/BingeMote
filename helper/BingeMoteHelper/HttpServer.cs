@@ -146,7 +146,7 @@ internal sealed class HttpServer : IDisposable
                 case "/subtitles/list":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     if (req.HttpMethod != "GET") { Reply(res, 405, "{}"); return; }
-                    Reply(res, 200, await Subtitles.List(Program.MoviesFolder ?? "", 8080, VlcSetup.EffectivePassword() ?? ""));
+                    Reply(res, 200, await Subtitles.List(Program.MoviesFolder ?? "", int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var listPort) && listPort is > 0 and <= 65535 ? listPort : 8080, VlcSetup.EffectivePassword() ?? ""));
                     return;
                 case "/subtitles/load":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
@@ -155,7 +155,7 @@ internal sealed class HttpServer : IDisposable
                         if (PowerWake.ShouldSwallowDiscrete()) { Reply(res, 200, "{\"woke\":true}"); return; }
                         using var doc = JsonDocument.Parse(ReadBody(req));
                         var data = doc.RootElement;
-                        var answer = await Subtitles.Load(Program.MoviesFolder ?? "", 8080, VlcSetup.EffectivePassword() ?? "",
+                        var answer = await Subtitles.Load(Program.MoviesFolder ?? "", int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var loadPort) && loadPort is > 0 and <= 65535 ? loadPort : 8080, VlcSetup.EffectivePassword() ?? "",
                             data.GetProperty("mediaId").GetString() ?? "", data.GetProperty("id").GetString() ?? "");
                         Reply(res, answer.status, answer.body);
                     }

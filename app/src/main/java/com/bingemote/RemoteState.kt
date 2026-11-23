@@ -207,6 +207,8 @@ class RemoteState(
             // file's own selected track instead of a checkmark from the previous video.
             if (s.title != lastTitle || s.lengthSec != lastLengthSec) {
                 lastTitle = s.title; lastLengthSec = s.lengthSec
+                subtitleRequest++
+                subtitleFilesLoading = false
                 pickedSubtitle = null
                 pickedSubtitleFile = null
                 subtitleFolder = null
@@ -300,6 +302,7 @@ class RemoteState(
                     }
                 } else if (System.currentTimeMillis() - c.ts > CmdPolicy.EXPIRY_MS) {
                     Diag.cmdsExpired.incrementAndGet()
+                    if (c.kind == "sub") scope.launch { subtitleFilesLoading = false }
                     continue
                 }
                 try { c.block() } catch (_: Exception) { failures++; if (failures >= UNREACHABLE_AFTER) unreachable = true }
@@ -443,22 +446,31 @@ class RemoteState(
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         subtitleFileError = null
         subtitleFilesLoading = true
-        scope.launch {
+        // Same ordered command lane as Off/loaded-track selection. A later Off cannot
+        // overtake a slow add and then be undone when that add eventually lands.
+        cmds.trySend(Cmd("sub", System.currentTimeMillis()) {
             try {
-                val loaded = withContext(Dispatchers.IO) { HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id) }
-                val refreshed = if (loaded) withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) } else null
-                if (request == subtitleRequest && host == store.host && token == store.helperToken) {
-                    if (loaded) {
-                        pickedSubtitle = null
-                        pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
-                        subtitleFolder = refreshed
-                    } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
+                val loaded = HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id)
+                val refreshed = if (loaded) HelperClient.subtitleFiles(host, port, token) else null
+                scope.launch {
+                    if (request == subtitleRequest && host == store.host && token == store.helperToken) {
+                        if (loaded) {
+                            pickedSubtitle = null
+                            pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
+                            subtitleFolder = refreshed
+                        } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
+                        subtitleFilesLoading = false
+                    }
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
-                if (request == subtitleRequest) subtitleFileError = "Couldn't load that subtitle. Check the movie and try again."
-            } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
-        }
+                scope.launch {
+                    if (request == subtitleRequest) {
+                        subtitleFileError = "Couldn't load that subtitle. Check the movie and try again."
+                        subtitleFilesLoading = false
+                    }
+                }
+            }
+        })
     }
 
     fun pickSubtitle(trackId: Int) {
