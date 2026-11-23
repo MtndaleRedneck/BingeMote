@@ -1,3 +1,7 @@
+## v1.7.14
+
+- The Remove phone, notice and Wi-Fi dialogs now request dark title bars to match their dark contents.
+
 ## v1.7.3
 
 - Smaller, sharper volume display with a subtle rounded pill and a clearer mute icon.

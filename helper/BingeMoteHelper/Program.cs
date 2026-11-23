@@ -133,6 +133,13 @@ internal static class Program
         }
 
 #if WINDOW_SHOT_HOOK
+        if (args.Contains("--dialog-shots"))
+        {
+            ApplicationConfiguration.Initialize();
+            DialogCapture.Run(Environment.GetEnvironmentVariable("BINGEMOTE_DIALOG_SHOTS") ?? "dialog-shots");
+            return 0;
+        }
+
         // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
         if (args.Contains("--window-shot"))
         {
@@ -1958,6 +1965,22 @@ internal sealed class HelperWindow : Form
 
 /// <summary>Shared look for the small dialogs: 20px margins, measured text (never clipped),
 /// smooth rounded buttons (4px) right-aligned with 8px gaps.</summary>
+internal class DarkDialog : Form
+{
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Body colors do not theme the non-client Windows title bar.
+        var dark = HelperWindow.IsDarkMode() ? 1 : 0;
+        try { DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int)); }
+        catch (DllNotFoundException) { }
+        catch (EntryPointNotFoundException) { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+}
+
 internal static class DialogLook
 {
     internal const int Margin = 20;
@@ -2005,7 +2028,7 @@ internal static class DialogLook
 
 /// <summary>The public-Wi-Fi popup: names the network and offers the one-click Private fix,
 /// the manual Settings route, or Not now (remembered per Wi-Fi name).</summary>
-internal sealed class WifiDialog : Form
+internal sealed class WifiDialog : DarkDialog
 {
     public enum Result { None, Home, Settings, NotNow }
     public Result Answer { get; private set; } = Result.None;
@@ -2077,7 +2100,7 @@ internal static class ConfirmDialog
         var fg = dark ? HelperWindow.DarkText : HelperWindow.LightText;
         var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
         var answer = false;
-        using var dlg = new Form
+        using var dlg = new DarkDialog
         {
             AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
@@ -2117,7 +2140,7 @@ internal static class NoteDialog
         var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
         var fg = dark ? HelperWindow.DarkText : HelperWindow.LightText;
         var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
-        using var dlg = new Form
+        using var dlg = new DarkDialog
         {
             AutoScaleMode = AutoScaleMode.Dpi,
             Text = "BingeMote",
