@@ -62,13 +62,14 @@ internal static class Subtitles
     private static async Task<JsonDocument> Get(int port, string password, string page) {
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(4) };
         client.DefaultRequestHeaders.Authorization = new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(":" + password)));
-        using var response = await client.GetAsync($"http://127.0.0.1:{port}/requests/{page}", HttpCompletionOption.ResponseHeadersRead);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        using var response = await client.GetAsync($"http://127.0.0.1:{port}/requests/{page}", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync();
         using var buffer = new MemoryStream();
         var chunk = new byte[8192];
         while (true) {
-            var count = await stream.ReadAsync(chunk);
+            var count = await stream.ReadAsync(chunk, timeout.Token);
             if (count == 0) break;
             if (buffer.Length + count > 2 * 1024 * 1024) throw new IOException("response too large");
             buffer.Write(chunk, 0, count);
@@ -89,6 +90,13 @@ internal static class Subtitles
         var item = current[0];
         if (!Uri.TryCreate(item.GetProperty("uri").GetString(), UriKind.Absolute, out var uri) || !uri.IsFile || uri.IsUnc) return null;
         var id = item.TryGetProperty("id", out var val) ? val.ToString() : "";
+        // Playlist IDs can restart from the same value after VLC restarts. Include
+        // its process lifetime so cached track IDs never bind to a later instance.
+        var processes = System.Diagnostics.Process.GetProcessesByName("vlc");
+        try {
+            if (processes.Length != 1) return null;
+            id += "|" + processes[0].Id + "|" + processes[0].StartTime.ToUniversalTime().Ticks;
+        } finally { foreach (var process in processes) process.Dispose(); }
         return SnapshotFor(root, uri.LocalPath, id);
     }
     internal static async Task<string> List(string root, int port, string password) {
@@ -99,7 +107,7 @@ internal static class Subtitles
     }
     internal static async Task<(int status, string body)> Load(string root, int port, string password, string mediaId, string candidateId) {
         if (mediaId.Length != 64 || candidateId.Length != 64) return (400, "{\"error\":\"invalid selection\"}");
-        await LoadGate.WaitAsync();
+        if (!await LoadGate.WaitAsync(TimeSpan.FromSeconds(1))) return (429, "{\"error\":\"subtitle busy\"}");
         try {
             var snapshot = await Current(root, port, password);
             if (snapshot == null || snapshot.MediaId != mediaId) return (409, "{\"error\":\"movie changed\"}");
