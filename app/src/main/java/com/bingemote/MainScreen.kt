@@ -642,7 +642,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
             contentAlignment = Alignment.Center,
         ) {
             if (cancelling && seekDrag != null) {
-                CancelCircleContent(seekDrag, remote.store.cancelStyle)
+                CancelCircleContent(seekDrag)
             } else {
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     drawCircle(if (pressed && flashAll) TextC else Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
@@ -653,23 +653,16 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
     }
 }
 
-/** The cancel target that replaces the play/pause glyph during a seek drag.
- * "Ring only": orange ring and label from the start, brightening as the finger
- * closes in. "Fills in": the orange outline is constant and the interior fills
- * dark-to-orange with proximity; the label darkens early so it stays readable.
- * Either way only the wording flips at the border: Cancel -> Release to cancel. */
+/** Filled cancel target. Only the wording flips at the border. */
 @Composable
-private fun CancelCircleContent(drag: SeekDrag, style: String) {
+private fun CancelCircleContent(drag: SeekDrag) {
     val p = drag.proximity
     val dark = Color(0xFF1B1B1E)
-    val fills = style == "fills"
     val ringColor = androidx.compose.ui.graphics.lerp(Orange, OrangeLight, p)
-    val labelColor = if (fills) {
-        androidx.compose.ui.graphics.lerp(Orange, dark, (p * 3f).coerceAtMost(1f))
-    } else ringColor
+    val labelColor = androidx.compose.ui.graphics.lerp(Orange, dark, (p * 3f).coerceAtMost(1f))
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-            if (fills) drawCircle(androidx.compose.ui.graphics.lerp(Card, Orange, p))
+            drawCircle(androidx.compose.ui.graphics.lerp(Card, Orange, p))
             drawCircle(ringColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
         }
         Text(

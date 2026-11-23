@@ -30,7 +30,7 @@ private fun awaitServiceDestroyed(ctx: Context) {
 /**
  * a bar button press must tick, and nothing else may.
  * The real Vibrator is replaced by a recorder through the MediaControlsService.performTick
- * seam - what the phone physically feels (VibratorManager + EFFECT_TICK) cannot be proven
+ * seam - what the phone physically feels (VibratorManager + EFFECT_CLICK) cannot be proven
  * on an emulator. What IS proven here: (1) an action intent reaches tick, (2) the app's
  * own "Vibrate on press" setting suppresses it, (3) the system haptic switch suppresses
  * it, (4) the 2 s status poll never ticks.

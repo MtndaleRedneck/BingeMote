@@ -69,7 +69,6 @@ fun SettingsScreen(
     var permissionPopup by remember { mutableStateOf(false) }
     var showVolumeOnPc by remember { mutableStateOf(store.showVolumeOnPc) }
     var flash by remember { mutableStateOf(store.buttonFlash) }
-    var cancelStyle by remember { mutableStateOf(store.cancelStyle) }
     var pickingMovies by remember { mutableStateOf(false) }
     var keepAwake by remember { mutableStateOf(store.keepAwake) }
     if (permissionPopup) {
@@ -215,14 +214,7 @@ fun SettingsScreen(
                 selected = flash,
                 haptics = haptics,
             ) { flash = it; store.buttonFlash = it }
-            Spacer(Modifier.height(14.dp))
-            Text("Cancel button style", color = TextC, fontSize = 15.sp)
-            Spacer(Modifier.height(10.dp))
-            ChoiceRow(
-                options = listOf(0 to "Fills in", 1 to "Ring only"),
-                selected = if (cancelStyle == "ring") 1 else 0,
-                haptics = haptics,
-            ) { cancelStyle = if (it == 1) "ring" else "fills"; store.cancelStyle = cancelStyle }
+
         }
         Spacer(Modifier.height(14.dp))
 

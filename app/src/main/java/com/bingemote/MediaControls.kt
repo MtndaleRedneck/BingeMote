@@ -146,10 +146,13 @@ class MediaControlsService : Service() {
             }
         }
         }
-        // Disconnected Play stays tappable but is a no-op, including no tick.
-        // Only a recent successful VLC poll permits optimistic state feedback.
+        // Acknowledge the tap independently of command eligibility.
+        val recognized = intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD,
+            ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)
+        if (recognized) tick()
+        // Disconnected Play still cannot send a command or change playback state.
         if (intent?.action == ACTION_MEDIA_PLAY_PAUSE && !playbackConnected()) return START_STICKY
-        if (intent?.action in setOf(ACTION_MEDIA_REWIND, ACTION_MEDIA_FAST_FORWARD, ACTION_MEDIA_PLAY_PAUSE, ACTION_MEDIA_VOL_DOWN, ACTION_MEDIA_VOL_UP)) { commandEpoch.incrementAndGet(); pollVersion.incrementAndGet(); tick() }
+        if (recognized) { commandEpoch.incrementAndGet(); pollVersion.incrementAndGet() }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
             ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
@@ -240,8 +243,16 @@ class MediaControlsService : Service() {
     companion object {
         /** Test seam: instrumented tests substitute a recorder; production vibrates. */
         internal var performTick: (Context) -> Unit = { ctx ->
-            ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
-                ?.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+            val vibrator = ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+            val effect = android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                vibrator?.vibrate(effect, android.os.VibrationAttributes.Builder()
+                    .setUsage(android.os.VibrationAttributes.USAGE_TOUCH).build())
+            } else {
+                vibrator?.vibrate(effect, android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            }
         }
 
         /** Test seam: instrumented tests watch every real bar post (true = play glyph). */
