@@ -45,6 +45,8 @@ public class SubtitleTests : IDisposable
         var movie = Path.Combine(root, "Movie", "movie.mp4"); Directory.CreateDirectory(Path.GetDirectoryName(movie)!); File.Copy(fixture, movie);
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(movie)!, "manual.en.srt"), "1\r\n00:00:00,000 --> 00:01:00,000\r\nSubtitle fixture\r\n");
         var vlc = @"C:\Program Files\VideoLAN\VLC\vlc.exe";
+        var probePath=@"C:\Program Files\VideoLAN\VLC\lua\http\requests\bm-subtitle-probe.json";
+        File.WriteAllText(probePath,"<?vlc print('{\"selected\":' .. tostring(vlc.var.get(vlc.object.input(), \"spu-es\")) .. '}') ?>");
         var psi = new ProcessStartInfo(vlc) { UseShellExecute = false };
         foreach (var arg in new[] { "-I", "dummy", "--aout=dummy", "--vout=dummy", "--extraintf=http", "--http-host=127.0.0.1", "--http-port=8099", "--http-password=fixture", "--no-sub-autodetect-file", "--loop", movie }) psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi)!;
@@ -60,9 +62,9 @@ public class SubtitleTests : IDisposable
                 var addPath=Path.Combine(Path.GetDirectoryName(movie)!,"manual.en.srt");
                 await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.json?command=addsubtitle&val="+Uri.EscapeDataString(addPath));
                 await Task.Delay(800);
-                var xml=await raw.GetStringAsync("http://127.0.0.1:8099/requests/status.xml");
-                File.WriteAllText(Path.Combine(root,"add-only-status.xml"),xml);
-                Console.WriteLine("ADD_ONLY_STATUS="+xml);
+                using var addOnly=JsonDocument.Parse(await raw.GetStringAsync("http://127.0.0.1:8099/requests/bm-subtitle-probe.json"));
+                Assert.Equal(-1,addOnly.RootElement.GetProperty("selected").GetInt32());
+                Console.WriteLine("REAL_VLC_ADD_ONLY_PRESERVES_OFF_PASS");
                 var loaded = await Subtitles.Load(root,8099,"fixture",media,id); Assert.True(loaded.status == 200, loaded.body);
                 using var proof = JsonDocument.Parse(loaded.body); Assert.True(proof.RootElement.GetProperty("trackIds").GetArrayLength()>0);
                 var repeat = await Subtitles.Load(root,8099,"fixture",media,id); Assert.Equal(200,repeat.status);
@@ -70,7 +72,7 @@ public class SubtitleTests : IDisposable
                 var stale = await Subtitles.Load(root,8099,"fixture",new string('F',64),id); Assert.Equal(409,stale.status);
 
             }
-        } finally { if (!process.HasExited) { process.Kill(true); process.WaitForExit(); } }
+        } finally { if (!process.HasExited) { process.Kill(true); process.WaitForExit(); } File.Delete(probePath); }
     }
     [Fact] public async Task BoundedRequestBodyRejectsOversizeAndMalformedStream() {
         using var oversized = new MemoryStream(new byte[65537]);
