@@ -1,5 +1,7 @@
 ## v1.12.14
 
+- Setup Cancel returns to Settings. Removed its bottom Back button; Android system Back still works.
+
 - Pair-code entry appears after selecting a discovered PC or confirming a typed address. Discovery errors stay with PC selection.
 
 - Removed manual VLC configuration and password-entry setup. Pairing handles setup; the manual PC-address option remains.

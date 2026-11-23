@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
                         remote,
                         setupScroll,
                         onDone = { remote.start(); current.value = "main" },
-                        onCancel = if (store.setupDone) ({ current.value = "yourpc" }) else null,
+                        onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
                         demoVlcPending = BuildConfig.DEBUG && intent.hasExtra("vlcpending"),
                         demoPair = BuildConfig.DEBUG && intent.hasExtra("pairdemo"),
                     )
