@@ -82,8 +82,11 @@ class SubtitleClientTest {
                 repeat(100) { if (stub.requests.isNotEmpty()) return@repeat; delay(30) }
                 assertTrue("subtitle list was never requested", stub.requests.isNotEmpty())
                 awaitCondition(8000) { !remote.subtitleFilesLoading }
-                // Owner's rule: no PC connection or an older PC app hides folder
-                // subtitles silently - no error line, no Retry, loaded tracks untouched.
+                // Owner's rule: an older PC app hides folder subtitles silently -
+                // no error line, no Retry. This is the CONNECTED older-PC case: the
+                // VLC link is fine, so its status and embedded tracks stay; only the
+                // folder section hides. (Fully disconnected is a UI concern covered
+                // by SubtitleSheetTest: the sheet then shows only Off, no stale tracks.)
                 assertNull(remote.subtitleFileError)
                 assertNull(remote.subtitleFolder)
                 assertNotNull("loaded status must survive old PC",remote.status)

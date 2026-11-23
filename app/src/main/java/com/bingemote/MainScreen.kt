@@ -773,35 +773,40 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
             SubtitleRow("Off", !remote.subtitleOutcomeUnknown && remote.pickedSubtitleFile == null && (picked == -1 || (picked == null && tracks.none { it.selected })), remote.store.haptics) {
                 remote.pickSubtitle(-1)
             }
-            val showEmptyNotice = tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null
-            // Dividers only when there is actually something below them to separate
-            // from Off: real folder/track rows or a persistent notice. A transient
-            // "Checking..." line alone gets no divider.
-            if (folder?.files?.isNotEmpty() == true || loadedTracks.isNotEmpty() || remote.subtitleFileError != null || showEmptyNotice) SubtitleDivider()
-            if (remote.subtitleFilesLoading && folder == null) {
-                Text("Checking subtitle files...", color = Muted, fontSize = 13.sp)
-            }
-            folder?.files?.forEach { file ->
-                val checked = !remote.subtitleOutcomeUnknown && (remote.pickedSubtitleFile == file.id ||
-                    (remote.pickedSubtitleFile == null && file.trackIds.any { id -> if (picked != null) picked == id else tracks.any { it.id == id && it.selected } }))
-                SubtitleRow(file.name.substringBeforeLast('.'), checked, remote.store.haptics) {
-                    remote.loadSubtitleFile(file)
+            // Disconnected (same flag as the status pill): the sheet shows only Off,
+            // like before folder subtitles existed. No stale tracks from the last
+            // status, no folder rows, no loading line, no error/Retry, no dividers.
+            if (!remote.unreachable) {
+                val showEmptyNotice = tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null
+                // Dividers only when there is actually something below them to separate
+                // from Off: real folder/track rows or a persistent notice. A transient
+                // "Checking..." line alone gets no divider.
+                if (folder?.files?.isNotEmpty() == true || loadedTracks.isNotEmpty() || remote.subtitleFileError != null || showEmptyNotice) SubtitleDivider()
+                if (remote.subtitleFilesLoading && folder == null) {
+                    Text("Checking subtitle files...", color = Muted, fontSize = 13.sp)
                 }
-            }
-            remote.subtitleFileError?.let {
-                Text(it, color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
-                SubtitleRow("Retry", false, remote.store.haptics) { remote.refreshSubtitleFiles() }
-            }
-            if (folder?.files?.isNotEmpty() == true && loadedTracks.isNotEmpty()) SubtitleDivider()
-            loadedTracks.forEach { t ->
-                val checked = !remote.subtitleOutcomeUnknown && remote.pickedSubtitleFile == null && (if (picked != null) picked == t.id else t.selected)
-                SubtitleRow(t.name, checked, remote.store.haptics) {
-                    remote.pickSubtitle(t.id)
+                folder?.files?.forEach { file ->
+                    val checked = !remote.subtitleOutcomeUnknown && (remote.pickedSubtitleFile == file.id ||
+                        (remote.pickedSubtitleFile == null && file.trackIds.any { id -> if (picked != null) picked == id else tracks.any { it.id == id && it.selected } }))
+                    SubtitleRow(file.name.substringBeforeLast('.'), checked, remote.store.haptics) {
+                        remote.loadSubtitleFile(file)
+                    }
                 }
-            }
-            if (showEmptyNotice) {
-                Spacer(Modifier.height(6.dp))
-                Text("No subtitle tracks or files found.", color = Muted, fontSize = 13.sp)
+                remote.subtitleFileError?.let {
+                    Text(it, color = Muted, fontSize = 13.sp, lineHeight = 18.sp)
+                    SubtitleRow("Retry", false, remote.store.haptics) { remote.refreshSubtitleFiles() }
+                }
+                if (folder?.files?.isNotEmpty() == true && loadedTracks.isNotEmpty()) SubtitleDivider()
+                loadedTracks.forEach { t ->
+                    val checked = !remote.subtitleOutcomeUnknown && remote.pickedSubtitleFile == null && (if (picked != null) picked == t.id else t.selected)
+                    SubtitleRow(t.name, checked, remote.store.haptics) {
+                        remote.pickSubtitle(t.id)
+                    }
+                }
+                if (showEmptyNotice) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("No subtitle tracks or files found.", color = Muted, fontSize = 13.sp)
+                }
             }
             Spacer(Modifier.height(10.dp))
         }

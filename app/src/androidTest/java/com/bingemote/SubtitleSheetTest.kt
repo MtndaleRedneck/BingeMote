@@ -56,4 +56,32 @@ class SubtitleSheetTest {
         assertFalse(device.hasObject(By.text("No subtitle tracks or files found.")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-disconnected.png"))
     }
+
+    @Test fun losingConnectionWithSheetOpenCollapsesToOnlyOff() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // Rig: sheet opens connected with folder files and embedded tracks visible,
+        // then the connection drops 2.5s in (frozen polling keeps it dropped).
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "subtitles").putExtra("statuscase", "prop-g")
+            .putExtra("subtitlepreviewlost", true))
+        // Connected starting state really shows the content and its dividers first.
+        assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
+        assertTrue(device.hasObject(By.text("English")))
+        // After the drop: everything below Off must go, including the stale tracks
+        // the last status still carries.
+        assertTrue(device.wait(Until.gone(By.text("Movie.en")), 10000))
+        Thread.sleep(1000)
+        assertTrue(device.hasObject(By.text("Off")))
+        assertFalse(device.hasObject(By.text("Movie.en")))
+        assertFalse(device.hasObject(By.text("Movie.es")))
+        assertFalse(device.hasObject(By.text("English")))
+        assertFalse(device.hasObject(By.text("Spanish")))
+        assertFalse(device.hasObject(By.textContains("Folder subtitles")))
+        assertFalse(device.hasObject(By.text("Retry")))
+        assertFalse(device.hasObject(By.text("Checking subtitle files...")))
+        assertFalse(device.hasObject(By.text("No subtitle tracks or files found.")))
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-lost.png"))
+    }
 }
