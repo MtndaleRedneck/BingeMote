@@ -259,6 +259,11 @@ jobs:
           $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT"; Accept = 'application/octet-stream' }
           Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
 
+      - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
+        env:
+          BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
+        run: pwsh -File scripts/helper-e2e.ps1
+
       - name: Render the window for layout review (CI only)
         timeout-minutes: 5
         run: |
@@ -291,11 +296,6 @@ jobs:
             helper/osd.frame.png
             helper/osd-muted.frame.png
           if-no-files-found: error
-
-      - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
-        env:
-          BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
-        run: pwsh -File scripts/helper-e2e.ps1
 
       - name: Upload e2e failure diagnostics
         uses: actions/upload-artifact@v4
