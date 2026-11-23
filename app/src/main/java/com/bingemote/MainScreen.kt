@@ -641,9 +641,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
             if (cancelling && seekDrag != null) {
                 CancelCircleContent(seekDrag, remote.store.cancelStyle)
             } else {
-                // Padded by half the stroke so the clip cuts nothing: an unpadded 3dp ring
-                // loses its outer half to the CircleShape clip and renders thin and rough.
-                androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(1.5.dp)) {
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     drawCircle(if (pressed && flashAll) TextC else Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
                 }
                 if (playing) PauseIcon(Orange, 40.dp) else PlayIcon(Orange, 40.dp)
@@ -667,8 +665,8 @@ private fun CancelCircleContent(drag: SeekDrag, style: String) {
         androidx.compose.ui.graphics.lerp(Orange, dark, (p * 3f).coerceAtMost(1f))
     } else ringColor
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(1.5.dp)) {
-            if (fills) drawCircle(androidx.compose.ui.graphics.lerp(Card, Orange, p), radius = (size.minDimension - 3.dp.toPx()) / 2f)
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            if (fills) drawCircle(androidx.compose.ui.graphics.lerp(Card, Orange, p))
             drawCircle(ringColor, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
         }
         Text(

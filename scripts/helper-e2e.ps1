@@ -583,7 +583,7 @@ try {
 # upgrade keeping that pairing, and clean uninstall. The blocked-input notice is NOT
 # exercised here; its coverage above used the hook build. ---
 Write-Host "== shipping-bytes smoke =="
-$ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" | Select-Object -First 1
+$ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $ship) {
     # Source-only push runs publish no installer, so there is nothing to pin yet.
     # The leg runs on dispatch runs that pass shipping_run_id (+ shipping_sha256).
