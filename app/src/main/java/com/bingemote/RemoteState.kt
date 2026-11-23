@@ -405,11 +405,20 @@ class RemoteState(
     var pickedSubtitleFile by mutableStateOf<String?>(null); private set
     private var subtitleRequest = 0
 
-    fun refreshSubtitleFiles() {
+    internal fun debugSubtitlePreview() {
+        if (!BuildConfig.DEBUG) return
+        status = VlcStatus("playing", "Demo", 30, 3600, 128, false,
+            listOf(SubTrack(1, "English", false), SubTrack(2, "Spanish", false)))
+        subtitleFolder = HelperClient.SubtitleFolder("demo", listOf(
+            HelperClient.SubtitleFile("demo-en", "Movie.en.srt"),
+            HelperClient.SubtitleFile("demo-es", "Movie.es.srt")), false)
+        pickedSubtitleFile = "demo-en"
+    }
+    fun refreshSubtitleFiles(quiet: Boolean = false) {
+        if (BuildConfig.DEBUG && subtitleFolder?.mediaId == "demo") return
         val request = ++subtitleRequest
-        subtitleFilesLoading = true
+        if (!quiet) subtitleFilesLoading = true
         subtitleFileError = null
-        pickedSubtitleFile = null
         val host = store.host; val port = store.helperPort; val token = store.helperToken
         scope.launch {
             try {
@@ -419,6 +428,7 @@ class RemoteState(
                     subtitleFolder = folder
                     if (folder.unavailable) subtitleFileError = "Can't check subtitle files right now."
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 if (request == subtitleRequest) {
                     subtitleFolder = null
@@ -436,13 +446,15 @@ class RemoteState(
         scope.launch {
             try {
                 val loaded = withContext(Dispatchers.IO) { HelperClient.loadSubtitle(host, port, token, folder.mediaId, file.id) }
-                if (request == subtitleRequest) {
+                val refreshed = if (loaded) withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) } else null
+                if (request == subtitleRequest && host == store.host && token == store.helperToken) {
                     if (loaded) {
                         pickedSubtitle = null
-                        pickedSubtitleFile = file.id
-                        subtitleFolder = withContext(Dispatchers.IO) { HelperClient.subtitleFiles(host, port, token) }
+                        pickedSubtitleFile = if (refreshed?.mediaId == folder.mediaId) file.id else null
+                        subtitleFolder = refreshed
                     } else subtitleFileError = "Screen woken. Tap the subtitle again to load it."
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 if (request == subtitleRequest) subtitleFileError = "Couldn't load that subtitle. Check the movie and try again."
             } finally { if (request == subtitleRequest) subtitleFilesLoading = false }
@@ -450,6 +462,8 @@ class RemoteState(
     }
 
     fun pickSubtitle(trackId: Int) {
+        subtitleRequest++
+        subtitleFilesLoading = false
         pickedSubtitleFile = null
         pickedSubtitle = trackId
         fire("sub") { Vlc.setSubtitleTrack(store.host, store.vlcPort, store.vlcPassword, trackId) }

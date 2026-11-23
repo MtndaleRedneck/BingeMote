@@ -10,8 +10,8 @@ adb shell am start -n com.bingemote/.MainActivity --es screen main --es statusca
 sleep 5
 adb shell input keyevent 4
 adb shell am force-stop com.bingemote
-adb shell am instrument -w -r -e class com.bingemote.NotificationTapMatrixTest,com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest,com.bingemote.DisconnectedPlaybackTest,com.bingemote.RefinementsUiTest,com.bingemote.StoreMigrationTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee refinements-evidence/tests.txt
-for capture in refinements-yourpc refinements-settings refinements-after-pair-tap; do
+adb shell am instrument -w -r -e class com.bingemote.NotificationTapMatrixTest,com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest,com.bingemote.DisconnectedPlaybackTest,com.bingemote.RefinementsUiTest,com.bingemote.StoreMigrationTest,com.bingemote.SubtitleSheetTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee refinements-evidence/tests.txt
+for capture in refinements-yourpc refinements-settings refinements-after-pair-tap subtitle-sheet; do
   adb exec-out cat "/sdcard/Android/data/com.bingemote/files/bm-$capture.png" > "refinements-evidence/$capture.png"
 done
 adb shell am instrument -w -r -e class 'com.bingemote.CancelGestureTest#releaseInsideCancelsFillsIn' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee refinements-evidence/cancel-tests.txt
