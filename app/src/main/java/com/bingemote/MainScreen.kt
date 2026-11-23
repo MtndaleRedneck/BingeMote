@@ -773,7 +773,11 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
             SubtitleRow("Off", !remote.subtitleOutcomeUnknown && remote.pickedSubtitleFile == null && (picked == -1 || (picked == null && tracks.none { it.selected })), remote.store.haptics) {
                 remote.pickSubtitle(-1)
             }
-            SubtitleDivider()
+            val showEmptyNotice = tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null
+            // Dividers only when there is actually something below them to separate
+            // from Off: real folder/track rows or a persistent notice. A transient
+            // "Checking..." line alone gets no divider.
+            if (folder?.files?.isNotEmpty() == true || loadedTracks.isNotEmpty() || remote.subtitleFileError != null || showEmptyNotice) SubtitleDivider()
             if (remote.subtitleFilesLoading && folder == null) {
                 Text("Checking subtitle files...", color = Muted, fontSize = 13.sp)
             }
@@ -795,7 +799,7 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
                     remote.pickSubtitle(t.id)
                 }
             }
-            if (tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null) {
+            if (showEmptyNotice) {
                 Spacer(Modifier.height(6.dp))
                 Text("No subtitle tracks or files found.", color = Muted, fontSize = 13.sp)
             }
