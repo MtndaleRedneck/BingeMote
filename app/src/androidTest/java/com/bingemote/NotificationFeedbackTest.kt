@@ -408,6 +408,24 @@ class ImmediateFlipTest {
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue(posts.count { !it.playing } >= 2)
+            // Anchor the connectivity window: start the held-failure scenario right
+            // after a fresh successful poll commit. playbackConnected() needs a commit
+            // within the last 5 s and only polls refresh it (MediaControls.kt:77,348);
+            // without the anchor, this orchestration can itself outlast the window
+            // (poll-phase + hold + second startService), so tap #2 is dropped by the
+            // INTENDED disconnected guard and masquerades as a stale-failure
+            // invalidation - the actual mechanism of run 45427938862's expected-2-was-1.
+            // No corrective refresh after the stale completion: if the epoch guard ever
+            // DID let the stale failure mark disconnected, tap #2 still fails red.
+            val anchor = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pollCommitted = { anchor.countDown() }
+            val anchorBy = System.currentTimeMillis() + 6000
+            while (anchor.count > 0 && System.currentTimeMillis() < anchorBy) {
+                MediaControlsService.requestObservedPoll?.invoke { }
+                anchor.await(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            MediaControlsService.pollCommitted = null
+            assertTrue("fresh poll committed before the held-failure scenario", anchor.count == 0L)
             MediaControlsService.beforePollFailure = {
                 MediaControlsService.observeHeldPoll?.invoke { done.countDown() }
                 reached.countDown()
@@ -429,24 +447,6 @@ class ImmediateFlipTest {
             stub.failStatus = false
             release.countDown()
             assertTrue(done.await(3, java.util.concurrent.TimeUnit.SECONDS))
-            // The orchestration above (held failed poll + delivery waits) can itself
-            // outlast the app's 5 s connectivity window: playbackConnected() needs a
-            // successful poll commit within 5 s, and only polls refresh it. Tap #2
-            // would then be dropped by the INTENDED disconnected guard, not by the
-            // stale failure - the actual mechanism behind run 45427938862's
-            // expected-2-was-1 (the epoch guard correctly kept the stale failure
-            // from marking disconnected). Re-establish connectivity with a fresh
-            // committed poll so the second tap exercises the stale-failure guard,
-            // not the connectivity window.
-            val recommit = java.util.concurrent.CountDownLatch(1)
-            MediaControlsService.pollCommitted = { recommit.countDown() }
-            val repollBy = System.currentTimeMillis() + 6000
-            while (recommit.count > 0 && System.currentTimeMillis() < repollBy) {
-                MediaControlsService.requestObservedPoll?.invoke { }
-                recommit.await(700, java.util.concurrent.TimeUnit.MILLISECONDS)
-            }
-            MediaControlsService.pollCommitted = null
-            assertTrue("fresh successful poll re-established connectivity", recommit.count == 0L)
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
             val bothBy = System.currentTimeMillis() + 5000
             while (stub.commands.size < 2 && System.currentTimeMillis() < bothBy) Thread.sleep(20)
