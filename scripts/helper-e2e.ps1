@@ -607,9 +607,13 @@ if ($env:BINGEMOTE_SHIP_SHA256) {
     Write-Host "BINGEMOTE_SHIP_SHA256 unset: shipping identity assertion skipped this run"
 }
 Write-Host "shipping install: $($ship.FullName) /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
-$initialInstaller = $ship.FullName
-$prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.7.13.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($prior) { $initialInstaller = $prior.FullName; Write-Host 'Initial install: exact prior1.7.13 for paired upgrade retention' }
+$prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.7.14.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $prior) {
+    $presentPrior = (Get-ChildItem 'helper/Prior' -ErrorAction SilentlyContinue | ForEach-Object Name) -join ', '
+    throw "exact-upgrade leg requires the pinned prior installer helper/Prior/BingeMote-PC-1.7.14.exe (helper/Prior contains: $presentPrior); refusing to fall back to the shipping installer as the initial install"
+}
+$initialInstaller = $prior.FullName
+Write-Host "initial installer: $(Split-Path $initialInstaller -Leaf) version $((Get-Item $initialInstaller).VersionInfo.ProductVersion)"
 $shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -PassThru
 if (-not $shipInstall.WaitForExit(90000)) { Stop-Process -Id $shipInstall.Id -Force; Get-Content shipping-install.log -Tail 40; throw 'Initial installer exceeded90seconds' }
 if ($shipInstall.ExitCode -ne 0) { Get-Content shipping-install.log -Tail 40; throw "shipping install failed: $($shipInstall.ExitCode)" }
@@ -777,8 +781,8 @@ $shipToken2 = ($r.body | ConvertFrom-Json).token
 $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
 
-# Install exact new1.7.14 over the genuinely paired prior1.7.13 state.
-Write-Host 'Exact prior1.7.13 -> pinned1.7.14 upgrade begins'
+# Install the pinned shipping build over the genuinely paired prior state.
+Write-Host "exact upgrade begins: $(Split-Path $initialInstaller -Leaf) -> $($ship.Name)"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 $upgrade = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-upgrade.log' -PassThru
