@@ -17,7 +17,8 @@ public class UrlAclTests
     [InlineData("invalid", false)]
     public void OnlyInteractiveExecuteReservationIsAccepted(string sddl, bool expected)
     {
-        Assert.Equal(expected, FirewallSetup.HasInteractiveOnlyGrant("    SDDL: " + sddl + "\r\n"));
+        foreach (var ending in new[] { "\r\n", "\n", "" })
+            Assert.Equal(expected, FirewallSetup.HasInteractiveOnlyGrant("    SDDL: " + sddl + ending));
     }
 
     [Fact]
