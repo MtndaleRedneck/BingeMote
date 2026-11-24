@@ -29,6 +29,14 @@ import kotlinx.coroutines.withContext
  * climbs above it. Touch only: tap a folder to open it, tap a movie to play it,
  * "Up one folder" walks back out but never above the assigned folder.
  */
+
+/** Root argument for load() in the current listing mode. Helper mode lists
+ *  folder-relative paths ("" is the folder root) and its jail rejects rooted
+ *  paths; VLC mode takes absolute paths. Passing the absolute root while the
+ *  helper is active breaks the listing - the changed-root reconnect bug. */
+internal fun rootArgForMode(helperMode: Boolean, absRoot: String): String =
+    if (helperMode) "" else absRoot
+
 @Composable
 fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Unit, demoResumeAsk: Boolean = false) {
     val scope = rememberCoroutineScope()
@@ -277,7 +285,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 // exist, so viewport preservation only applies within the same folder.
                 remote.store.moviesPath = fromPc
                 scrollStack.clear()
-                load(remote.store.moviesPath.trim())
+                load(rootArgForMode(viaHelper, remote.store.moviesPath.trim()))
             } else {
                 load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
             }
