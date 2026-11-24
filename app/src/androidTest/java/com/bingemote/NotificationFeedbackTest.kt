@@ -542,7 +542,8 @@ class ImmediateFlipTest {
             // Pre-finally evidence at the failure point (I2: post-teardown dumps
             // cannot prove the precondition state).
             if (!MediaControlsService.testServiceAlive)
-                PreconditionDiag.capture("flip-service-alive", "service alive", startedBy - 3000)
+                PreconditionDiag.capture("flip-service-alive", "service alive", startedBy - 3000,
+                    "observerSet=${MediaControlsService.requestObservedPoll != null} testPollSet=${MediaControlsService.requestTestPoll != null} heldSet=${MediaControlsService.observeHeldPoll != null}")
             assertTrue(MediaControlsService.testServiceAlive)
             val connected = java.util.concurrent.CountDownLatch(1)
             MediaControlsService.requestObservedPoll?.invoke { connected.countDown() }
@@ -550,7 +551,7 @@ class ImmediateFlipTest {
             val connectedOk = connected.await(2, java.util.concurrent.TimeUnit.SECONDS)
             if (!connectedOk)
                 PreconditionDiag.capture("flip-observed-poll", "observed poll", t0c,
-                    "alive=${MediaControlsService.testServiceAlive}")
+                    "alive=${MediaControlsService.testServiceAlive} observerSet=${MediaControlsService.requestObservedPoll != null} testPollSet=${MediaControlsService.requestTestPoll != null} heldSet=${MediaControlsService.observeHeldPoll != null}")
             assertTrue(connectedOk)
             assertTrue(posts.count { !it.playing } >= 2)
             stub.beforeStatusResponse = {
