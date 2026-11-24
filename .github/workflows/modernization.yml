@@ -98,6 +98,16 @@ jobs:
             echo "GATE FAILED: kotlin.LazyKt absent from both APKs"
             exit 1
           fi
+          # The release instrumentation boundary classes must be defined in the
+          # app APK under original names (run 45375818691: Store unresolvable).
+          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus; do
+            n=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE "^C d .*${cls}$" || true)
+            echo "$cls defined rows: app=$n"
+            if [ "$n" = 0 ]; then
+              echo "GATE FAILED: $cls absent from the app APK"
+              exit 1
+            fi
+          done
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

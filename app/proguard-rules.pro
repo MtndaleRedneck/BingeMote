@@ -23,3 +23,19 @@
 -keepnames class kotlin.jvm.functions.Function0
 -keepnames class kotlin.jvm.internal.Intrinsics
 -keepnames class kotlin.jvm.internal.Lambda
+
+# Minified-release instrumentation boundary: the androidTest APK's classes
+# reference these app classes by original name (the test R8 does not rewrite
+# them to the app's renamed output - run 45375818691: NoClassDefFoundError
+# com.bingemote.Store at RecoveryContinuityTest.kt:11). Kept with members:
+# exactly the app classes the release-run instrumentations
+# (RecoveryContinuityTest, UpgradeConnectionTest) touch, plus VlcStatus which
+# RemoteState.status exposes. CoroutineScope/Continuation are name-preserved
+# because the RemoteState constructor and suspend pollOnce descriptors cross
+# the same boundary.
+-keep class com.bingemote.Store { *; }
+-keep class com.bingemote.HelperClient { *; }
+-keep class com.bingemote.RemoteState { *; }
+-keep class com.bingemote.VlcStatus { *; }
+-keepnames class kotlinx.coroutines.CoroutineScope
+-keepnames class kotlin.coroutines.Continuation
