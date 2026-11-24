@@ -69,6 +69,20 @@ jobs:
           stat -c "RELEASE_APK_BYTES=%s" app/build/outputs/apk/release/app-release.apk
           sha256sum app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+      - name: Tracing presence gate in both minified APKs
+        run: |
+          set -euo pipefail
+          APKA="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          for apk in app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/androidTest/release/app-release-androidTest.apk; do
+            echo "== $apk"
+            "$APKA" dex packages "$apk" | grep 'androidx tracing' || echo "NO androidx.tracing classes"
+          done
+          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -c 'androidx tracing Trace' || true)
+          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -c 'androidx tracing Trace' || true)
+          if [ "$app_hits" = 0 ] && [ "$test_hits" = 0 ]; then
+            echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
+            exit 1
+          fi
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
