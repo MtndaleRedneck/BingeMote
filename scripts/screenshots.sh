@@ -305,6 +305,8 @@ done
 # Failure evidence captures (only written when the pair-code reveal assert fails).
 adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.png" > "screenshots/setup-selected-pc-fail.png" 2>/dev/null || true
 adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.xml" > "screenshots/setup-selected-pc-fail.xml" 2>/dev/null || true
+adb exec-out cat "/sdcard/bm-setup-confirmed-address-fail.png" > "screenshots/setup-confirmed-address-fail.png" 2>/dev/null || true
+adb exec-out cat "/sdcard/bm-setup-confirmed-address-fail.xml" > "screenshots/setup-confirmed-address-fail.xml" 2>/dev/null || true
 # Counter-region pixel proof: the seed counters after cancel/interruption must
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.
