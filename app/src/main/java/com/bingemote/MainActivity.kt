@@ -37,6 +37,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Screenshot-rig only: arms the subtitle sheet's lose-connection-mid-view
+         *  transition (see the subtitlepreviewlost intent extra). Debug builds only. */
+        var previewLostRigArmed = false
+    }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         val a = ev.actionMasked
@@ -64,13 +69,12 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreview", false)) remote.debugSubtitlePreview()
         // Screenshot-rig only: the sheet opens with connected content, then the
         // connection drops mid-view so UI tests see the live transition to Off-only.
-        // Polling stays frozen (statuscase sets setupDone=false), so nothing flips it back.
+        // The drop is armed here and fired by the sheet once the connected rows have
+        // actually composed (never on a timer racing cold startup). Polling stays
+        // frozen (statuscase sets setupDone=false), so nothing flips it back.
         if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreviewlost", false)) {
             remote.debugSubtitlePreview()
-            lifecycleScope.launch {
-                kotlinx.coroutines.delay(6000)
-                remote.debugForceStatus(unreachable = true, helperDown = true)
-            }
+            previewLostRigArmed = true
         }
         // Screenshot-rig only: render one status-notice review scenario per capture.
         // Polling is frozen (setupDone=false -> pollOnce no-ops) or leftover rig prefs

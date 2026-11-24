@@ -738,6 +738,15 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
     val folder = remote.subtitleFolder
     val mapped = folder?.files?.flatMap { it.trackIds }?.toSet() ?: emptySet()
     val loadedTracks = tracks.filter { it.id !in mapped }
+    // Screenshot-rig only: once the connected rows have actually composed, hold them
+    // long enough for the test to observe them, then drop the connection mid-view.
+    if (BuildConfig.DEBUG && MainActivity.previewLostRigArmed && folder?.files?.isNotEmpty() == true) {
+        LaunchedEffect(Unit) {
+            MainActivity.previewLostRigArmed = false
+            kotlinx.coroutines.delay(2500)
+            remote.debugForceStatus(unreachable = true, helperDown = true)
+        }
+    }
     LaunchedEffect(Unit) {
         remote.refreshSubtitleFiles()
         while (true) {
