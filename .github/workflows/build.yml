@@ -17,7 +17,7 @@ on:
       only:
         description: Limit the run (pc-e2e skips the android/scanner/screenshot jobs; stage runs only the android/helper builds and stages the signed bytes to the private TestLab draft)
         type: choice
-        options: [all, pc-e2e, stage]
+        options: [all, pc-e2e, stage, verify]
         default: all
       shipping_run_id:
         description: Run ID whose BingeMote-PC artifact the e2e shipping leg tests (leave empty to skip that leg)
@@ -208,7 +208,7 @@ jobs:
           Write-Output "Staged asset id: $($asset.id)"
 
   helper-e2e:
-    if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage'
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: windows-latest
     needs: helper
     steps:
@@ -339,7 +339,7 @@ jobs:
 
 
   scanner-test:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
     # (syntax, every section, summary) and uploads its report. The runner has no
     # BingeMote, so a clean "nothing found" run is the expected result.
@@ -391,7 +391,7 @@ jobs:
           path: focused-ui/*
 
   screenshots:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
