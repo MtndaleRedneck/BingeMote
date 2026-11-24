@@ -259,10 +259,10 @@ jobs:
           $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT"; Accept = 'application/octet-stream' }
           Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
           New-Item -ItemType Directory -Force helper/Prior | Out-Null
-          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/781707511" -OutFile helper/Prior/BingeMote-PC-1.7.13.exe
-          $priorHash = (Get-FileHash helper/Prior/BingeMote-PC-1.7.13.exe -Algorithm SHA256).Hash.ToLower()
-          if ($priorHash -ne '88888ee7d31611726e76f89de2e49bbb3601d69dc8a0be8ac39e5472651d9cf6') { throw 'Exact prior1.7.13 hash mismatch' }
-          Write-Host "Exact prior1.7.13 installer sha256: $priorHash"
+          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/784504607" -OutFile helper/Prior/BingeMote-PC-1.7.15.exe
+          $priorHash = (Get-FileHash helper/Prior/BingeMote-PC-1.7.15.exe -Algorithm SHA256).Hash.ToLower()
+          if ($priorHash -ne 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd') { throw 'Exact prior1.7.15 hash mismatch' }
+          Write-Host "Exact prior1.7.15 installer sha256: $priorHash"
 
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
