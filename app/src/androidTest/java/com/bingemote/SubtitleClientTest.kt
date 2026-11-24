@@ -33,6 +33,7 @@ class SubtitleClientTest {
         @Volatile var unknown = false
         @Volatile var failLoadOnly = false
         @Volatile var emptyMedia = false
+        @Volatile var unavailableList = false
         @Volatile var responseBytes = 0
         @Volatile var delayMs = 0L
         @Volatile var running = true
@@ -47,7 +48,7 @@ class SubtitleClientTest {
                     val body = CharArray(len); var n = 0
                     while (n < len) { val k = reader.read(body, n, len-n); if (k < 0) break; n += k }
                     requests.add(line + "\n" + headers.joinToString("\n") + "\n" + String(body))
-                    val json = if (failLoadOnly && line.contains("/subtitles/load")) """{"unknown":true,"error":"uncertain"}""" else if (emptyMedia && line.contains("/subtitles/list")) """{"mediaId":"","files":[]}""" else if (errorCode > 0) """{"error":"fixture rejection","unknown":$unknown}""" else if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else if (line.contains("/subtitles/media")) """{"mediaId":"opaque-movie"}""" else """{"ok":true}"""
+                    val json = if (failLoadOnly && line.contains("/subtitles/load")) """{"unknown":true,"error":"uncertain"}""" else if (unavailableList && line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[],"unavailable":true}""" else if (emptyMedia && line.contains("/subtitles/list")) """{"mediaId":"","files":[]}""" else if (errorCode > 0) """{"error":"fixture rejection","unknown":$unknown}""" else if (line.contains("/subtitles/list")) """{"mediaId":"opaque-movie","files":[{"id":"opaque-file","name":"Movie.en.srt","trackIds":[]}]}""" else if (line.contains("/subtitles/media")) """{"mediaId":"opaque-movie"}""" else """{"ok":true}"""
                     val code = if (failLoadOnly && line.contains("/subtitles/load")) "503 Fixture" else if (oldPc) "404 Not Found" else if (errorCode > 0) "$errorCode Fixture" else "200 OK"
                     if (delayMs > 0) Thread.sleep(delayMs)
                     val bytes = if (responseBytes > 0) ByteArray(responseBytes) { 32 } else json.toByteArray()
@@ -93,6 +94,30 @@ class SubtitleClientTest {
                 assertNull(remote.subtitleFileError)
                 assertNull(remote.subtitleFolder)
                 assertNotNull("loaded status must survive old PC",remote.status)
+            } finally { scope.cancel() }
+        }
+    }
+    @Test fun unavailableMessageClearsOnNextQuietFailure() = runBlocking {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        Stub().use { stub ->
+            stub.unavailableList = true
+            HapticTickTest.seedPrefs(ctx,false,stub.port)
+            val store = Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
+            val scope = CoroutineScope(SupervisorJob()+Dispatchers.Main)
+            try {
+                val remote = RemoteState(ctx,store,scope)
+                withContext(Dispatchers.Main) { remote.debugSeedStatus();remote.refreshSubtitleFiles() }
+                repeat(100) { if (stub.requests.isNotEmpty()) return@repeat; delay(30) }
+                assertTrue("subtitle list was never requested", stub.requests.isNotEmpty())
+                awaitCondition(8000) { !remote.subtitleFilesLoading }
+                // The helper's own unavailable answer sets the message (sheet shows it + Retry).
+                assertEquals("Can't check subtitle files right now.", remote.subtitleFileError)
+                // A later quiet check that fails quietly (older PC 404) must clear the leftover.
+                stub.oldPc = true; stub.unavailableList = false
+                withContext(Dispatchers.Main) { remote.refreshSubtitleFiles(quiet = true) }
+                awaitCondition(8000) { !remote.subtitleFilesLoading }
+                assertNull(remote.subtitleFileError)
+                assertNull(remote.subtitleFolder)
             } finally { scope.cancel() }
         }
     }
