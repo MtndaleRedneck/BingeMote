@@ -9,6 +9,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.junit.After
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.Assert.*
 import java.util.concurrent.CountDownLatch
@@ -17,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Exercises the actual RemoteViews PendingIntents, not manufactured action strings. */
 class NotificationTapMatrixTest {
+    @get:Rule val failureDump = FailureDumpRule()
+
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ctx get() = inst.targetContext
     private val device = UiDevice.getInstance(inst)
@@ -46,14 +49,22 @@ class NotificationTapMatrixTest {
         device.executeShellCommand("settings put system haptic_feedback_enabled 1")
     }
     private fun await(what: String, predicate: () -> Boolean) {
-        val end = System.currentTimeMillis() + 5000
+        val t0 = System.currentTimeMillis()
+        val end = t0 + 5000
         while (System.currentTimeMillis() < end) { if (predicate()) return; Thread.sleep(30) }
+        // Pre-finally evidence at the failure point; the rule dump runs post-teardown.
+        PreconditionDiag.capture("tapmatrix-await", what, t0,
+            "alive=${MediaControlsService.testServiceAlive} observerSet=${MediaControlsService.requestObservedPoll != null}")
         fail("Timed out: $what")
     }
     private fun poll() {
         val latch = CountDownLatch(1)
         MediaControlsService.requestObservedPoll!! { latch.countDown() }
-        assertTrue("observed poll", latch.await(5, TimeUnit.SECONDS))
+        val t0 = System.currentTimeMillis()
+        val observed = latch.await(5, TimeUnit.SECONDS)
+        if (!observed) PreconditionDiag.capture("tapmatrix-poll", "observed poll", t0,
+            "alive=${MediaControlsService.testServiceAlive}")
+        assertTrue("observed poll", observed)
     }
     private fun currentRow(): View {
         val nm = ctx.getSystemService(NotificationManager::class.java)

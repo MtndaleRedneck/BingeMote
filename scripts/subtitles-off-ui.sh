@@ -25,7 +25,7 @@ fi
 adb shell am force-stop com.bingemote
 adb logcat -d -s AndroidRuntime:E > subtitles-off-evidence/crashes.txt
 # Diagnostic failure dumps (FailureDumpRule): pull whatever exists, tolerate absence.
-for f in $(adb shell ls /sdcard/Android/data/com.bingemote/files/ | grep -E '^bm-(dump|andialog|dismissed)' || true); do
+for f in $(adb shell ls /sdcard/Android/data/com.bingemote/files/ | grep -E '^bm-(dump|andialog|dismissed|precond)' || true); do
   adb exec-out cat "/sdcard/Android/data/com.bingemote/files/$f" > "subtitles-off-evidence/$f" || true
 done
 grep -q '^OK (' subtitles-off-evidence/tests.txt

@@ -24,7 +24,10 @@ import java.io.File
  * hierarchy) at the moment of failure.
  */
 class FailureDumpRule : TestWatcher() {
+    private var testStartedAt = 0L
+
     override fun starting(description: Description) {
+        testStartedAt = System.currentTimeMillis() // rule/test start, not app launch
         val inst = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(inst)
         val dir = inst.targetContext.getExternalFilesDir(null) ?: return
@@ -79,8 +82,16 @@ class FailureDumpRule : TestWatcher() {
                 sb.append(device.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"))
             }
             runCatching {
-                sb.append("== recent app logcat ==\n")
-                sb.append(device.executeShellCommand("logcat -d -t 250"))
+                // Anchored at test start, polling spam filtered: the tail used to
+                // cover ~3-22s of mostly UiDevice noise, missing the failure period.
+                sb.append("== app logcat since test start (UiDevice filtered) ==\n")
+                if (testStartedAt > 0) {
+                    val anchor = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+                        .format(java.util.Date(testStartedAt))
+                    sb.append(device.executeShellCommand("logcat -d -T '$anchor' | grep -v UiDevice"))
+                } else {
+                    sb.append(device.executeShellCommand("logcat -d -t 250"))
+                }
             }
             File(dir, "bm-dump-$tag.txt").writeText(sb.toString())
             val firstAt = System.currentTimeMillis()
