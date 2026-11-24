@@ -274,7 +274,12 @@ grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSER
 #     itself is untestable on an emulator - a seam records the exact calls.
 adb shell am instrument -w -e class com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/haptic-flip-instrument.txt
-grep -q '^OK (9 tests)' screenshots/haptic-flip-instrument.txt || { echo 'ASSERT FAIL: haptic/glyph feedback tests failed (see haptic-flip-instrument.txt)'; SEEK_FAIL=1; }
+# Exact expected inventory, computed from source so the check neither goes stale
+# when the suite grows (the hardcoded 9 did, Nov 23) nor passes a partial/zero
+# run on a bare '^OK (' match. Both run classes live in this one file.
+expected_haptic=$(grep -c '@Test' app/src/androidTest/java/com/bingemote/NotificationFeedbackTest.kt)
+[ "${expected_haptic:-0}" -gt 0 ] || { echo 'ASSERT FAIL: could not count haptic/glyph @Test inventory'; SEEK_FAIL=1; }
+grep -Eq "^OK \($expected_haptic tests?\)" screenshots/haptic-flip-instrument.txt || { echo "ASSERT FAIL: haptic/glyph feedback tests failed or ran partially (expected $expected_haptic tests; see haptic-flip-instrument.txt)"; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \
@@ -297,6 +302,9 @@ grep -q '^OK (' screenshots/automatic-setup-instrument.txt || { echo 'ASSERT FAI
 for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings; do
   adb exec-out cat "/sdcard/bm-$capture.png" > "screenshots/$capture.png"
 done
+# Failure evidence captures (only written when the pair-code reveal assert fails).
+adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.png" > "screenshots/setup-selected-pc-fail.png" 2>/dev/null || true
+adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.xml" > "screenshots/setup-selected-pc-fail.xml" 2>/dev/null || true
 # Counter-region pixel proof: the seed counters after cancel/interruption must
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.

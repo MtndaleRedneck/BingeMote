@@ -38,8 +38,15 @@ Write-Host "== real 1.7.12 -> 1.7.13 upgrade =="
 $env:BINGEMOTE_PAIR_CODE = '4242'
 $old = Get-ChildItem "helper/Output-old/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $old) { throw "1.7.12 baseline installer missing in helper/Output-old" }
-& $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "1.7.12 baseline install failed with exit $LASTEXITCODE" }
+New-Item -ItemType Directory -Force helper/e2e-diag | Out-Null
+# Capture Inno's own install log for both legs: a bare exit code (e.g. 5) does
+# not say WHY setup aborted, and the log is the only record of that.
+& $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\install-baseline.log" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "--- install-baseline.log (tail) ---"
+    if (Test-Path helper/e2e-diag/install-baseline.log) { Get-Content helper/e2e-diag/install-baseline.log -Tail 80 }
+    throw "1.7.12 baseline install failed with exit $LASTEXITCODE"
+}
 $acl = (netsh http show urlacl) | Out-String
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
 if (-not $aclBlock) { throw "1.7.12 did not add its listen permission" }
@@ -47,10 +54,35 @@ if ($aclBlock -match 'Everyone|S-1-1-0') { throw "1.7.12 baseline grants Everyon
 if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "1.7.12 baseline not scoped to interactive users: $aclBlock" }
 Write-Host "ok: 1.7.12 baseline installed with the interactive-users grant"
 
+# The silent postinstall relaunch is NOWAIT, so the baseline app is still cold-starting
+# (single-file unpack, WinForms init, listener) when this script continues. Inno's
+# RestartManager shutdown can only close an app whose window/message loop exists; asking
+# 1-2s after launch times out after 30s and /SUPPRESSMSGBOXES then defaults the
+# Abort/Retry/Ignore box to Abort (installer exit 5, observed on runs 45417217526 /
+# 45417241032 / 45422326208, install-upgrade.log). Wait for the listener so the upgrade
+# exercises Inno closing a fully running app, like a real update does.
+# Readiness = the BASELINE HELPER answering, not merely a listener on 8488: poll
+# /ping and require its exact unauthenticated 401, which only BingeMote's auth
+# middleware produces. A bare TCP connect could pass on an unrelated listener.
+$baselineUp = $false
+foreach ($i in 1..60) {
+    try {
+        $probe = Invoke-Helper '/ping' '{}' $null
+        if ($probe.code -eq 401) { $baselineUp = $true; break }
+    } catch { }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $baselineUp) { throw "baseline helper did not answer /ping with 401 on 8488 after install" }
+Write-Host "ok: baseline helper fully up (authenticated /ping surface) before the upgrade"
+
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
-& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent upgrade failed with exit $LASTEXITCODE" }
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\install-upgrade.log" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "--- install-upgrade.log (tail) ---"
+    if (Test-Path helper/e2e-diag/install-upgrade.log) { Get-Content helper/e2e-diag/install-upgrade.log -Tail 80 }
+    throw "silent upgrade failed with exit $LASTEXITCODE"
+}
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
 $acl = (netsh http show urlacl) | Out-String
