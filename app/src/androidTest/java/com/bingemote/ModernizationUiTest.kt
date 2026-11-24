@@ -73,7 +73,13 @@ class ModernizationUiTest {
         launch("main", "cur-ok")
         device.wait(Until.findObject(By.desc("Settings")), 30000).click()
         assertTrue(device.wait(Until.hasObject(By.text("Your PC")), 10000))
-        repeat(3) { device.swipe(device.displayWidth/2, device.displayHeight*4/5, device.displayWidth/2, device.displayHeight/4, 25) }
+        // Swipe until the top section is really gone: a fixed swipe count raced slow
+        // emulator frames (run 45349472226), which is a test gap, not a product signal.
+        val scrollDeadline = System.currentTimeMillis() + 15000
+        while (device.hasObject(By.text("Your PC")) && System.currentTimeMillis() < scrollDeadline) {
+            device.swipe(device.displayWidth/2, device.displayHeight*4/5, device.displayWidth/2, device.displayHeight/4, 25)
+            Thread.sleep(300)
+        }
         assertFalse("test must really scroll away from the top", device.hasObject(By.text("Your PC")))
         device.pressBack()
         device.wait(Until.findObject(By.desc("Settings")), 10000).click()
