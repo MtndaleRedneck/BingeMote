@@ -80,8 +80,8 @@ jobs:
             $env:KEYSTORE_FILE=$key
             .\gradlew.bat --no-daemon assembleRelease
             if ($LASTEXITCODE -ne 0) { throw 'Android build failed' }
-            Copy-Item app/build/outputs/apk/release/app-release.apk BingeMote-Android-1.12.16.apk
-            & "$env:ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs BingeMote-Android-1.12.16.apk
+            Copy-Item app/build/outputs/apk/release/app-release.apk BingeMote-Android-1.13.0.apk
+            & "$env:ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --print-certs BingeMote-Android-1.13.0.apk
             if ($LASTEXITCODE -ne 0) { throw 'Signature verification failed' }
           } finally { Remove-Item $key -ErrorAction SilentlyContinue }
       - name: Retain only in private TestLab drafts
@@ -95,7 +95,7 @@ jobs:
           # pwsh unrolls nested @(@(...)) arrays to flat strings when collected
           # (a run of this created junk draft tag 'a' from string indexing); use
           # hashtable pairs, which foreach keeps intact.
-          foreach ($pair in @(@{ tag='android-v1.12.16'; file='BingeMote-Android-1.12.16.apk' })) {
+          foreach ($pair in @(@{ tag='android-v1.13.0'; file='BingeMote-Android-1.13.0.apk' })) {
             $tag=$pair.tag; $file=$pair.file
             $releases=Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/MtndaleRedneck/TestLab/releases?per_page=100'
             $release=$releases | Where-Object { $_.tag_name -eq $tag } | Select-Object -First 1
