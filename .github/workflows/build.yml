@@ -31,6 +31,10 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      restage:
+        description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -94,12 +98,22 @@ jobs:
           AUTH="Authorization: Bearer $TESTLAB_PAT"
           REPO=MtndaleRedneck/TestLab
           TAG="android-v${VERSION}"
+          VISIBLE=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.tag_name==$t and (.draft|not))][0].id // empty')
+          if [ -n "$VISIBLE" ]; then
+            echo "::error::Existing visible release $TAG cannot be overwritten"
+            exit 1
+          fi
           ID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.draft==true and .tag_name==$t)][0].id // empty')
           if [ -z "$ID" ]; then
             ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
           fi
           echo "TestLab draft release id: $ID"
-          for a in $(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id'); do
+          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
+          if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
+            echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
+            exit 1
+          fi
+          for a in $EXISTING; do
             curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
           done
           UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
@@ -173,6 +187,8 @@ jobs:
           $repo = 'MtndaleRedneck/TestLab'
           $tag = "pc-v$env:HELPER_VERSION"
           $rels = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
+          $visible = $rels | Where-Object { (-not $_.draft) -and $_.tag_name -eq $tag } | Select-Object -First 1
+          if ($visible) { throw 'Existing visible version cannot be overwritten' }
           $draft = $rels | Where-Object { $_.draft -and $_.tag_name -eq $tag } | Select-Object -First 1
           if (-not $draft) {
             $body = @{ tag_name = $tag; name = "BingeMote PC $env:HELPER_VERSION"; draft = $true; body = "Staged for independent review. Source: MtndaleRedneck/BingeMote@$env:GITHUB_SHA, run $env:GITHUB_RUN_ID." } | ConvertTo-Json
@@ -180,7 +196,9 @@ jobs:
           }
           Write-Output "TestLab draft release id: $($draft.id)"
           $rel = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/$($draft.id)"
-          foreach ($a in ($rel.assets | Where-Object { $_.name -eq $exe })) {
+          $existing = @($rel.assets | Where-Object { $_.name -eq $exe })
+          if ($existing.Count -gt 0 -and '${{ inputs.restage }}' -ne 'true') { throw 'Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)' }
+          foreach ($a in $existing) {
             Invoke-RestMethod -Method Delete -Headers $headers "https://api.github.com/repos/$repo/releases/assets/$($a.id)" | Out-Null
           }
           $upload = $rel.upload_url -replace '\{\?name,label\}', ''
