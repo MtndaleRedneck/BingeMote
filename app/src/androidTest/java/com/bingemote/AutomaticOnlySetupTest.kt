@@ -85,6 +85,11 @@ class AutomaticOnlySetupTest {
         val fields = device.findObjects(By.clazz("android.widget.EditText"))
         val addressField = fields.minBy { it.visibleBounds.top }
         addressField.text = "192.0.2.20"
+        // ACTION_SET_TEXT applies asynchronously through the IME/accessibility path, so a
+        // read on the very next frame can race the state update (saw one CI run read back
+        // empty while the identical tree passed in its sibling run). Poll briefly instead.
+        val textDeadline = System.currentTimeMillis() + 3000
+        while (addressField.text != "192.0.2.20" && System.currentTimeMillis() < textDeadline) Thread.sleep(100)
         assertEquals("192.0.2.20", addressField.text)
         Thread.sleep(500)
         assertFalse(device.hasObject(By.text("Code from your PC")))

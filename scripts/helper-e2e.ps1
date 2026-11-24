@@ -38,8 +38,15 @@ Write-Host "== real 1.7.12 -> 1.7.13 upgrade =="
 $env:BINGEMOTE_PAIR_CODE = '4242'
 $old = Get-ChildItem "helper/Output-old/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $old) { throw "1.7.12 baseline installer missing in helper/Output-old" }
-& $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "1.7.12 baseline install failed with exit $LASTEXITCODE" }
+New-Item -ItemType Directory -Force helper/e2e-diag | Out-Null
+# Capture Inno's own install log for both legs: a bare exit code (e.g. 5) does
+# not say WHY setup aborted, and the log is the only record of that.
+& $old.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\install-baseline.log" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "--- install-baseline.log (tail) ---"
+    if (Test-Path helper/e2e-diag/install-baseline.log) { Get-Content helper/e2e-diag/install-baseline.log -Tail 80 }
+    throw "1.7.12 baseline install failed with exit $LASTEXITCODE"
+}
 $acl = (netsh http show urlacl) | Out-String
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
 if (-not $aclBlock) { throw "1.7.12 did not add its listen permission" }
@@ -49,8 +56,12 @@ Write-Host "ok: 1.7.12 baseline installed with the interactive-users grant"
 
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
-& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "silent upgrade failed with exit $LASTEXITCODE" }
+& $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\install-upgrade.log" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "--- install-upgrade.log (tail) ---"
+    if (Test-Path helper/e2e-diag/install-upgrade.log) { Get-Content helper/e2e-diag/install-upgrade.log -Tail 80 }
+    throw "silent upgrade failed with exit $LASTEXITCODE"
+}
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
 $acl = (netsh http show urlacl) | Out-String
