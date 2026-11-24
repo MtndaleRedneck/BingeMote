@@ -115,13 +115,21 @@ class AutomaticOnlySetupTest {
         }
         assertTrue(device.wait(Until.hasObject(By.text("Use this address")), 3000))
         device.findObject(By.text("Use this address")).click()
-        Thread.sleep(500)
-        repeat(4) {
+        // Same condition-driven reveal as the selection case above: after the
+        // address is confirmed the pair-code entry returns (with the Selected row),
+        // and the fixed sleep+swipe pattern missed it in publish runs 45445415420 /
+        // 45445418591 (line-126 assert, sibling jobs green on the same tree).
+        val confirmRevealBy = System.currentTimeMillis() + 10000
+        while (!device.hasObject(By.text("Code from your PC")) && System.currentTimeMillis() < confirmRevealBy) {
+            device.wait(Until.hasObject(By.text("Code from your PC")), 700)
             if (!device.hasObject(By.text("Code from your PC"))) {
                 device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                     device.displayWidth / 2, device.displayHeight / 2, 20)
-                Thread.sleep(200)
             }
+        }
+        if (!device.hasObject(By.text("Code from your PC"))) {
+            device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-confirmed-address-fail.png"))
+            device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-confirmed-address-fail.xml"))
         }
         assertTrue(device.hasObject(By.text("Code from your PC")))
         assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
