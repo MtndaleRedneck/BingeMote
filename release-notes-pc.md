@@ -1,14 +1,14 @@
-## v1.8.0
+## v1.8.0 - November 24, 2026
 
 Phone-controlled subtitles for the movie that's playing, simpler phone pairing, and dark title bars.
 
 **Added**
-- Subtitles: load same-folder SRT files for the playing movie from the phone (with Android 1.13.0); Off and loaded-track controls stay available
-- Pairing: new phones pair with a 4-digit code that never expires, created only from the Pair button
+- Subtitles: load same-folder SRT files for the playing movie from the phone (with Android 1.13.0); Off and loaded-track controls stay available ([4d988e5](https://github.com/MtndaleRedneck/BingeMote/commit/4d988e54ad786d99238f8528543f58cc684b1a71))
+- Pairing: new phones pair with a 4-digit code that never expires, created only from the Pair button ([c140601](https://github.com/MtndaleRedneck/BingeMote/commit/c1406010aaa9dc80b53c7bdfddfeac283503e6ed))
 
 **Fixed**
-- Dark title bars on BingeMote's own dialogs
-- Tray balloon and blocked-input notice fixes
+- Dark title bars on BingeMote's own dialogs ([dfafde8](https://github.com/MtndaleRedneck/BingeMote/commit/dfafde84451e8ad736fa7a56faadb1de504d0c2b))
+- Tray balloon and blocked-input notice fixes ([e8bf522](https://github.com/MtndaleRedneck/BingeMote/commit/e8bf5225c70ea993882331cc9e5704a74d48a61e), [2ed9511](https://github.com/MtndaleRedneck/BingeMote/commit/2ed95118edb53730e1e7d42e12caa6238c43d3b6))
 
 ## v1.7.14
 
