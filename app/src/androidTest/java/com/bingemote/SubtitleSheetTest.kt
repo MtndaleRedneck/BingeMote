@@ -86,4 +86,23 @@ class SubtitleSheetTest {
         assertFalse(device.hasObject(By.text("No subtitle tracks or files found.")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-lost.png"))
     }
+
+    @Test fun staleFolderErrorClearedByNextFailedCheck() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // Connected sheet (helper not actually answering here) with a leftover list
+        // message seeded 3s in, after the opening check. The next failing quiet
+        // check must clear it: no stale error line, no Retry.
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "subtitles").putExtra("statuscase", "cur-e")
+            .putExtra("subtitleseedstaleerror", true))
+        assertTrue(device.wait(Until.hasObject(By.text("Off")), 30000))
+        assertTrue(device.wait(Until.hasObject(By.text("Can't check subtitle files right now.")), 30000))
+        assertTrue(device.hasObject(By.text("Retry")))
+        assertTrue(device.wait(Until.gone(By.text("Can't check subtitle files right now.")), 45000))
+        assertFalse(device.hasObject(By.text("Retry")))
+        assertTrue(device.hasObject(By.text("Off")))
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-stale-cleared.png"))
+    }
 }

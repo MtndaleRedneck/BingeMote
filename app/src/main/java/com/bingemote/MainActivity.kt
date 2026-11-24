@@ -61,6 +61,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Test isolation: never inherit the transition rig from an earlier preview
+        // Activity in the same process (interrupted test, config change).
+        if (BuildConfig.DEBUG) previewLostRigArmed = false
         store = Store(this)
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
@@ -93,6 +96,14 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreviewlost", false)) {
             remote.debugSubtitlePreview()
             previewLostRigArmed = true
+        }
+        // UI-test rig only: seeds the stale folder-message state AFTER the sheet's
+        // opening check has run, so the next failing quiet check is what clears it.
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitleseedstaleerror", false)) {
+            lifecycleScope.launch {
+                kotlinx.coroutines.delay(3000)
+                remote.debugSeedSubtitleListError()
+            }
         }
         if (BuildConfig.DEBUG && intent.hasExtra("lockcontrols")) {
             store.lockScreenControls = true

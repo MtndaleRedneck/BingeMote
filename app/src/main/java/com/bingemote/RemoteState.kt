@@ -485,6 +485,13 @@ class RemoteState(
             HelperClient.SubtitleFile("demo-es", "Movie.es.srt")), false)
         pickedSubtitleFile = "demo-en"
     }
+    /** Screenshot-rig only: seeds the leftover list message a prior unavailable/
+     *  truncated result would have set, so tests can prove a later failed check
+     *  clears it. Debug builds only. */
+    internal fun debugSeedSubtitleListError() {
+        if (!BuildConfig.DEBUG) return
+        subtitleListError = "Can't check subtitle files right now."
+    }
     fun refreshSubtitleFiles(quiet: Boolean = false) {
         reconcileSubtitleWarnings()
         if (BuildConfig.DEBUG && subtitleFolder?.mediaId == "demo") return
@@ -513,8 +520,12 @@ class RemoteState(
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
                     // No connection to the PC (or an older PC app without folder
                     // subtitles): folder entries simply stay hidden, exactly like
-                    // before the feature existed. No error line, no Retry.
+                    // before the feature existed. No error line, no Retry. A leftover
+                    // message from an earlier unavailable/truncated result is stale
+                    // content and must go too, or it would render an error/Retry the
+                    // current failure did not produce.
                     subtitleFolder = null
+                    subtitleListError = null
                 }
             } finally { subtitleListInFlight = false; if (request == subtitleListRequest) subtitleListLoading = false }
         }
