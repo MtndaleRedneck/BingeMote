@@ -417,7 +417,12 @@ class ImmediateFlipTest {
             MediaControlsService.requestTestPoll?.invoke()
             assertTrue(reached.await(2, java.util.concurrent.TimeUnit.SECONDS))
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
-            val commandBy = System.currentTimeMillis() + 1500
+            // Command delivery goes startService -> main looper -> seam -> HTTP stub; on a
+            // loaded CI emulator 1500 ms is marginal (run 45427938862 lost the second tap's
+            // delivery to the clock while 3 same-tree runs passed it). 5 s keeps the exact
+            // same assertion: a command that never arrives still fails, so this also
+            // discriminates timing from a real stale-poll invalidation defect.
+            val commandBy = System.currentTimeMillis() + 5000
             while (stub.commands.isEmpty() && System.currentTimeMillis() < commandBy) Thread.sleep(20)
             assertEquals(1, stub.commands.size)
             MediaControlsService.beforePollFailure = null
@@ -425,7 +430,7 @@ class ImmediateFlipTest {
             release.countDown()
             assertTrue(done.await(3, java.util.concurrent.TimeUnit.SECONDS))
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
-            val bothBy = System.currentTimeMillis() + 1500
+            val bothBy = System.currentTimeMillis() + 5000
             while (stub.commands.size < 2 && System.currentTimeMillis() < bothBy) Thread.sleep(20)
             assertEquals("stale failure disabled newer connected tap", 2, stub.commands.size)
         } finally {
