@@ -14,14 +14,23 @@ import java.io.File
  */
 class FailureDumpRule : TestWatcher() {
     override fun starting(description: Description) {
-        // Harness robustness: a system ANR dialog (e.g. a hung Pixel Launcher on a
-        // loaded emulator) obscures the app's accessibility tree and blinds every
-        // UI wait. Tap "Wait" until it clears, bounded, before the test observes.
+        // Harness robustness: a system ANR dialog for ANOTHER app (observed: a hung
+        // Pixel Launcher on a loaded emulator) obscures this app's accessibility
+        // tree and blinds every UI wait. Dismiss it via "Wait", bounded, and log
+        // each dismissal. A dialog naming BingeMote itself is NEVER dismissed:
+        // our own ANR must fail the test and be preserved by the failure dump.
         try {
-            val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+            val inst = InstrumentationRegistry.getInstrumentation()
+            val device = UiDevice.getInstance(inst)
+            val dir = inst.targetContext.getExternalFilesDir(null)
             val deadline = System.currentTimeMillis() + 15000
             while (System.currentTimeMillis() < deadline) {
                 val dialog = device.findObject(By.textContains("isn't responding")) ?: break
+                val title = dialog.text ?: "unknown"
+                if (title.startsWith("BingeMote")) return
+                runCatching {
+                    dir?.let { File(it, "bm-dismissed-dialogs.txt").appendText(title + "\n") }
+                }
                 device.findObject(By.text("Wait"))?.click()
                 Thread.sleep(500)
             }
