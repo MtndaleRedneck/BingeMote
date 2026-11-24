@@ -61,15 +61,25 @@ class AutomaticOnlySetupTest {
         assertFalse(device.hasObject(By.text("Code from your PC")))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-before-selection.png"))
         device.findObject(By.textContains("MY-PC  (")).click()
-        Thread.sleep(500)
-        repeat(4) {
+        // Condition-driven reveal (review-driven): the pair-code section can render
+        // without any scroll on large screens and can need a scroll on others, so
+        // alternate a bounded render wait with a conditional scroll instead of fixed
+        // swipes/sleeps. Run 45435505970 failed this assert with all four captures
+        // absent (adb "No such file" stubs in the artifact), so on failure also
+        // capture the actual screen state and hierarchy as evidence.
+        val revealBy = System.currentTimeMillis() + 10000
+        while (!device.hasObject(By.text("Code from your PC")) && System.currentTimeMillis() < revealBy) {
+            device.wait(Until.hasObject(By.text("Code from your PC")), 700)
             if (!device.hasObject(By.text("Code from your PC"))) {
                 device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                     device.displayWidth / 2, device.displayHeight / 2, 20)
-                Thread.sleep(300)
             }
         }
-        assertTrue(device.wait(Until.hasObject(By.text("Code from your PC")), 3000))
+        if (!device.hasObject(By.text("Code from your PC"))) {
+            device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc-fail.png"))
+            device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc-fail.xml"))
+        }
+        assertTrue(device.hasObject(By.text("Code from your PC")))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc.png"))
         device.swipe(device.displayWidth / 2, device.displayHeight / 3,
             device.displayWidth / 2, device.displayHeight * 4 / 5, 25)
