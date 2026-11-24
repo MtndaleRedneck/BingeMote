@@ -54,6 +54,23 @@ if ($aclBlock -match 'Everyone|S-1-1-0') { throw "1.7.12 baseline grants Everyon
 if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "1.7.12 baseline not scoped to interactive users: $aclBlock" }
 Write-Host "ok: 1.7.12 baseline installed with the interactive-users grant"
 
+# The silent postinstall relaunch is NOWAIT, so the baseline app is still cold-starting
+# (single-file unpack, WinForms init, listener) when this script continues. Inno's
+# RestartManager shutdown can only close an app whose window/message loop exists; asking
+# 1-2s after launch times out after 30s and /SUPPRESSMSGBOXES then defaults the
+# Abort/Retry/Ignore box to Abort (installer exit 5, observed on runs 45417217526 /
+# 45417241032 / 45422326208, install-upgrade.log). Wait for the listener so the upgrade
+# exercises Inno closing a fully running app, like a real update does.
+$baselineUp = $false
+foreach ($i in 1..60) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $c.Connect('127.0.0.1', 8488); $c.Close(); $baselineUp = $true; break
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not $baselineUp) { throw "baseline helper did not start listening on 8488 after install" }
+Write-Host "ok: baseline helper fully up before the upgrade"
+
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
 & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\install-upgrade.log" | Out-Null
