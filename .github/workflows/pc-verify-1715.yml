@@ -1,0 +1,75 @@
+name: PC 1.7.15 verification (existing harness)
+on:
+  push:
+    branches: [tmp/pc-verify-1715]
+permissions:
+  contents: read
+jobs:
+  pc-subtitles:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: PC unit and path-confinement tests
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=pc-unit.trx'
+      - name: Install real VLC and media generator
+        run: choco install vlc ffmpeg --no-progress -y
+      - name: Real VLC sidecar loading test
+        shell: pwsh
+        run: |
+          & 'C:\ProgramData\chocolatey\bin\ffmpeg.exe' -f lavfi -i color=c=black:s=320x180:r=10 -t 60 -c:v mpeg4 -y "$env:RUNNER_TEMP\fixture.mp4"
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed' }
+          $env:BINGEMOTE_SUBTITLE_VIDEO = "$env:RUNNER_TEMP\fixture.mp4"
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName~RealVlc' --logger 'trx;LogFileName=pc-real-vlc.trx'
+          if ($LASTEXITCODE -ne 0) { throw 'Real VLC test failed' }
+      - name: Compile production PC without test hooks
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PC-subtitle-test-evidence
+          path: helper/BingeMoteHelper.Tests/TestResults/*.trx
+          retention-days: 3
+  exact-pc-upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact prior and staged installers
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.TESTLAB_PAT }}
+          NEW_ASSET_ID: '784504607'
+          NEW_HASH: 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd'
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:NEW_ASSET_ID -notmatch '^\d+$' -or $env:NEW_HASH -notmatch '^[a-f0-9]{64}$') { throw 'Invalid pinned identity' }
+          New-Item -ItemType Directory -Force helper/out,helper/Prior,helper/Shipping | Out-Null
+          gh api -H 'Accept: application/octet-stream' repos/MtndaleRedneck/TestLab/releases/assets/783523282 > helper/Prior/BingeMote-PC-1.7.14.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Prior download failed' }
+          gh api -H 'Accept: application/octet-stream' "repos/MtndaleRedneck/TestLab/releases/assets/$env:NEW_ASSET_ID" > helper/Shipping/BingeMote-PC-1.7.15.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate download failed' }
+          if ((Get-FileHash helper/Prior/BingeMote-PC-1.7.14.exe -Algorithm SHA256).Hash.ToLower() -ne '5957ebc4cacb9fbecd3cc2492fcea96f7c62aa4a2832b7bef21539ee2306da00') { throw 'Prior hash mismatch' }
+          if ((Get-FileHash helper/Shipping/BingeMote-PC-1.7.15.exe -Algorithm SHA256).Hash.ToLower() -ne $env:NEW_HASH) { throw 'Candidate hash mismatch' }
+          Copy-Item helper/Shipping/BingeMote-PC-1.7.15.exe helper/out/BingeMote.exe
+      - name: Exact installed pairing upgrade no-hook payload and uninstall
+        shell: pwsh
+        env:
+          BINGEMOTE_SHIPPING_ONLY: '1'
+          BINGEMOTE_SHIP_SHA256: 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd'
+        run: |
+          ./scripts/helper-e2e.ps1 *>&1 | Tee-Object exact-pc-upgrade.txt
+          if (-not $?) { throw 'Exact PC upgrade failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Exact-private-PC-upgrade-evidence
+          path: |
+            exact-pc-upgrade.txt
+            helper/e2e-diag/*.png
+            shipping-install.log
+            shipping-upgrade.log
+          retention-days: 3
