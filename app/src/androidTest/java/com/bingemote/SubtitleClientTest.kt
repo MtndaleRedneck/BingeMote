@@ -114,8 +114,13 @@ class SubtitleClientTest {
                 assertEquals("Can't check subtitle files right now.", remote.subtitleFileError)
                 // A later quiet check that fails quietly (older PC 404) must clear the leftover.
                 stub.oldPc = true; stub.unavailableList = false
+                val listCallsBefore = stub.requests.count { it.startsWith("GET /subtitles/list") }
                 withContext(Dispatchers.Main) { remote.refreshSubtitleFiles(quiet = true) }
-                awaitCondition(8000) { !remote.subtitleFilesLoading }
+                // A quiet refresh never raises the loading flag - that is its point (no
+                // spinner). Wait for the request to actually reach the stub, then for the
+                // state write to land, instead of watching a spinner that never shows.
+                awaitCondition(8000) { stub.requests.count { it.startsWith("GET /subtitles/list") } > listCallsBefore }
+                awaitCondition(8000) { remote.subtitleFileError == null }
                 assertNull(remote.subtitleFileError)
                 assertNull(remote.subtitleFolder)
             } finally { scope.cancel() }
