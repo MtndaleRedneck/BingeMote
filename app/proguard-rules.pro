@@ -112,3 +112,30 @@
 -keep class kotlin.jvm.internal.FunctionBase { *; }
 -keep class kotlin.coroutines.CoroutineContext { *; }
 -keep class kotlin.coroutines.CoroutineContext$DefaultImpls { *; }
+
+# kotlin-stdlib part-class boundary, enumerated from the b7e962b runtime
+# failure plus the resolved kotlin-stdlib-2.4.21 artifact method tables.
+# Run 45382268903: keystore seed+verify passed; release-auth-seed died at
+# UpgradeConnectionTest.kt:23 with NoSuchMethodError listOf([Ljava/lang/Object;)
+# on Lwj. Mechanism: the androidTest R8 applies the app mapping to test
+# references; the app R8 had merged the multifile part class into the
+# CollectionsKt facade and renamed the facade to wj, so the class reference
+# rewrote to wj but the merged member row lookup missed, leaving the original
+# method name against a renamed class. The test's stdlib calls bind to the
+# PART classes (facades declare none of these - verified against the jar
+# method tables), so the exact part classes are kept original-named with
+# members; keeps defeat the merge and self-map the rows:
+#   listOf(vararg) kt:23,65 -> CollectionsKt__CollectionsKt
+#   listOf(single) kt:65     -> CollectionsKt__CollectionsJVMKt
+#   mutableMapOf() kt:29     -> MapsKt__MapsKt
+#   substringBefore/substringAfter/trim/contains kt:30,31,33 -> StringsKt__StringsKt
+#   lowercase/toByteArray kt:30,31,36 -> StringsKt__StringsJVMKt
+#   bufferedReader(InputStream,Charset) kt:28 -> ByteStreamsKt (plain facade)
+#   ByteArray.plus(ByteArray) kt:36   -> ArraysKt___ArraysJvmKt
+-keep class kotlin.collections.CollectionsKt__CollectionsKt { *; }
+-keep class kotlin.collections.CollectionsKt__CollectionsJVMKt { *; }
+-keep class kotlin.collections.MapsKt__MapsKt { *; }
+-keep class kotlin.text.StringsKt__StringsKt { *; }
+-keep class kotlin.text.StringsKt__StringsJVMKt { *; }
+-keep class kotlin.io.ByteStreamsKt { *; }
+-keep class kotlin.collections.ArraysKt___ArraysJvmKt { *; }
