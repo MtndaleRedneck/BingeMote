@@ -143,9 +143,16 @@
 # their original package. Residual: uncalled part methods reference
 # package-private anonymous inner classes R8 renames; ART resolves
 # method bodies lazily and none execute on the test path.
-# kotlin.ResultKt (also removed from the app) is deliberately NOT kept:
-# no integrated-dex proof references it; if a run NCDFEs on it, that is
-# its proof and a separate minimal facade keep follows.
 -keep class kotlin.coroutines.intrinsics.IntrinsicsKt { *; }
--keep class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsKt { *; }
 -keep class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt { *; }
+-keep class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsKt { *; }
+#
+# Run 45403056083 (351263b) NCDFE kotlin.ResultKt at the same
+# invokeSuspend (UpgradeConnectionTest.kt:93), one instruction past the
+# now-resolving getCOROUTINE_SUSPENDED fetch: ClassNotFoundException
+# kotlin.ResultKt, no app mapping row, usage.txt removal - the
+# integrated proof. ResultKt is a plain public facade (0x0031, extends
+# Object, no part classes, no chain hazard); its own refs (kotlin.Result
+# renamed, jvm.internal.Intrinsics kept) are rewritten consistently by
+# R8, and the test call site is Object-erased.
+-keep class kotlin.ResultKt { *; }
