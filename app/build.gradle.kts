@@ -62,10 +62,12 @@ dependencies {
     // The minified release androidTest APK has the same Tink/test-only annotation
     // references on its own classpath; keep them compile-only there too.
     androidTestCompileOnly("com.google.errorprone:error_prone_annotations:2.53.0")
-    // androidx.test.runner needs androidx.tracing at runtime. Debug gets it transitively;
-    // the minified release androidTest APK does not (NoClassDefFoundError: androidx.tracing.Trace
-    // in AndroidJUnitRunner.onCreate, run 45344979448 logcat).
-    androidTestImplementation("androidx.tracing:tracing:2.0.5")
+    // androidx.test.runner needs androidx.tracing at runtime. Debug gets it through
+    // consistent resolution with the app classpath; the release androidTest APK does not
+    // (NoClassDefFoundError: androidx.tracing.Trace in AndroidJUnitRunner.onCreate, run
+    // 45344979448 logcat). Pinned to 1.0.0: the app classpath carries a strict 1.0.0
+    // constraint (run 45347694554 conflict), and debug already runs the runner on 1.0.0.
+    androidTestImplementation("androidx.tracing:tracing:1.0.0")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
