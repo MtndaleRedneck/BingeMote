@@ -59,6 +59,9 @@ android {
 dependencies {
     // Tink references these class-retained build-time annotations; not runtime code.
     compileOnly("com.google.errorprone:error_prone_annotations:2.53.0")
+    // The minified release androidTest APK has the same Tink/test-only annotation
+    // references on its own classpath; keep them compile-only there too.
+    androidTestCompileOnly("com.google.errorprone:error_prone_annotations:2.53.0")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
