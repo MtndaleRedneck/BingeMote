@@ -63,7 +63,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
+      # Runner image ships a preinstalled SDK with licenses accepted (same as the
+      # verify job's ubuntu image); setup-android@v3 broke on cmdline-tools 16.0
+      # (sdkmanager "tools" package removed upstream).
       - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
       - name: Build exact signed Android artifact
         shell: pwsh
