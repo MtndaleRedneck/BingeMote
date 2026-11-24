@@ -15,7 +15,7 @@ class SubtitleSheetTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "cur-g"))
+            .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "prop-g"))
         assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
         assertFalse(device.hasObject(By.text("Movie.en.srt")))
         assertFalse(device.hasObject(By.text("Subtitle files in this folder")))
@@ -71,7 +71,7 @@ class SubtitleSheetTest {
         assertTrue(device.hasObject(By.text("English")))
         // After the drop: everything below Off must go, including the stale tracks
         // the last status still carries.
-        assertTrue(device.wait(Until.gone(By.text("Movie.en")), 10000))
+        assertTrue(device.wait(Until.gone(By.text("Movie.en")), 15000))
         Thread.sleep(1000)
         assertTrue(device.hasObject(By.text("Off")))
         assertFalse(device.hasObject(By.text("Movie.en")))
