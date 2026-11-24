@@ -6,10 +6,12 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
 class SubtitleSheetTest {
+    @get:Rule val failureDump = FailureDumpRule()
     @Test fun offThenFolderThenLoadedWithExtensionsHidden() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
