@@ -31,7 +31,7 @@ class RemoteState(
         private set
 
     /** Either service answering proves the PC is reachable, independently of VLC playback. */
-    val pcReachable: Boolean get() = !(unreachable && helperDown)
+    val pcReachable: Boolean get() = !unreachable || (store.helperToken.isNotBlank() && !helperDown)
 
     /** VLC didn't answer but the helper did: the PC is fine, VLC just isn't open. */
     var vlcClosed by mutableStateOf(false)

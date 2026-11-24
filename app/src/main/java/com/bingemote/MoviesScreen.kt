@@ -263,6 +263,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     // The PC's setting wins when the helper has one; the phone's copy is the fallback.
     LaunchedEffect(Unit) {
+        if (!remote.pcReachable) { loading = false; return@LaunchedEffect }
         val fromPc = withContext(Dispatchers.IO) {
             if (remote.store.helperToken.isBlank()) null
             else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
