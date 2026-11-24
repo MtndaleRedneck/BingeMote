@@ -105,4 +105,25 @@ class SubtitleSheetTest {
         assertTrue(device.hasObject(By.text("Off")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-stale-cleared.png"))
     }
+
+    @Test fun helperDownWithVlcUpShowsOnlyOff() {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        // VLC reachable, helper not answering (prod-e): subtitle picks cannot
+        // complete, so the sheet shows only Off - no tracks, folder rows, error,
+        // Retry or dividers.
+        ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "prod-e"))
+        assertTrue(device.wait(Until.hasObject(By.text("Off")), 30000))
+        Thread.sleep(1500)
+        assertTrue(device.hasObject(By.text("Off")))
+        assertFalse(device.hasObject(By.text("Movie.en")))
+        assertFalse(device.hasObject(By.text("Movie.es")))
+        assertFalse(device.hasObject(By.text("English")))
+        assertFalse(device.hasObject(By.text("Spanish")))
+        assertFalse(device.hasObject(By.text("Retry")))
+        assertFalse(device.hasObject(By.text("Checking subtitle files...")))
+        device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-subtitle-sheet-helperdown.png"))
+    }
 }

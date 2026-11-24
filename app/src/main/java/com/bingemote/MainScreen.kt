@@ -786,10 +786,14 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
             SubtitleRow("Off", !remote.subtitleOutcomeUnknown && remote.pickedSubtitleFile == null && (picked == -1 || (picked == null && tracks.none { it.selected })), remote.store.haptics) {
                 remote.pickSubtitle(-1)
             }
-            // Disconnected (same flag as the status pill): the sheet shows only Off,
-            // like before folder subtitles existed. No stale tracks from the last
-            // status, no folder rows, no loading line, no error/Retry, no dividers.
-            if (!remote.unreachable) {
+            // Disconnected or helper not answering (same flags as the status pill and
+            // helper notice): the sheet shows only Off, like before folder subtitles
+            // existed. No stale tracks, no folder rows, no loading line, no
+            // error/Retry, no dividers. helperDown only means the helper process
+            // stopped answering - every shippable helper serves /volume/get, and an
+            // older helper that lacks folder subtitles still answers it, so it keeps
+            // helperDown=false and its working embedded rows are untouched.
+            if (!remote.unreachable && !remote.helperDown) {
                 val showEmptyNotice = tracks.isEmpty() && folder != null && folder.files.isEmpty() && !remote.subtitleFilesLoading && remote.subtitleFileError == null
                 // Dividers only when there is actually something below them to separate
                 // from Off: real folder/track rows or a persistent notice. A transient
