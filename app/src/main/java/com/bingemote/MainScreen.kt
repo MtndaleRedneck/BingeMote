@@ -740,11 +740,15 @@ private fun SubtitleSheet(remote: RemoteState, onClose: () -> Unit) {
     val loadedTracks = tracks.filter { it.id !in mapped }
     // Screenshot-rig only: once the connected rows have actually composed, hold them
     // long enough for the test to observe them, then drop the connection mid-view.
-    if (BuildConfig.DEBUG && MainActivity.previewLostRigArmed && folder?.files?.isNotEmpty() == true) {
+    // The armed flag is read INSIDE the effect: gating the effect itself on the flag
+    // let any recomposition dispose the effect mid-delay and silently skip the drop.
+    if (BuildConfig.DEBUG && folder?.files?.isNotEmpty() == true) {
         LaunchedEffect(Unit) {
-            MainActivity.previewLostRigArmed = false
-            kotlinx.coroutines.delay(2500)
-            remote.debugForceStatus(unreachable = true, helperDown = true)
+            if (MainActivity.previewLostRigArmed) {
+                MainActivity.previewLostRigArmed = false
+                kotlinx.coroutines.delay(2500)
+                remote.debugForceStatus(unreachable = true, helperDown = true)
+            }
         }
     }
     LaunchedEffect(Unit) {
