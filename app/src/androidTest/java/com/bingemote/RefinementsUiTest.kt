@@ -7,10 +7,12 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
 class RefinementsUiTest {
+    @get:Rule val failureDump = FailureDumpRule()
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ctx get() = inst.targetContext
     private val device = UiDevice.getInstance(inst)
