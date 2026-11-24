@@ -79,8 +79,10 @@ jobs:
             # depending on version; match both so a format change cannot false-fail.
             "$APKA" dex packages "$apk" | grep -E 'androidx[. ]tracing' || echo "NO androidx.tracing classes"
           done
-          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE 'androidx[. ]tracing[. ]Trace' || true)
-          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE 'androidx[. ]tracing[. ]Trace' || true)
+          # Defined-class rows only (leading "C d"), exact class anchored at end of
+          # line: referenced-only rows and Trace-prefixed siblings must not count.
+          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
+          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
           if [ "$app_hits" = 0 ] && [ "$test_hits" = 0 ]; then
             echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
             exit 1
@@ -120,7 +122,11 @@ jobs:
         # reservation; safe here because the runner is disposable. It skips elsewhere.
         env:
           BINGEMOTE_URLACL_E2E: '1'
-        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
+        run: |
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
+          # A green suite does not prove the URLACL E2E ran (it skips without the
+          # opt-in); require its execution marker in the trx output.
+          grep -q 'URLACL_E2E:EXECUTED' helper/BingeMoteHelper.Tests/TestResults/modernization-pc.trx || { echo 'URLACL migration E2E did not execute on the opted-in runner'; exit 1; }
       - name: Compile production helper
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
       - uses: actions/upload-artifact@v4
