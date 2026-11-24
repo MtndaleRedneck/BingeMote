@@ -100,10 +100,14 @@ jobs:
           fi
           # The release instrumentation boundary classes must be defined in the
           # app APK under original names (run 45375818691: Store unresolvable;
-          # the remaining 29 classes are the enumerated boundary closure of
-          # the two release-run test files - see proguard-rules.pro).
+          # the remaining 25 classes are the enumerated boundary closure of
+          # the two release-run test files - see proguard-rules.pro). The
+          # kotlin-stdlib part-class keeps were removed again at this head:
+          # UpgradeConnectionTest now avoids those statics entirely (java.*
+          # equivalents), so no stdlib merge/chain hazard remains to keep
+          # against (runs 45382268903 NSME, 45386135883 IllegalAccessError).
           # Every one is force-kept, so a zero row here is a build problem.
-          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus com.bingemote.Vlc androidx.security.crypto.EncryptedSharedPreferences 'androidx.security.crypto.EncryptedSharedPreferences$PrefKeyEncryptionScheme' 'androidx.security.crypto.EncryptedSharedPreferences$PrefValueEncryptionScheme' androidx.security.crypto.MasterKey 'androidx.security.crypto.MasterKey$Builder' 'androidx.security.crypto.MasterKey$KeyScheme' kotlinx.coroutines.CoroutineScopeKt kotlinx.coroutines.SupervisorKt kotlinx.coroutines.BuildersKt__BuildersKt kotlinx.coroutines.Dispatchers kotlinx.coroutines.Job kotlinx.coroutines.CompletableJob kotlinx.coroutines.MainCoroutineDispatcher kotlin.concurrent.ThreadsKt kotlin.Unit kotlin.jvm.functions.Function2 kotlin.coroutines.jvm.internal.SuspendLambda kotlin.coroutines.jvm.internal.ContinuationImpl kotlin.coroutines.jvm.internal.BaseContinuationImpl kotlin.jvm.internal.FunctionBase kotlin.coroutines.CoroutineContext 'kotlin.coroutines.CoroutineContext$DefaultImpls' kotlin.collections.CollectionsKt__CollectionsKt kotlin.collections.CollectionsKt__CollectionsJVMKt kotlin.collections.MapsKt__MapsKt kotlin.text.StringsKt__StringsKt kotlin.text.StringsKt__StringsJVMKt kotlin.io.ByteStreamsKt kotlin.collections.ArraysKt___ArraysJvmKt; do
+          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus com.bingemote.Vlc androidx.security.crypto.EncryptedSharedPreferences 'androidx.security.crypto.EncryptedSharedPreferences$PrefKeyEncryptionScheme' 'androidx.security.crypto.EncryptedSharedPreferences$PrefValueEncryptionScheme' androidx.security.crypto.MasterKey 'androidx.security.crypto.MasterKey$Builder' 'androidx.security.crypto.MasterKey$KeyScheme' kotlinx.coroutines.CoroutineScopeKt kotlinx.coroutines.SupervisorKt kotlinx.coroutines.BuildersKt__BuildersKt kotlinx.coroutines.Dispatchers kotlinx.coroutines.Job kotlinx.coroutines.CompletableJob kotlinx.coroutines.MainCoroutineDispatcher kotlin.Unit kotlin.jvm.functions.Function2 kotlin.coroutines.jvm.internal.SuspendLambda kotlin.coroutines.jvm.internal.ContinuationImpl kotlin.coroutines.jvm.internal.BaseContinuationImpl kotlin.jvm.internal.FunctionBase kotlin.coroutines.CoroutineContext 'kotlin.coroutines.CoroutineContext$DefaultImpls'; do
             # Literal exact match: class rows start with "C d" and end with
             # the fqcn. The previous ERE interpolation treated the '$' in
             # nested-class names as end anchors, always counting zero

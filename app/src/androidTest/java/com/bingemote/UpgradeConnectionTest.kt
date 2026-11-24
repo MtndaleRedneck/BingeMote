@@ -9,7 +9,6 @@ import org.junit.Test
 import java.net.ServerSocket
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.concurrent.thread
 
 /** Runs against signed release 1.12.4, then signed release 1.12.6 after adb install -r.
  * Test-only fixed credentials, never the user's data. No DEBUG seeding hooks used. */
@@ -18,33 +17,56 @@ class UpgradeConnectionTest {
     private val ctx get() = inst.targetContext
     private val token = "upgrade-fixture-token"
     private val password = "upgrade-fixture-password"
+    @Suppress("DEPRECATION_ERROR")
     private class Pc(private val token: String, private val password: String, private val helperCode: Int = 200, private val vlcCode: Int = 200) : AutoCloseable {
         val helper = AtomicInteger(); val vlc = AtomicInteger()
-        private val servers = listOf(18488,18080).map { ServerSocket(it, 50, InetAddress.getByName("127.0.0.1")) }
+        // Minified-release boundary discipline: this fixture may only reference java.*,
+        // androidx/kotlinx kept API, and kept app classes. kotlin.collections/text/io/
+        // concurrent statics bind to package-private multifile part classes that the app
+        // R8 merges or renames; applymapping cannot bind members that have no surviving
+        // row (run 45382268903 NSME listOf), and pinning part names splits the
+        // package-private superclass chain across packages (run 45386135883
+        // IllegalAccessError at app startup). Plain java.* equivalents below carry none
+        // of those references; inline-only stdlib extensions are fine (no static ref).
+        private fun utf8(s: String): ByteArray {
+            val bb = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(s))
+            return java.util.Arrays.copyOf(bb.array(), bb.remaining())
+        }
+        private fun jtrim(s: String): String { var a=0; var b=s.length; while(a<b && s[a]<=' ') a++; while(b>a && s[b-1]<=' ') b--; return s.substring(a,b) }
+        private fun jindexOf(s: String, c: Char): Int { var i=0; while(i<s.length) { if(s[i]==c) return i; i++ }; return -1 }
+        private fun jindexOf(s: String, needle: String): Int { val n=needle.length; if(n==0) return 0; val lim=s.length-n; var i=0; while(i<=lim) { var j=0; while(j<n && s[i+j]==needle[j]) j++; if(j==n) return i; i++ }; return -1 }
+        private val servers = java.util.ArrayList<ServerSocket>().also { it.add(ServerSocket(18488,50,InetAddress.getByName("127.0.0.1"))); it.add(ServerSocket(18080,50,InetAddress.getByName("127.0.0.1"))) }
         @Volatile private var live = true
-        init { servers.forEachIndexed { index, server -> thread(isDaemon=true) {
-            while(live) try { val socket=server.accept(); thread(isDaemon=true) {
-                socket.use { sock ->
-                    val reader=sock.getInputStream().bufferedReader(); val request=reader.readLine() ?: return@use
-                    val headers=mutableMapOf<String,String>()
-                    while(true) { val h=reader.readLine() ?: break; if(h.isEmpty()) break; headers[h.substringBefore(':').lowercase()]=h.substringAfter(':').trim() }
-                    val good=if(index==0) headers["x-bingemote-token"]==token else headers["authorization"]=="Basic "+android.util.Base64.encodeToString(":$password".toByteArray(),android.util.Base64.NO_WRAP)
-                    val body=if(!good) "{}" else if(index==0) {
-                        helper.incrementAndGet(); if(request.contains("/volume/get")) """{"volume":50,"mute":false}""" else """{"ok":true}"""
-                    } else { vlc.incrementAndGet(); """{"time":30,"length":3600,"volume":128,"state":"playing","information":{"category":{"meta":{"filename":"fixture.mkv"}}}}""" }
-                    val code = if(!good) 401 else if(index==0) helperCode else vlcCode
-                    val bytes=body.toByteArray();sock.getOutputStream().write(("HTTP/1.1 "+"$code Fixture"+"\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray()+bytes)
-                }
-            } } catch (_:Exception) { }
-        } } }
+        init { var index=0; for(server in servers) { val i=index++; Thread {
+            while(live) try { val socket=server.accept(); Thread {
+                var cause: Throwable? = null
+                try {
+                    val reader=java.io.BufferedReader(java.io.InputStreamReader(socket.getInputStream(),java.nio.charset.StandardCharsets.UTF_8)); val request=reader.readLine()
+                    if(request!=null) {
+                        val headers=java.util.LinkedHashMap<String,String>()
+                        while(true) { val h=reader.readLine() ?: break; if(h.isEmpty()) break; val ci=jindexOf(h,':'); headers[if(ci>=0) h.substring(0,ci).toLowerCase(java.util.Locale.ROOT) else h.toLowerCase(java.util.Locale.ROOT)]=if(ci>=0) jtrim(h.substring(ci+1)) else "" }
+                        val good=if(i==0) headers["x-bingemote-token"]==token else headers["authorization"]=="Basic "+android.util.Base64.encodeToString(utf8(":"+password),android.util.Base64.NO_WRAP)
+                        val body=if(!good) "{}" else if(i==0) {
+                            helper.incrementAndGet(); if(jindexOf(request,"/volume/get")>=0) """{"volume":50,"mute":false}""" else """{"ok":true}"""
+                        } else { vlc.incrementAndGet(); """{"time":30,"length":3600,"volume":128,"state":"playing","information":{"category":{"meta":{"filename":"fixture.mkv"}}}}""" }
+                        val code = if(!good) 401 else if(i==0) helperCode else vlcCode
+                        val bytes=utf8(body);val out=socket.getOutputStream();out.write(utf8("HTTP/1.1 "+"$code Fixture"+"\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"));out.write(bytes)
+                    }
+                } catch (e: Throwable) { cause = e; throw e
+                } finally { if(cause==null) socket.close() else try { socket.close() } catch (ce: Throwable) { } }
+            }.also { it.isDaemon=true; it.start() } } catch (_:Exception) { }
+        }.also { it.isDaemon=true; it.start() } } }
         override fun close() { live=false; servers.forEach { it.close() } }
     }
     @Test fun seedOldRelease() {
         val s=Store(ctx); s.pcName="Upgrade Fixture PC";s.host="127.0.0.1";s.helperPort=18488;s.vlcPort=18080;s.helperToken=token;s.vlcPassword=password;s.setupDone=true;s.lockScreenControls=true;s.demoControls=false
-        Pc(token,password).use {
+        val pc=Pc(token,password)
+        var pcCause: Throwable? = null
+        try {
             assertTrue("old release helper auth",HelperClient.ping(s.host,s.helperPort,s.helperToken))
             assertTrue("old release VLC auth",Vlc.status(s.host,s.vlcPort,s.vlcPassword).playing)
-        }
+        } catch (e: Throwable) { pcCause = e; throw e
+        } finally { if(pcCause==null) pc.close() else try { pc.close() } catch (ce: Throwable) { } }
         // Sync disk before the package replacement. Values remain encrypted at rest.
         ctx.getSharedPreferences("settings",0).edit().putString("upgradeFixture","seeded124").commit()
         Thread.sleep(500)
@@ -58,11 +80,13 @@ class UpgradeConnectionTest {
         assertEquals("encrypted VLC password retained",password,s.vlcPassword)
         assertTrue(s.setupDone);assertTrue(s.lockScreenControls);assertTrue(s.isConfigured)
         assertEquals("seeded124",ctx.getSharedPreferences("settings",0).getString("upgradeFixture",null))
-        Pc(token,password).use { pc ->
+        val pc=Pc(token,password)
+        var pcCause: Throwable? = null
+        try {
             assertTrue("updated helper auth",HelperClient.ping(s.host,s.helperPort,s.helperToken))
             assertTrue("updated VLC auth",Vlc.status(s.host,s.vlcPort,s.vlcPassword).playing)
             val device=UiDevice.getInstance(inst)
-            for(granted in listOf(InstrumentationRegistry.getArguments().getString("permission") == "granted")) {
+            for(granted in java.util.Collections.singletonList(InstrumentationRegistry.getArguments().getString("permission") == "granted")) {
                 val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main)
                 val remote=RemoteState(ctx,s,scope)
                 try {
@@ -78,7 +102,8 @@ class UpgradeConnectionTest {
                     device.pressHome();Thread.sleep(500)
                 } finally { scope.cancel() }
             }
-        }
+        } catch (e: Throwable) { pcCause = e; throw e
+        } finally { if(pcCause==null) pc.close() else try { pc.close() } catch (ce: Throwable) { } }
     }
 
     @Test fun notificationSettingPermissionPopup() {
