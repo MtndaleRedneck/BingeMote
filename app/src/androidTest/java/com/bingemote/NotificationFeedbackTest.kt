@@ -37,6 +37,8 @@ private fun awaitServiceDestroyed(ctx: Context) {
  * it, (4) the 2 s status poll never ticks.
  */
 class HapticTickTest {
+    @get:Rule val failureDump = FailureDumpRule()
+
     private val hits = AtomicInteger(0)
     private lateinit var device: UiDevice
     private lateinit var originalTick: (Context) -> Unit
@@ -537,10 +539,19 @@ class ImmediateFlipTest {
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val startedBy = System.currentTimeMillis() + 3000
             while (!MediaControlsService.testServiceAlive && System.currentTimeMillis() < startedBy) Thread.sleep(20)
+            // Pre-finally evidence at the failure point (I2: post-teardown dumps
+            // cannot prove the precondition state).
+            if (!MediaControlsService.testServiceAlive)
+                PreconditionDiag.capture("flip-service-alive", "service alive", startedBy - 3000)
             assertTrue(MediaControlsService.testServiceAlive)
             val connected = java.util.concurrent.CountDownLatch(1)
             MediaControlsService.requestObservedPoll?.invoke { connected.countDown() }
-            assertTrue(connected.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val t0c = System.currentTimeMillis()
+            val connectedOk = connected.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            if (!connectedOk)
+                PreconditionDiag.capture("flip-observed-poll", "observed poll", t0c,
+                    "alive=${MediaControlsService.testServiceAlive}")
+            assertTrue(connectedOk)
             assertTrue(posts.count { !it.playing } >= 2)
             stub.beforeStatusResponse = {
                 held.countDown()

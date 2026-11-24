@@ -3,9 +3,12 @@ package com.bingemote
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 
 class DisconnectedPlaybackTest {
+    @get:Rule val failureDump = FailureDumpRule()
+
     @Test fun appDisconnectedTapKeepsStateAndSendsNothing() = runBlocking {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val stub = HapticTickTest.StatusStub(); stub.start()

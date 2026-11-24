@@ -3,12 +3,15 @@ package com.bingemote
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 class SubtitleClientTest {
+    @get:Rule val failureDump = FailureDumpRule()
+
     @org.junit.Before fun isolateFromForegroundPolling() {
         val ctx=InstrumentationRegistry.getInstrumentation().targetContext
         androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressHome()

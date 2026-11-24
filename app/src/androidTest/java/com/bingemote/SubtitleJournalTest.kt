@@ -2,10 +2,13 @@ package com.bingemote
 
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
 class SubtitleJournalTest {
+    @get:Rule val failureDump = FailureDumpRule()
+
     private val ctx get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun reset(){File(ctx.filesDir,"subtitle-operations.json").delete();File(ctx.filesDir,"subtitle-operations.json.bak").delete()}
     @Test fun olderUnknownIsNotOverwrittenByLaterSuccessfulOperation(){
