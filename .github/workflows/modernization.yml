@@ -87,6 +87,17 @@ jobs:
             echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
             exit 1
           fi
+          # Same anchored defined-row check for the instrumentation runtime's
+          # kotlin.LazyKt linkage (NoClassDefFoundError at registerTestStorage,
+          # runs 45364449159 + 45365558033): the class must be defined in at
+          # least one of the two APKs under its original name.
+          lazy_app=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
+          lazy_test=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
+          echo "kotlin.LazyKt defined rows: app=$lazy_app test=$lazy_test"
+          if [ "$lazy_app" = 0 ] && [ "$lazy_test" = 0 ]; then
+            echo "GATE FAILED: kotlin.LazyKt absent from both APKs"
+            exit 1
+          fi
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -107,6 +118,7 @@ jobs:
           path: |
             release-evidence/
             app/build/outputs/mapping/release/
+            app/build/outputs/mapping/releaseAndroidTest/
           retention-days: 3
 
   pc-unit:
