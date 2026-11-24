@@ -1,3 +1,16 @@
+## v1.9.0 - November 24, 2026
+
+Modernized foundations and reliability fixes for pairing, Wi-Fi permissions, and the dark look.
+
+**Improved**
+- Rebuilt on .NET 10 (the old target was out of support).
+- Buttons and dialogs now match the phone app's dark palette and orange accent.
+- The home-Wi-Fi permission check repairs an overly broad legacy entry by itself instead of failing pairing.
+
+**Fixed**
+- Wi-Fi permission validation accepts Windows line endings, which could fail the reservation check on real machines.
+- Movies folder setting stays in step with the phone when it changes on either side.
+
 ## v1.8.0 - November 24, 2026
 
 Phone-controlled subtitles for the movie that's playing, simpler phone pairing, and dark title bars.

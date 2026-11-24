@@ -67,7 +67,7 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar(
-                pill = { StatusPill(connected = !remote.unreachable) },
+                pill = { StatusPill(connected = remote.pcReachable) },
                 settings = {
                     HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                         androidx.compose.material3.Icon(
@@ -175,7 +175,7 @@ private fun HomeContent(
     // When the PC is unreachable the card itself says so; no overlay, no Retry.
     // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
     val vlcOut = remote.vlcClosed && !remote.expectingVlc
-    val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
+    val lost = !remote.pcReachable && !remote.expectingVlc
     val refused = remote.vlcRefused
     Box(
         Modifier
@@ -621,7 +621,8 @@ private fun SkipRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, scale:
 private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boolean, scale: Float = 1f, seekDrag: SeekDrag? = null) {
     // During a seek drag this circle is the cancel target, not a button: the tap
     // stays play/pause only when no drag is active.
-    val cancelling = seekDrag?.active == true
+    val activeDrag = seekDrag?.takeIf { it.active }
+    val cancelling = activeDrag != null
     PressTile(
         onTap = { if (!cancelling) remote.togglePause() },
         hapticsOn = remote.store.haptics,
@@ -643,8 +644,8 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (cancelling && seekDrag != null) {
-                CancelCircleContent(seekDrag)
+            if (activeDrag != null) {
+                CancelCircleContent(activeDrag)
             } else {
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     drawCircle(if (pressed && flashAll) TextC else Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))

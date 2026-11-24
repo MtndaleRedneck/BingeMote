@@ -11,6 +11,17 @@ internal static class DialogCapture
     internal static void Run(string directory)
     {
         Directory.CreateDirectory(directory);
+        void Stage(string s) => File.AppendAllText(Path.Combine(directory, "dialog-progress.log"), $"{DateTime.UtcNow:HH:mm:ss.fff} {s}\n");
+        // Runs 45363186746/45365558033/45386135883 hung to the outer 45s kill: a one-shot
+        // timer tick that fires before the modal is ActiveForm records the failure but
+        // closes nothing, so the modal pump never returns. Poll instead, and on a deadline
+        // close whatever modal this capture opened so the run always ends.
+        void CloseOwnedModals(Form owner0)
+        {
+            foreach (Form f in Application.OpenForms.Cast<Form>().ToArray())
+                if (f != owner0 && f.Modal) { f.DialogResult = DialogResult.Cancel; f.Close(); }
+        }
+        Stage("run start");
         using var owner = new Form { Text = "Dialog test owner", Location = new Point(0, 0), StartPosition = FormStartPosition.Manual };
         owner.Show();
         Capture("confirm", () => ConfirmDialog.Ask(owner, "Remove Test phone? It stops controlling this PC right away. You can pair it again any time with a new code.", "Remove"));
@@ -19,39 +30,73 @@ internal static class DialogCapture
         CheckKey("enter", "{ENTER}");
         CheckKey("escape", "{ESC}");
         owner.Close();
+        Stage("run end");
 
         void CheckKey(string name, string key)
         {
             bool fired = false;
-            using var timer = new System.Windows.Forms.Timer { Interval = 700 };
+            Exception? failure = null;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            using var timer = new System.Windows.Forms.Timer { Interval = 100 };
             using var timeout = new System.Windows.Forms.Timer { Interval = 5000 };
             timer.Tick += (_, _) => {
-                timer.Stop();
                 var dlg = Form.ActiveForm;
-                if (dlg == null || dlg == owner || dlg.ActiveControl != dlg.CancelButton)
-                    throw new Exception("Initial focus is not Cancel");
+                if (dlg == null || dlg == owner)
+                {
+                    if (sw.Elapsed > TimeSpan.FromSeconds(10))
+                    {
+                        timer.Stop();
+                        Stage(name + ": dialog not active within 10s; closing owned modals");
+                        CloseOwnedModals(owner);
+                    }
+                    return;
+                }
+                timer.Stop();
+                Stage(name + ": dialog active");
+                if (dlg.ActiveControl != dlg.CancelButton)
+                {
+                    failure = new Exception("Initial focus is not Cancel");
+                    Stage(name + ": initial focus is not Cancel; closing owned modals");
+                    CloseOwnedModals(owner);
+                    return;
+                }
                 fired = true;
                 SendKeys.SendWait(key);
             };
             timeout.Tick += (_, _) => { timeout.Stop(); Form.ActiveForm?.Close(); };
+            Stage(name + ": showing");
             timer.Start(); timeout.Start();
             bool removed = ConfirmDialog.Ask(owner, "Harmless test phone fixture. No phone is removed by this check.", "Remove");
             timeout.Stop();
+            Stage(name + $": closed fired={fired} confirmed={removed}");
             File.WriteAllText(Path.Combine(directory, "dialog-key-" + name + ".txt"), $"key={name}; fired={fired}; confirmed={removed}");
+            if (failure != null) throw failure;
             if (!fired || removed) throw new Exception("Initial " + name + " confirmed destructive action");
         }
 
         void Capture(string name, Action show)
         {
             Exception? failure = null;
-            using var timer = new System.Windows.Forms.Timer { Interval = 1000 };
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            using var timer = new System.Windows.Forms.Timer { Interval = 250 };
             timer.Tick += (_, _) =>
             {
-                timer.Stop();
                 var dlg = Form.ActiveForm;
+                if (dlg == null || dlg == owner)
+                {
+                    if (sw.Elapsed > TimeSpan.FromSeconds(10))
+                    {
+                        timer.Stop();
+                        failure = new Exception("Modal dialog not active within 10s");
+                        Stage(name + ": dialog not active within 10s; closing owned modals");
+                        CloseOwnedModals(owner);
+                    }
+                    return;
+                }
+                timer.Stop();
+                Stage(name + ": dialog active");
                 try
                 {
-                    if (dlg == null || dlg == owner) throw new Exception("Modal dialog not active");
                     int hr = DwmGetWindowAttribute(dlg.Handle, 20, out int dark, sizeof(int));
                     File.WriteAllText(Path.Combine(directory, "dialog-" + name + ".txt"), $"darkTitleBar={dark}; hresult={hr}; type={dlg.GetType().Name}; size={dlg.Size}");
                     if (hr != 0 || dark != 1) throw new Exception("Dark native title-bar attribute not applied");
@@ -71,10 +116,12 @@ internal static class DialogCapture
                     screen.Save(Path.Combine(directory, "dialog-" + name + "-screen.png"));
                 }
                 catch (Exception e) { failure = e; }
-                finally { if (dlg != null && dlg != owner) { dlg.DialogResult = DialogResult.Cancel; dlg.Close(); } }
+                finally { dlg.DialogResult = DialogResult.Cancel; dlg.Close(); }
             };
+            Stage(name + ": showing");
             timer.Start();
             show();
+            Stage(name + ": closed");
             if (failure != null) throw failure;
         }
     }

@@ -17,7 +17,7 @@ on:
       only:
         description: Limit the run (pc-e2e skips the android/scanner/screenshot jobs; stage runs only the android/helper builds and stages the signed bytes to the private TestLab draft)
         type: choice
-        options: [all, pc-e2e, stage]
+        options: [all, pc-e2e, stage, verify]
         default: all
       shipping_run_id:
         description: Run ID whose BingeMote-PC artifact the e2e shipping leg tests (leave empty to skip that leg)
@@ -31,6 +31,10 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      restage:
+        description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -94,12 +98,22 @@ jobs:
           AUTH="Authorization: Bearer $TESTLAB_PAT"
           REPO=MtndaleRedneck/TestLab
           TAG="android-v${VERSION}"
+          VISIBLE=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.tag_name==$t and (.draft|not))][0].id // empty')
+          if [ -n "$VISIBLE" ]; then
+            echo "::error::Existing visible release $TAG cannot be overwritten"
+            exit 1
+          fi
           ID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.draft==true and .tag_name==$t)][0].id // empty')
           if [ -z "$ID" ]; then
             ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
           fi
           echo "TestLab draft release id: $ID"
-          for a in $(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id'); do
+          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
+          if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
+            echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
+            exit 1
+          fi
+          for a in $EXISTING; do
             curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
           done
           UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
@@ -114,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.x
 
       - name: Helper unit tests
         run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc'
@@ -173,6 +187,8 @@ jobs:
           $repo = 'MtndaleRedneck/TestLab'
           $tag = "pc-v$env:HELPER_VERSION"
           $rels = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
+          $visible = $rels | Where-Object { (-not $_.draft) -and $_.tag_name -eq $tag } | Select-Object -First 1
+          if ($visible) { throw 'Existing visible version cannot be overwritten' }
           $draft = $rels | Where-Object { $_.draft -and $_.tag_name -eq $tag } | Select-Object -First 1
           if (-not $draft) {
             $body = @{ tag_name = $tag; name = "BingeMote PC $env:HELPER_VERSION"; draft = $true; body = "Staged for independent review. Source: MtndaleRedneck/BingeMote@$env:GITHUB_SHA, run $env:GITHUB_RUN_ID." } | ConvertTo-Json
@@ -180,7 +196,9 @@ jobs:
           }
           Write-Output "TestLab draft release id: $($draft.id)"
           $rel = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/$($draft.id)"
-          foreach ($a in ($rel.assets | Where-Object { $_.name -eq $exe })) {
+          $existing = @($rel.assets | Where-Object { $_.name -eq $exe })
+          if ($existing.Count -gt 0 -and '${{ inputs.restage }}' -ne 'true') { throw 'Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)' }
+          foreach ($a in $existing) {
             Invoke-RestMethod -Method Delete -Headers $headers "https://api.github.com/repos/$repo/releases/assets/$($a.id)" | Out-Null
           }
           $upload = $rel.upload_url -replace '\{\?name,label\}', ''
@@ -190,7 +208,7 @@ jobs:
           Write-Output "Staged asset id: $($asset.id)"
 
   helper-e2e:
-    if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage'
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: windows-latest
     needs: helper
     steps:
@@ -200,7 +218,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.x
 
       - name: Publish helper exe (with the CI-only pairing hook)
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK" -o helper/out
@@ -321,7 +339,7 @@ jobs:
 
 
   scanner-test:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
     # (syntax, every section, summary) and uploads its report. The runner has no
     # BingeMote, so a clean "nothing found" run is the expected result.
@@ -373,7 +391,7 @@ jobs:
           path: focused-ui/*
 
   screenshots:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage')
+    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

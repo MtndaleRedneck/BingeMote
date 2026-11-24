@@ -36,9 +36,15 @@ object MediaControls {
         }
     }
 
+    /** MainActivity wires this to its Activity Result launcher at startup; the
+     *  legacy requestPermissions path remains as the fallback for any other host. */
+    internal var permissionRequest: (() -> Unit)? = null
+
     fun requestPermission(activity: android.app.Activity) {
         if (android.os.Build.VERSION.SDK_INT >= 33 && !allowed(activity)) {
-            androidx.core.app.ActivityCompat.requestPermissions(activity,
+            val launcher = permissionRequest
+            if (launcher != null) launcher()
+            else androidx.core.app.ActivityCompat.requestPermissions(activity,
                 arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 126)
         }
     }
@@ -231,6 +237,9 @@ class MediaControlsService : Service() {
      * the app's "Vibrate on press" setting AND the system haptic-feedback switch;
      * the notification channel itself never vibrates, and the status poll path
      * never calls this. */
+    // HAPTIC_FEEDBACK_ENABLED is deprecated with no per-app replacement; honoring the
+    // system haptic switch is the intended behavior here.
+    @Suppress("DEPRECATION")
     private fun tick() {
         try {
             if (!Store(this).haptics) return
@@ -242,6 +251,9 @@ class MediaControlsService : Service() {
 
     companion object {
         /** Test seam: instrumented tests substitute a recorder; production vibrates. */
+        // The AudioAttributes overload is the only vibrate path on API < 33; the
+        // VibrationAttributes path above is used on 33+.
+        @Suppress("DEPRECATION")
         internal var performTick: (Context) -> Unit = { ctx ->
             val vibrator = ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
             val effect = android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)

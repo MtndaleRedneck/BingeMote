@@ -204,6 +204,12 @@ object HelperClient {
         get(host, port, "/config", token).optString("moviesFolder", "")
     } catch (e: Exception) { null }
 
+    /** Strict variant: throws on read failure. Blank means the PC provably has no
+     *  folder configured - unlike a null from [getMoviesFolder], which also covers
+     *  "could not read", and must never be treated as permission to overwrite. */
+    fun getMoviesFolderStrict(host: String, port: Int, token: String): String =
+        get(host, port, "/config", token).optString("moviesFolder", "")
+
     /** One level of the PC's movies folder, listed by the helper (works with VLC closed). */
     fun listMovies(host: String, port: Int, token: String, relPath: String): List<Pair<String, Boolean>> {
         val enc = java.net.URLEncoder.encode(relPath, "UTF-8")
