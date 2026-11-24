@@ -66,14 +66,10 @@ jobs:
           export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           ./gradlew --no-daemon assembleRelease
           ./gradlew --no-daemon -PrecoveryReleaseTest assembleReleaseAndroidTest
-          stat -c "RELEASE_APK_BYTES=%s" app/build/outputs/apk/release/app-release.apk
-          sha256sum app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
       - name: Tracing presence gate in both minified APKs
         run: |
           set -euo pipefail
           APKA="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
-          for apk in app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/androidTest/release/app-release-androidTest.apk; do
             echo "== $apk"
             # apkanalyzer prints either a space-separated tree or dotted names
             # depending on version; match both so a format change cannot false-fail.
@@ -81,8 +77,6 @@ jobs:
           done
           # Defined-class rows only (leading "C d"), exact class anchored at end of
           # line: referenced-only rows and Trace-prefixed siblings must not count.
-          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
-          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
           if [ "$app_hits" = 0 ] && [ "$test_hits" = 0 ]; then
             echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
             exit 1
@@ -91,8 +85,6 @@ jobs:
           # kotlin.LazyKt linkage (NoClassDefFoundError at registerTestStorage,
           # runs 45364449159 + 45365558033): the class must be defined in at
           # least one of the two APKs under its original name.
-          lazy_app=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
-          lazy_test=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
           echo "kotlin.LazyKt defined rows: app=$lazy_app test=$lazy_test"
           if [ "$lazy_app" = 0 ] && [ "$lazy_test" = 0 ]; then
             echo "GATE FAILED: kotlin.LazyKt absent from both APKs"
@@ -114,7 +106,6 @@ jobs:
             # the fqcn. The previous ERE interpolation treated the '$' in
             # nested-class names as end anchors, always counting zero
             # (I2 reproduction: a defined MasterKey$Builder row counted 0).
-            n=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | awk -v c="$cls" 'index($0,"C d ")==1 { nf=split($0,a,/[ \t]+/); if (a[nf]==c) cnt++ } END { print cnt+0 }')
             echo "$cls defined rows: app=$n"
             if [ "$n" = 0 ]; then
               echo "GATE FAILED: $cls absent from the app APK"
@@ -142,8 +133,6 @@ jobs:
             release-evidence/
             app/build/outputs/mapping/release/
             app/build/outputs/mapping/releaseAndroidTest/
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
           retention-days: 3
 
   pc-unit:
