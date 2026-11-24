@@ -57,13 +57,14 @@ class NotificationTapMatrixTest {
             "alive=${MediaControlsService.testServiceAlive} observerSet=${MediaControlsService.requestObservedPoll != null}")
         fail("Timed out: $what")
     }
-    private fun poll() {
+    private fun poll(tag: String = "", stub: HapticTickTest.StatusStub? = null) {
         val latch = CountDownLatch(1)
+        val stubBefore = stub?.polls?.get()
         MediaControlsService.requestObservedPoll!! { latch.countDown() }
         val t0 = System.currentTimeMillis()
         val observed = latch.await(5, TimeUnit.SECONDS)
-        if (!observed) PreconditionDiag.capture("tapmatrix-poll", "observed poll", t0,
-            "alive=${MediaControlsService.testServiceAlive}")
+        if (!observed) PreconditionDiag.capture("tapmatrix-poll", "observed poll $tag", t0,
+            "iteration=$tag alive=${MediaControlsService.testServiceAlive} observerSet=${MediaControlsService.requestObservedPoll != null} testPollSet=${MediaControlsService.requestTestPoll != null} stubPollsBefore=$stubBefore stubPollsAfter=${stub?.polls?.get()} (unchanged=pre-HTTP path; increased=completion path - a diagnosis lead, not exoneration)")
         assertTrue("observed poll", observed)
     }
     private fun currentRow(): View {
@@ -82,9 +83,9 @@ class NotificationTapMatrixTest {
                 HapticTickTest.seedPrefs(ctx, appOn, stub.port)
                 device.executeShellCommand("settings put system haptic_feedback_enabled ${if (systemOn) 1 else 0}")
                 ctx.startService(Intent(ctx, MediaControlsService::class.java))
-                await("service ready") { MediaControlsService.requestObservedPoll != null }
-                if (state != "startup") poll()
-                if (state == "lost") { stub.failStatus = true; poll() }
+                await("service ready $state/$id") { MediaControlsService.requestObservedPoll != null }
+                if (state != "startup") poll("$state/$id", stub)
+                if (state == "lost") { stub.failStatus = true; poll("$state/$id", stub) }
                 val row = currentRow()
                 val beforeCommands = stub.commands.size
                 val posts = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
@@ -98,7 +99,7 @@ class NotificationTapMatrixTest {
                     assertTrue("disconnected Play changed glyph", posts.isEmpty())
                 }
                 if (id == R.id.btn_play_pause && state == "connected") {
-                    await("connected Play command") { stub.commands.drop(beforeCommands).any { it.contains("pl_pause") } }
+                    await("connected Play command $state/$id") { stub.commands.drop(beforeCommands).any { it.contains("pl_pause") } }
                     assertTrue("connected Play glyph feedback missing", posts.isNotEmpty())
                 }
             } finally { MediaControlsService.postProbe = null; stop(); stub.stop() }

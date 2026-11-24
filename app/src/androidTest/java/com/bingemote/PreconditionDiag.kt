@@ -38,6 +38,14 @@ object PreconditionDiag {
                 sb.append(device.executeShellCommand("dumpsys activity lru | grep -i bingemote"))
             }
             runCatching {
+                sb.append("== keyguard ==\n")
+                sb.append(device.executeShellCommand("dumpsys keyguard | grep -iE 'mShowing|mOccluded' | head -15"))
+            }
+            runCatching {
+                sb.append("== our active notifications ==\n")
+                sb.append(device.executeShellCommand("dumpsys notification --noredact | grep -i bingemote | head -30"))
+            }
+            runCatching {
                 sb.append("== anr dir ==\n")
                 sb.append(device.executeShellCommand("ls -l /data/anr/ 2>/dev/null"))
             }
