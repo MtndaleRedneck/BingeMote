@@ -66,16 +66,6 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
-        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreview", false)) remote.debugSubtitlePreview()
-        // Screenshot-rig only: the sheet opens with connected content, then the
-        // connection drops mid-view so UI tests see the live transition to Off-only.
-        // The drop is armed here and fired by the sheet once the connected rows have
-        // actually composed (never on a timer racing cold startup). Polling stays
-        // frozen (statuscase sets setupDone=false), so nothing flips it back.
-        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreviewlost", false)) {
-            remote.debugSubtitlePreview()
-            previewLostRigArmed = true
-        }
         // Screenshot-rig only: render one status-notice review scenario per capture.
         // Polling is frozen (setupDone=false -> pollOnce no-ops) or leftover rig prefs
         // would re-trip unreachable/helperDown over the forced states mid-capture.
@@ -90,6 +80,19 @@ class MainActivity : ComponentActivity() {
             // (post-debounce helper notice / 401 pair-again), no mock slot.
             "prod-e" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true, helperNotice = true) }
             "prod-unpaired" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true, unpaired = true) }
+        }
+        // Subtitle previews seed AFTER any statuscase so a seeding case (cur-e etc.)
+        // can't wipe the preview's tracks, and the case's connected/disconnected
+        // flags still govern what the sheet shows.
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreview", false)) remote.debugSubtitlePreview()
+        // Screenshot-rig only: the sheet opens with connected content, then the
+        // connection drops mid-view so UI tests see the live transition to Off-only.
+        // The drop is armed here and fired by the sheet once the connected rows have
+        // actually composed (never on a timer racing cold startup). Polling stays
+        // frozen (statuscase sets setupDone=false), so nothing flips it back.
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreviewlost", false)) {
+            remote.debugSubtitlePreview()
+            previewLostRigArmed = true
         }
         if (BuildConfig.DEBUG && intent.hasExtra("lockcontrols")) {
             store.lockScreenControls = true
