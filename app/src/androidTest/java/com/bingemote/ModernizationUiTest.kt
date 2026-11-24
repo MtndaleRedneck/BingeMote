@@ -20,11 +20,16 @@ class ModernizationUiTest {
     @Test fun pcReachabilityDoesNotDependOnVlcBeingOpen() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         try {
-            val remote = RemoteState(ctx, Store(ctx), scope)
+            val store = Store(ctx)
+            store.helperToken = "modernization-fixture"
+            val remote = RemoteState(ctx, store, scope)
             for (vlcDown in listOf(false, true)) for (helperDown in listOf(false, true)) {
                 remote.debugForceStatus(unreachable = vlcDown, helperDown = helperDown)
                 assertEquals("VLC down=$vlcDown helper down=$helperDown", !(vlcDown && helperDown), remote.pcReachable)
             }
+            store.helperToken = ""
+            remote.debugForceStatus(unreachable = true, helperDown = false)
+            assertFalse("absent helper pairing is not a successful liveness probe", remote.pcReachable)
         } finally { scope.cancel() }
     }
 
@@ -54,7 +59,7 @@ class ModernizationUiTest {
     }
 
     @Test fun moviesDisconnectedKeepsHeaderShowsBannerWithoutRetry() {
-        Store(ctx).moviesPath = ""
+        Store(ctx).apply { moviesPath = ""; helperToken = "modernization-fixture" }
         launch("movies", "cur-g")
         assertTrue(device.wait(Until.hasObject(By.text("Movies")), 30000))
         assertTrue(device.wait(Until.hasObject(By.text("Trying to reconnect")), 10000))
