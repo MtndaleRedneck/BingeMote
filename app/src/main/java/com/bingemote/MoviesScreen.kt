@@ -319,14 +319,6 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             }
             Spacer(Modifier.height(10.dp))
         }
-        // Lazy row keys: VLC can omit "path" (parsed as ""), so path alone is not
-        // unique - two pathless rows would crash the LazyColumn on a duplicate key.
-        // Fall back to uri then name, and disambiguate repeats by occurrence while
-        // keeping the common single-entry case stable across reloads.
-        val rowKeys = remember(items) {
-            val seen = HashMap<String, Int>()
-            items.map { item ->
-                val base = item.path.ifEmpty { item.uri }.ifEmpty { item.name }
                 val n = seen.getOrDefault(base, 0); seen[base] = n + 1
                 if (n == 0) base else "$base~$n"
             }
@@ -356,7 +348,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 loading && !lost -> item { ListMessage("Loading\u2026", loading = true) }
                 error != null && !lost -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
                 items.isEmpty() -> item { ListMessage("No videos in this folder.") }
-                else -> items(items.size, key = { rowKeys[it] }, contentType = { items[it].isDir }) { i ->
+                else -> items(items.size, key = { items[it].path }, contentType = { items[it].isDir }) { i ->
                     val item = items[i]
                     PressTile(
                         onTap = { if (remote.pcReachable) open(item) },
