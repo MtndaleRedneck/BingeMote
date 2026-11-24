@@ -402,12 +402,35 @@ class ImmediateFlipTest {
         val reached = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         val done = java.util.concurrent.CountDownLatch(1)
+        val allowRecoveryCommit = java.util.concurrent.CountDownLatch(1)
         try {
             HapticTickTest.seedPrefs(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
             assertTrue(posts.count { !it.playing } >= 2)
+            // Fully deterministic scenario (review-driven): no periodic polls from
+            // here on. A recovery poll committing before tap #2 would re-establish
+            // connectivity and MASK a broken epoch guard.
+            MediaControlsService.disablePeriodicPoll = true
+            // Anchor the connectivity window: start the held-failure scenario right
+            // after a fresh successful poll commit. playbackConnected() needs a commit
+            // within the last 5 s and only polls refresh it (MediaControls.kt:77,348);
+            // without the anchor, this orchestration can itself outlast the window
+            // (poll-phase + hold + second startService), so tap #2 is dropped by the
+            // INTENDED disconnected guard and masquerades as a stale-failure
+            // invalidation - the actual mechanism of run 45427938862's expected-2-was-1.
+            // No corrective refresh after the stale completion: if the epoch guard ever
+            // DID let the stale failure mark disconnected, tap #2 still fails red.
+            val anchor = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pollCommitted = { anchor.countDown() }
+            val anchorBy = System.currentTimeMillis() + 6000
+            while (anchor.count > 0 && System.currentTimeMillis() < anchorBy) {
+                MediaControlsService.requestObservedPoll?.invoke { }
+                anchor.await(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            MediaControlsService.pollCommitted = null
+            assertTrue("fresh poll committed before the held-failure scenario", anchor.count == 0L)
             MediaControlsService.beforePollFailure = {
                 MediaControlsService.observeHeldPoll?.invoke { done.countDown() }
                 reached.countDown()
@@ -416,21 +439,54 @@ class ImmediateFlipTest {
             stub.failStatus = true
             MediaControlsService.requestTestPoll?.invoke()
             assertTrue(reached.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            val tap1Completed = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.playbackCompleted = { remaining -> if (remaining == 0) tap1Completed.countDown() }
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
-            val commandBy = System.currentTimeMillis() + 1500
+            // Command delivery goes startService -> main looper -> seam -> HTTP stub; on a
+            // loaded CI emulator 1500 ms is marginal (run 45427938862 lost the second tap's
+            // delivery to the clock while 3 same-tree runs passed it). 5 s keeps the exact
+            // same assertion: a command that never arrives still fails, so this also
+            // discriminates timing from a real stale-poll invalidation defect.
+            val commandBy = System.currentTimeMillis() + 5000
             while (stub.commands.isEmpty() && System.currentTimeMillis() < commandBy) Thread.sleep(20)
             assertEquals(1, stub.commands.size)
+            assertTrue("tap #1 fully completed", tap1Completed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            MediaControlsService.playbackCompleted = null
+            // Tap #1's completion fires refreshNow(); that recovery poll would commit
+            // after the stale completion and MASK a broken epoch guard by restoring
+            // connectivity before tap #2. Hold it at its pre-commit seam so tap #2
+            // reads the connectivity state exactly as the stale completion left it:
+            // if the stale failure marked disconnected, tap #2 drops here, red.
+            val recoveryAtCommit = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.beforePollCommit = {
+                recoveryAtCommit.countDown()
+                assertTrue(allowRecoveryCommit.await(8, java.util.concurrent.TimeUnit.SECONDS))
+            }
             MediaControlsService.beforePollFailure = null
             stub.failStatus = false
             release.countDown()
             assertTrue(done.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue("recovery poll reached its pre-commit hold", recoveryAtCommit.await(5, java.util.concurrent.TimeUnit.SECONDS))
             ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_PLAY_PAUSE))
-            val bothBy = System.currentTimeMillis() + 1500
+            val bothBy = System.currentTimeMillis() + 5000
             while (stub.commands.size < 2 && System.currentTimeMillis() < bothBy) Thread.sleep(20)
             assertEquals("stale failure disabled newer connected tap", 2, stub.commands.size)
+            // Invariant proven; require the held recovery poll to commit so the
+            // service ends connected again (post-scenario health, not a mask).
+            val recovered = java.util.concurrent.CountDownLatch(1)
+            MediaControlsService.pollCommitted = { recovered.countDown() }
+            allowRecoveryCommit.countDown()
+            assertTrue("recovery poll committed after the scenario", recovered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            MediaControlsService.pollCommitted = null
+            MediaControlsService.beforePollCommit = null
         } finally {
             MediaControlsService.beforePollFailure = null
             MediaControlsService.afterPollAttempt = null
+            MediaControlsService.pollCommitted = null
+            MediaControlsService.beforePollCommit = null
+            MediaControlsService.playbackCompleted = null
+            MediaControlsService.disablePeriodicPoll = false
+            allowRecoveryCommit.countDown()
             release.countDown(); stub.stop()
         }
     }

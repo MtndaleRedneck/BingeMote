@@ -61,15 +61,25 @@ class AutomaticOnlySetupTest {
         assertFalse(device.hasObject(By.text("Code from your PC")))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-before-selection.png"))
         device.findObject(By.textContains("MY-PC  (")).click()
-        Thread.sleep(500)
-        repeat(4) {
+        // Condition-driven reveal (review-driven): the pair-code section can render
+        // without any scroll on large screens and can need a scroll on others, so
+        // alternate a bounded render wait with a conditional scroll instead of fixed
+        // swipes/sleeps. Run 45435505970 failed this assert with all four captures
+        // absent (adb "No such file" stubs in the artifact), so on failure also
+        // capture the actual screen state and hierarchy as evidence.
+        val revealBy = System.currentTimeMillis() + 10000
+        while (!device.hasObject(By.text("Code from your PC")) && System.currentTimeMillis() < revealBy) {
+            device.wait(Until.hasObject(By.text("Code from your PC")), 700)
             if (!device.hasObject(By.text("Code from your PC"))) {
                 device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                     device.displayWidth / 2, device.displayHeight / 2, 20)
-                Thread.sleep(300)
             }
         }
-        assertTrue(device.wait(Until.hasObject(By.text("Code from your PC")), 3000))
+        if (!device.hasObject(By.text("Code from your PC"))) {
+            device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc-fail.png"))
+            device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc-fail.xml"))
+        }
+        assertTrue(device.hasObject(By.text("Code from your PC")))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-pc.png"))
         device.swipe(device.displayWidth / 2, device.displayHeight / 3,
             device.displayWidth / 2, device.displayHeight * 4 / 5, 25)
@@ -85,9 +95,16 @@ class AutomaticOnlySetupTest {
         val fields = device.findObjects(By.clazz("android.widget.EditText"))
         val addressField = fields.minBy { it.visibleBounds.top }
         addressField.text = "192.0.2.20"
+        // ACTION_SET_TEXT applies asynchronously through the IME/accessibility path, so a
+        // read on the very next frame can race the state update (saw one CI run read back
+        // empty while the identical tree passed in its sibling run). Poll briefly instead.
+        val textDeadline = System.currentTimeMillis() + 3000
+        while (addressField.text != "192.0.2.20" && System.currentTimeMillis() < textDeadline) Thread.sleep(100)
         assertEquals("192.0.2.20", addressField.text)
-        Thread.sleep(500)
-        assertFalse(device.hasObject(By.text("Code from your PC")))
+        // Same async timing class as the setText read-back above: the confirmed-address
+        // state update is not instant, so wait (bounded) for the pair-code entry to go
+        // instead of checking once after a fixed sleep (run 45424136265 failed this one-shot check while two same-tree runs passed it).
+        assertTrue(device.wait(Until.gone(By.text("Code from your PC")), 3000))
         if (device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")) device.pressBack()
         repeat(3) {
             if (!device.hasObject(By.text("Use this address"))) {
