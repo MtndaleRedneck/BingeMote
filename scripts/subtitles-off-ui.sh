@@ -12,10 +12,16 @@ adb shell input keyevent 4
 adb shell am force-stop com.bingemote
 adb shell am instrument -w -r -e class com.bingemote.NotificationTapMatrixTest,com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest,com.bingemote.DisconnectedPlaybackTest,com.bingemote.RefinementsUiTest,com.bingemote.StoreMigrationTest,com.bingemote.SubtitleSheetTest,com.bingemote.SubtitleClientTest,com.bingemote.SubtitleJournalTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee subtitles-off-evidence/tests.txt
 for capture in refinements-yourpc refinements-settings refinements-after-pair-tap subtitle-sheet subtitle-sheet-large-font subtitle-sheet-disconnected subtitle-sheet-lost; do
-  adb exec-out cat "/sdcard/Android/data/com.bingemote/files/bm-$capture.png" > "subtitles-off-evidence/$capture.png"
+  # Skip absent captures: an unconditional cat writes the error text into a
+  # .png, a fake visual artifact in the evidence bundle.
+  if adb shell test -f "/sdcard/Android/data/com.bingemote/files/bm-$capture.png"; then
+    adb exec-out cat "/sdcard/Android/data/com.bingemote/files/bm-$capture.png" > "subtitles-off-evidence/$capture.png"
+  fi
 done
 adb shell am instrument -w -r -e class 'com.bingemote.CancelGestureTest#releaseInsideCancelsFillsIn' com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee subtitles-off-evidence/cancel-tests.txt
-adb exec-out cat /sdcard/bm-cancel-inside-fills.png > subtitles-off-evidence/cancel-fills.png
+if adb shell test -f /sdcard/bm-cancel-inside-fills.png; then
+  adb exec-out cat /sdcard/bm-cancel-inside-fills.png > subtitles-off-evidence/cancel-fills.png
+fi
 adb shell am force-stop com.bingemote
 adb logcat -d -s AndroidRuntime:E > subtitles-off-evidence/crashes.txt
 # Diagnostic failure dumps (FailureDumpRule): pull whatever exists, tolerate absence.
