@@ -192,12 +192,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 126) MediaControls.sync(this, store)
-    }
+    private val notifPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { MediaControls.sync(this, store) }
 
     override fun onStart() {
+        MediaControls.permissionRequest = { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
         super.onStart()
         if (::remote.isInitialized && store.setupDone) remote.start()
         MediaControls.sync(this, store)

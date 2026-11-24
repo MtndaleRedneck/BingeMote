@@ -130,7 +130,7 @@ object Vlc {
         val param = if (dir.startsWith("file:", ignoreCase = true)) "uri" else "dir"
         val raw = get("${browseUrl(host, port)}?$param=${encode(dir)}", password)
         val root = JSONObject(raw)
-        val el = root.opt("element")
+        val el: Any? = root.opt("element")
         val arr: JSONArray = when (el) {
             is JSONArray -> el
             is JSONObject -> el.optJSONArray("_array") ?: JSONArray()
