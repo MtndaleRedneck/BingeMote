@@ -174,7 +174,7 @@ internal static class FirewallSetup
     {
         // Querying the exact URL avoids localized Reserved URL labels and substring matches.
         // SDDL itself has locale-independent syntax; inspect its parsed ACE, not account names.
-        var match = Regex.Match(output, @"(?m)^.*?:\s*(D:[^\r\n]+)$");
+        var match = Regex.Match(output, @"(?m)^.*?:[^\S\r\n]*(D:[^\r\n]+)\r?$");
         if (!match.Success) return false;
         try
         {
