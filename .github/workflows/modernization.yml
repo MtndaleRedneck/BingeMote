@@ -142,6 +142,8 @@ jobs:
             release-evidence/
             app/build/outputs/mapping/release/
             app/build/outputs/mapping/releaseAndroidTest/
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
           retention-days: 3
 
   pc-unit:
