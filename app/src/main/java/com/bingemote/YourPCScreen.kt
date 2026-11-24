@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Unit, onPairAgain: () -> Unit) {
     val store = remote.store
-    val unreachable = remote.unreachable
+    val unreachable = !remote.pcReachable
     Column(Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             HeaderIconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
@@ -68,7 +68,7 @@ fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Un
                 onTap = onPairAgain,
                 background = Brush.verticalGradient(listOf(Color(0xFF36363F), Color(0xFF36363F))),
                 modifier = Modifier.fillMaxWidth().height(48.dp)
-                    .border(0.7.dp, Color(0xFFA2A2AD), RoundedCornerShape(14.dp)),
+                    .border(0.7.dp, Orange, RoundedCornerShape(14.dp)),
                 corner = 14.dp,
             ) {
                 Text("Pair again", color = TextC, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)

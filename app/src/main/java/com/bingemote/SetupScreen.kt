@@ -3,6 +3,7 @@ package com.bingemote
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -228,7 +229,10 @@ fun SetupScreen(
                         PressTile(
                             onTap = { chosen = h; manualHost = ""; code = ""; justPaired = false; continueVlc = false; say("", false) },
                             background = if (isSel) OrangeGradient else CardGradient,
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            // Unselected rows carry the orange outline so they read as tappable
+                            // (approved); the selected row keeps the solid orange fill.
+                            modifier = Modifier.fillMaxWidth().height(52.dp)
+                                .then(if (isSel) Modifier else Modifier.border(1.dp, Orange, RoundedCornerShape(18.dp))),
                         ) {
                             Text(
                                 "${h.name}  (${h.host})",
