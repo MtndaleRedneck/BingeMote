@@ -171,7 +171,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 // Self-heal once: the PC may have lost or never received the folder. If the
                 // PC's copy is empty or different, re-save the phone's copy and retry.
                 if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
-                    val fixed = withContext(Dispatchers.IO) {
+                    // heal: null = none, "push" = PC folder was blank and we pushed
+                    // the phone's copy, "pull" = PC had a different folder and won.
+                    val heal = withContext(Dispatchers.IO) {
                         try {
                             // Strict read: a failed get throws and lands in the catch
                             // below (no heal) - an unknown PC state must never look
@@ -179,16 +181,25 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                             val onPc = HelperClient.getMoviesFolderStrict(remote.store.host, remote.store.helperPort, remote.store.helperToken)
                             if (onPc.isBlank()) {
                                 HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
-                                true
+                                "push"
                             } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
                                 // The PC's setting wins: pull its folder instead of
                                 // pushing the phone's stale copy over it.
                                 remote.store.moviesPath = onPc
-                                true
-                            } else false
-                        } catch (e2: Exception) { false }
+                                "pull"
+                            } else null
+                        } catch (e2: Exception) { null }
                     }
-                    if (fixed) { loadHelper(rel, restore, healed = true); return@launch }
+                    if (heal == "pull") {
+                        // The folder changed under us: the relative path we were
+                        // loading belongs to the old folder and may not exist under
+                        // the new root, and saved navigation state is stale. Start
+                        // at the new root, same as a folder change while connected.
+                        scrollStack.clear()
+                        loadHelper("", null, healed = true)
+                        return@launch
+                    }
+                    if (heal == "push") { loadHelper(rel, restore, healed = true); return@launch }
                 }
                 if (e is HelperClient.ConnectTimeout) {
                     // The PC app can't answer at all - fall back to VLC for this listing.
