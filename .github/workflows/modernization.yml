@@ -99,8 +99,11 @@ jobs:
             exit 1
           fi
           # The release instrumentation boundary classes must be defined in the
-          # app APK under original names (run 45375818691: Store unresolvable).
-          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus; do
+          # app APK under original names (run 45375818691: Store unresolvable;
+          # the remaining 23 classes are the statically enumerated boundary
+          # closure of the two release-run test files - see proguard-rules.pro).
+          # Every one is force-kept, so a zero row here is a build problem.
+          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus com.bingemote.Vlc androidx.security.crypto.EncryptedSharedPreferences 'androidx.security.crypto.EncryptedSharedPreferences$PrefKeyEncryptionScheme' 'androidx.security.crypto.EncryptedSharedPreferences$PrefValueEncryptionScheme' androidx.security.crypto.MasterKey 'androidx.security.crypto.MasterKey$Builder' 'androidx.security.crypto.MasterKey$KeyScheme' kotlinx.coroutines.CoroutineScopeKt kotlinx.coroutines.SupervisorJobKt kotlinx.coroutines.BuildersKt kotlinx.coroutines.Dispatchers kotlinx.coroutines.Job kotlinx.coroutines.CompletableJob kotlinx.coroutines.MainCoroutineDispatcher kotlin.concurrent.ThreadsKt kotlin.Unit kotlin.jvm.functions.Function2 kotlin.coroutines.jvm.internal.SuspendLambda kotlin.coroutines.jvm.internal.ContinuationImpl kotlin.coroutines.jvm.internal.BaseContinuationImpl kotlin.jvm.internal.FunctionBase kotlin.coroutines.CoroutineContext 'kotlin.coroutines.CoroutineContext$DefaultImpls'; do
             n=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE "^C d .*${cls}$" || true)
             echo "$cls defined rows: app=$n"
             if [ "$n" = 0 ]; then
