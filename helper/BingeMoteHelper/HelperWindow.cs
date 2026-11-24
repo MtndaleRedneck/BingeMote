@@ -18,12 +18,15 @@ namespace BingeMoteHelper;
 internal sealed class HelperWindow : Form
 {
     // The app's palette: dark mode uses the app's colors, light mode their light counterparts.
-    internal static readonly Color Orange = Color.FromArgb(255, 149, 0);
+    internal static readonly Color Orange = Color.FromArgb(249, 124, 2);
+    internal static readonly Color OrangeLight = Color.FromArgb(251, 158, 46);
     internal static readonly Color OnOrange = Color.FromArgb(27, 27, 30);
     internal static readonly Color DarkBg = Color.FromArgb(27, 27, 30);
-    internal static readonly Color DarkCard = Color.FromArgb(38, 38, 44);
+    internal static readonly Color DarkCard = Color.FromArgb(38, 38, 45);
     internal static readonly Color DarkCard2 = Color.FromArgb(46, 46, 54);
-    internal static readonly Color DarkText = Color.FromArgb(235, 235, 240);
+    internal static readonly Color DarkText = Color.FromArgb(245, 245, 247);
+    internal static readonly Color HeaderBackground = Color.FromArgb(35, 35, 40);
+    internal static readonly Color TrackGray = Color.FromArgb(74, 74, 82);
     internal static readonly Color DarkMuted = Color.FromArgb(150, 150, 160);
     internal static readonly Color LightBg = Color.FromArgb(243, 243, 243);
     internal static readonly Color LightCard = Color.White;
@@ -1031,9 +1034,24 @@ internal sealed class HelperWindow : Form
             else if (_pressed) fill = Mix(BackColor, ForeColor, 0.16f);
             else if (_hover) fill = Mix(BackColor, ForeColor, 0.08f);
             var border = FlatAppearance.BorderSize > 0 ? FlatAppearance.BorderColor : Color.Empty;
+            var primary = BackColor.ToArgb() == Orange.ToArgb();
             PaintRounded(e.Graphics, this, fill, border, _radius);
+            if (primary)
+            {
+                var top = OrangeLight;
+                if (!Enabled) top = Mix(top, Parent?.BackColor ?? BackColor, 0.5f);
+                else if (_pressed) top = Mix(top, ForeColor, 0.16f);
+                else if (_hover) top = Mix(top, ForeColor, 0.08f);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using var path = RoundedRect(new RectangleF(0, 0, Width, Height), _radius);
+                using var gradient = new System.Drawing.Drawing2D.LinearGradientBrush(
+                    ClientRectangle, top, fill, System.Drawing.Drawing2D.LinearGradientMode.Vertical);
+                e.Graphics.FillPath(gradient, path);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
+            }
             var fg = Enabled ? ForeColor : Mix(ForeColor, fill, 0.5f);
-            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, fg, fill,
+            // Transparent text background preserves the primary button gradient.
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, fg,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             if (Focused && ShowFocusCues && Enabled)

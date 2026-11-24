@@ -326,8 +326,8 @@ internal sealed class FeedbackDialog : Form
         _previewCard.BorderColor = border;
         _message.BackColor = card;
         _message.ForeColor = text;
-        _scroll.Track = dark ? Color.FromArgb(32, 34, 44) : Color.FromArgb(224, 224, 228);
-        _scroll.Thumb = dark ? Color.FromArgb(74, 80, 96) : Color.FromArgb(180, 180, 190);
+        _scroll.Track = dark ? HelperWindow.HeaderBackground : Color.FromArgb(224, 224, 228);
+        _scroll.Thumb = dark ? HelperWindow.TrackGray : Color.FromArgb(180, 180, 190);
         _scroll.Arrows = muted;
         _scroll.Card = card;
         _scroll.Invalidate();
