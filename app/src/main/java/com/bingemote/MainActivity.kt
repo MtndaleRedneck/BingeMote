@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEBUG && intent.getBooleanExtra("subtitlepreviewlost", false)) {
             remote.debugSubtitlePreview()
             lifecycleScope.launch {
-                kotlinx.coroutines.delay(2500)
+                kotlinx.coroutines.delay(6000)
                 remote.debugForceStatus(unreachable = true, helperDown = true)
             }
         }
