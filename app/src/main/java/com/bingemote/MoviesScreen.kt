@@ -166,8 +166,13 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     val fixed = withContext(Dispatchers.IO) {
                         try {
                             val onPc = HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
-                            if (onPc.isNullOrBlank() || !onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                            if (onPc.isNullOrBlank()) {
                                 HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
+                                true
+                            } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                                // The PC's setting wins: pull its folder instead of
+                                // pushing the phone's stale copy over it.
+                                remote.store.moviesPath = onPc
                                 true
                             } else false
                         } catch (e2: Exception) { false }
@@ -257,6 +262,14 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         if (lost) wasLost = true
         else if (wasLost) {
             wasLost = false
+            // Same rule as screen entry: the PC's folder wins when the helper answers.
+            // Without this, a folder changed on the PC during the outage kept the
+            // phone's stale copy (and could push it back over the PC's choice).
+            val fromPc = withContext(Dispatchers.IO) {
+                if (remote.store.helperToken.isBlank()) null
+                else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+            }
+            if (!fromPc.isNullOrBlank()) remote.store.moviesPath = fromPc
             load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
         }
     }
@@ -306,6 +319,18 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             }
             Spacer(Modifier.height(10.dp))
         }
+        // Lazy row keys: VLC can omit "path" (parsed as ""), so path alone is not
+        // unique - two pathless rows would crash the LazyColumn on a duplicate key.
+        // Fall back to uri then name, and disambiguate repeats by occurrence while
+        // keeping the common single-entry case stable across reloads.
+        val rowKeys = remember(items) {
+            val seen = HashMap<String, Int>()
+            items.map { item ->
+                val base = item.path.ifEmpty { item.uri }.ifEmpty { item.name }
+                val n = seen.getOrDefault(base, 0); seen[base] = n + 1
+                if (n == 0) base else "$base~$n"
+            }
+        }
         // Root breadcrumb: only rendered when there is a path to show, so the root
         // view has no blank gap under the header.
         val crumbs = prettyPath(path)
@@ -331,7 +356,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 loading && !lost -> item { ListMessage("Loading\u2026", loading = true) }
                 error != null && !lost -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
                 items.isEmpty() -> item { ListMessage("No videos in this folder.") }
-                else -> items(items.size, key = { items[it].path }, contentType = { items[it].isDir }) { i ->
+                else -> items(items.size, key = { rowKeys[it] }, contentType = { items[it].isDir }) { i ->
                     val item = items[i]
                     PressTile(
                         onTap = { if (remote.pcReachable) open(item) },
