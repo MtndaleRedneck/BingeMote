@@ -15,7 +15,7 @@ class SubtitleSheetTest {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "prop-g"))
+            .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "cur-e"))
         assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
         assertFalse(device.hasObject(By.text("Movie.en.srt")))
         assertFalse(device.hasObject(By.text("Subtitle files in this folder")))
@@ -64,7 +64,7 @@ class SubtitleSheetTest {
         // then the connection drops 2.5s in (frozen polling keeps it dropped).
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            .putExtra("screen", "subtitles").putExtra("statuscase", "prop-g")
+            .putExtra("screen", "subtitles").putExtra("statuscase", "cur-e")
             .putExtra("subtitlepreviewlost", true))
         // Connected starting state really shows the content and its dividers first.
         assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
