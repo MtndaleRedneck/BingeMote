@@ -274,7 +274,12 @@ grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSER
 #     itself is untestable on an emulator - a seam records the exact calls.
 adb shell am instrument -w -e class com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest \
   com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/haptic-flip-instrument.txt
-grep -q '^OK (' screenshots/haptic-flip-instrument.txt || { echo 'ASSERT FAIL: haptic/glyph feedback tests failed (see haptic-flip-instrument.txt)'; SEEK_FAIL=1; }
+# Exact expected inventory, computed from source so the check neither goes stale
+# when the suite grows (the hardcoded 9 did, Nov 23) nor passes a partial/zero
+# run on a bare '^OK (' match. Both run classes live in this one file.
+expected_haptic=$(grep -c '@Test' app/src/androidTest/java/com/bingemote/NotificationFeedbackTest.kt)
+[ "${expected_haptic:-0}" -gt 0 ] || { echo 'ASSERT FAIL: could not count haptic/glyph @Test inventory'; SEEK_FAIL=1; }
+grep -Eq "^OK \($expected_haptic tests?\)" screenshots/haptic-flip-instrument.txt || { echo "ASSERT FAIL: haptic/glyph feedback tests failed or ran partially (expected $expected_haptic tests; see haptic-flip-instrument.txt)"; SEEK_FAIL=1; }
 for f in cancel-inside-ring.png cancel-after-ring.png \
          cancel-inside-fills.png cancel-after-fills.png \
          cancel-interrupted.png \
