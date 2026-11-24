@@ -165,8 +165,11 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
                     val fixed = withContext(Dispatchers.IO) {
                         try {
-                            val onPc = HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
-                            if (onPc.isNullOrBlank()) {
+                            // Strict read: a failed get throws and lands in the catch
+                            // below (no heal) - an unknown PC state must never look
+                            // like "PC has none" and trigger a push over its folder.
+                            val onPc = HelperClient.getMoviesFolderStrict(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+                            if (onPc.isBlank()) {
                                 HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
                                 true
                             } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
@@ -269,8 +272,15 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 if (remote.store.helperToken.isBlank()) null
                 else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
             }
-            if (!fromPc.isNullOrBlank()) remote.store.moviesPath = fromPc
-            load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+            if (!fromPc.isNullOrBlank() && !fromPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                // New root: the old relative path and saved scroll spots no longer
+                // exist, so viewport preservation only applies within the same folder.
+                remote.store.moviesPath = fromPc
+                scrollStack.clear()
+                load(remote.store.moviesPath.trim())
+            } else {
+                load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+            }
         }
     }
 
@@ -318,10 +328,6 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 }
             }
             Spacer(Modifier.height(10.dp))
-        }
-                val n = seen.getOrDefault(base, 0); seen[base] = n + 1
-                if (n == 0) base else "$base~$n"
-            }
         }
         // Root breadcrumb: only rendered when there is a path to show, so the root
         // view has no blank gap under the header.
