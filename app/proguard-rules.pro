@@ -122,4 +122,30 @@
 -keep class kotlin.jvm.internal.FunctionBase { *; }
 -keep class kotlin.coroutines.CoroutineContext { *; }
 -keep class kotlin.coroutines.CoroutineContext$DefaultImpls { *; }
-
+#
+# release-auth-verify run 45396409414 (df5dae4) NCDFE
+# kotlin.coroutines.intrinsics.IntrinsicsKt at
+# UpgradeConnectionTest$verifyNewReleaseAfterUpdate$1.invokeSuspend:
+# the state machine's getCOROUTINE_SUSPENDED fetch. The app R8 inlined
+# and removed the whole intrinsics chain (usage.txt: facade IntrinsicsKt,
+# IntrinsicsKt__IntrinsicsKt (-> R8$$REMOVED$$CLASS$$487),
+# IntrinsicsKt__IntrinsicsJvmKt) and the androidTest build has zero
+# kotlin/kotlinx definition rows despite blanket -keep kotlin.**/
+# kotlinx.** rules (stdlib/coroutines are not program inputs to that
+# task - behavioral evidence, not a resolved-input inventory), so the
+# facade reference stayed original-named with no resolution target.
+# The facade is public (0x0031) but EXTENDS the package-private (0x0020)
+# part classes IntrinsicsKt__IntrinsicsKt -> IntrinsicsKt__IntrinsicsJvmKt,
+# and getCOROUTINE_SUSPENDED is declared (0x0019 public static final) on
+# IntrinsicsKt__IntrinsicsKt, resolved by hierarchy walk: pinning the
+# facade alone would split the superclass chain across packages
+# (run 45386135883 IllegalAccessError pattern). All three are kept in
+# their original package. Residual: uncalled part methods reference
+# package-private anonymous inner classes R8 renames; ART resolves
+# method bodies lazily and none execute on the test path.
+# kotlin.ResultKt (also removed from the app) is deliberately NOT kept:
+# no integrated-dex proof references it; if a run NCDFEs on it, that is
+# its proof and a separate minimal facade keep follows.
+-keep class kotlin.coroutines.intrinsics.IntrinsicsKt { *; }
+-keep class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsKt { *; }
+-keep class kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt { *; }
