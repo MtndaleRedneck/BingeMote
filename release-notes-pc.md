@@ -1,3 +1,15 @@
+## v1.8.0
+
+Phone-controlled subtitles for the movie that's playing, simpler phone pairing, and dark title bars.
+
+**Added**
+- Subtitles: load same-folder SRT files for the playing movie from the phone (with Android 1.13.0); Off and loaded-track controls stay available
+- Pairing: new phones pair with a 4-digit code that never expires, created only from the Pair button
+
+**Fixed**
+- Dark title bars on BingeMote's own dialogs
+- Tray balloon and blocked-input notice fixes
+
 ## v1.7.14
 
 - The Remove phone, notice and Wi-Fi dialogs now request dark title bars to match their dark contents.
@@ -82,14 +94,14 @@
 - The window lists your paired phones by name: remove one or all, and pair a new phone by typing its name and tapping Pair
 - The tray menu is now just Show and Quit - pairing lives in the window
 - If Windows treats your Wi-Fi as "Public" (which blocks the phone), a popup offers to mark it Private in one click, open Settings, or not ask again for that Wi-Fi
-- Already-paired phones carry over and show as "Phone 1", "Phone 2" and so on
+- Already-paired phones show as "Phone 1", "Phone 2" and so on
 
 ## v1.2.0
 
 **BingeMote-PC** (the installer) installs it with a Start menu entry and an optional desktop shortcut. Once installed, the program is just called **BingeMote** - window, tray, Start menu, everything.
 
 - Setup stops springing an admin prompt on first run: the installer asks for Windows permission once, during install, and adds the firewall rule itself. Uninstalling removes the rule too
-- New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer. Install over the top of 1.x; it replaces the old copy and removes the old autostart entry, shortcuts and firewall rule.
+- New name: the old "BingeMote Helper" is now just **BingeMote** - window, tray, Start menu and installer.
 - Friendlier setup messages, and the Wi-Fi help now says plainly what to click when Windows calls your home network Public
 - When BingeMote starts VLC for you, VLC's remote-control port listens only on the address your phone used - not on every network
 - Pair more than one phone: each phone pairs with its own code, and pairing can be reset to forget every phone (in 1.2.0 these lived in the tray menu; from 1.3.0 they are in the window)
@@ -98,7 +110,7 @@
 
 - The window is now a small settings app: status, the movies folder with the usual Windows folder picker, pairing controls, and Quit - and it follows Windows dark/light mode
 - Opening the helper while it is already running brings its window up instead of doing nothing
-- Updating takes over from the running copy on its own. From 1.0.0 or 1.0.1: quit the old copy by hand first (right-click its tray icon, Quit)
+- From 1.0.0 or 1.0.1: quit the old copy by hand first (right-click its tray icon, Quit)
 - Pairing can be reset: forgets the phone and shows a fresh code
 - Keeps a small log file (%LocalAppData%\BingeMoteHelper\helper.log) to help with setup problems
 
