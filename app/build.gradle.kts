@@ -65,7 +65,7 @@ dependencies {
     // androidx.test.runner needs androidx.tracing at runtime. Debug gets it transitively;
     // the minified release androidTest APK does not (NoClassDefFoundError: androidx.tracing.Trace
     // in AndroidJUnitRunner.onCreate, run 45344979448 logcat).
-    androidTestImplementation("androidx.tracing:tracing:1.2.0")
+    androidTestImplementation("androidx.tracing:tracing:2.0.5")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
