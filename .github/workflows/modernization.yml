@@ -1,5 +1,7 @@
 name: Modernization verification
 on:
+  push:
+    branches: [tmp/modernization-1124]
   workflow_dispatch:
 permissions:
   contents: read
