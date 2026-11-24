@@ -1,3 +1,17 @@
+## v1.14.0 - November 24, 2026
+
+A full under-the-hood modernization: current foundations, a smaller app, and connection fixes.
+
+**Improved**
+- Rebuilt on current Android foundations (Kotlin 2.4.21, current libraries); unused code is now stripped, so the app is smaller.
+- Movies: when the PC's movies folder changes, the phone follows the PC's setting instead of keeping its own stale copy.
+- Movies and the reconnect banner refill by themselves once the PC answers again - no retry tap.
+- Settings and subtitle sheets keep their place and state when revisited.
+
+**Fixed**
+- After a reconnect, Movies could push the phone's stale folder over the PC's choice.
+- Connection and pairing handling on unstable Wi-Fi.
+
 ## v1.13.0 - November 23, 2026
 
 The subtitles sheet now stays correct when the PC connection drops.

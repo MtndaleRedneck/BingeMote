@@ -187,7 +187,12 @@ class SubtitleClientTest {
             try {
                 val remote=RemoteState(ctx,store,scope)
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles()}
-                delay(2000)
+                // Wall-clock delay(2000) here raced the emulator main dispatcher: when
+                // the first listing had not reached the stub yet, the quiet refresh
+                // started a second request (run 45355708507). Wait for the request to
+                // actually arrive; the 3s server delay keeps it in flight, so the
+                // quiet refresh must coalesce deterministically.
+                awaitCondition(8000){stub.requests.isNotEmpty()}
                 withContext(Dispatchers.Main){remote.refreshSubtitleFiles(quiet=true)}
                 awaitCondition(8000){remote.subtitleFolder!=null || remote.subtitleFileError!=null}
                 assertEquals("listing error=${remote.subtitleFileError}; requests=${stub.requests}","opaque-movie",remote.subtitleFolder?.mediaId)

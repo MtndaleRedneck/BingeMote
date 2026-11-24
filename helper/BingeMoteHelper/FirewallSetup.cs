@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text.RegularExpressions;
 
 namespace BingeMoteHelper;
 
@@ -71,7 +74,7 @@ internal static class FirewallSetup
     {
         var answer = MessageBox.Show(
             "One Windows permission, then setup is done.\n\n" +
-            "BingeMote needs to let your phone reach this PC on your home network. Windows will now ask for administrator permission once - it is used only to add one firewall rule, for home (Private) networks only. Click Yes.",
+            "BingeMote needs to let your phone reach this PC on your home network. Windows will now ask for administrator permission once - it is used only to set up the home (Private) network firewall rules and the Windows listen permission. Click Yes.",
             "BingeMote setup",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Information);
@@ -88,7 +91,7 @@ internal static class FirewallSetup
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
             var p = Process.Start(psi);
-            if (p == null || !p.WaitForExit(60_000) || p.ExitCode != 0 || !RuleExists())
+            if (p == null || !p.WaitForExit(60_000) || p.ExitCode != 0 || !RuleExists() || !UrlAclExists())
                 throw new InvalidOperationException("Setup could not be verified.");
         }
         catch
@@ -147,18 +150,43 @@ internal static class FirewallSetup
         if (code != 0) throw new InvalidOperationException($"netsh add rule exited {code}");
     }
 
+    /// <summary>The exact helper URL must have only the intended interactive-user grant.
+    /// A different URL containing the same port, or an Everyone grant, is not sufficient.</summary>
     internal static bool UrlAclExists()
     {
-        var psi = new ProcessStartInfo("netsh", "http show urlacl")
+        try
         {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var p = Process.Start(psi)!;
-        var output = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return output.Contains(":" + Program.HttpPort + "/");
+            var psi = new ProcessStartInfo("netsh", "http show urlacl url=http://+:" + Program.HttpPort + "/")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var p = Process.Start(psi)!;
+            var read = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(10000)) { try { p.Kill(); } catch { } return false; }
+            return p.ExitCode == 0 && HasInteractiveOnlyGrant(read.GetAwaiter().GetResult());
+        }
+        catch { return false; }
+    }
+
+    internal static bool HasInteractiveOnlyGrant(string output)
+    {
+        // Querying the exact URL avoids localized Reserved URL labels and substring matches.
+        // SDDL itself has locale-independent syntax; inspect its parsed ACE, not account names.
+        var match = Regex.Match(output, @"(?m)^.*?:[^\S\r\n]*(D:[^\r\n]+)\r?$");
+        if (!match.Success) return false;
+        try
+        {
+            var descriptor = new RawSecurityDescriptor(match.Groups[1].Value.Trim());
+            var acl = descriptor.DiscretionaryAcl;
+            return acl is { Count: 1 } && acl[0] is CommonAce ace &&
+                ace.AceQualifier == AceQualifier.AccessAllowed &&
+                ace.AceFlags == AceFlags.None && !ace.IsCallback &&
+                ace.SecurityIdentifier == new SecurityIdentifier(WellKnownSidType.InteractiveSid, null) &&
+                ace.AccessMask == unchecked((int)0x20000000); // GENERIC_EXECUTE (GX)
+        }
+        catch { return false; }
     }
 
     internal static bool RuleExists()

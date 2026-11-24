@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,6 +29,14 @@ import kotlinx.coroutines.withContext
  * climbs above it. Touch only: tap a folder to open it, tap a movie to play it,
  * "Up one folder" walks back out but never above the assigned folder.
  */
+
+/** Root argument for load() in the current listing mode. Helper mode lists
+ *  folder-relative paths ("" is the folder root) and its jail rejects rooted
+ *  paths; VLC mode takes absolute paths. Passing the absolute root while the
+ *  helper is active breaks the listing - the changed-root reconnect bug. */
+internal fun rootArgForMode(helperMode: Boolean, absRoot: String): String =
+    if (helperMode) "" else absRoot
+
 @Composable
 fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Unit, demoResumeAsk: Boolean = false) {
     val scope = rememberCoroutineScope()
@@ -43,6 +53,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     var viaHelper by remember { mutableStateOf(false) }
     // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
     var starting by remember { mutableStateOf(false) }
+    // PC unreachable: the same state the home hero reads. The approved Movies design shows
+    // the orange reconnect banner under the header and reloads by itself when the PC is back.
+    val lost = !remote.pcReachable && !remote.expectingVlc
     // The PC found a saved place in this movie: offer Resume / Start over (Preview 1).
     var resumeAsk by remember {
         mutableStateOf(
@@ -158,16 +171,35 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 // Self-heal once: the PC may have lost or never received the folder. If the
                 // PC's copy is empty or different, re-save the phone's copy and retry.
                 if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
-                    val fixed = withContext(Dispatchers.IO) {
+                    // heal: null = none, "push" = PC folder was blank and we pushed
+                    // the phone's copy, "pull" = PC had a different folder and won.
+                    val heal = withContext(Dispatchers.IO) {
                         try {
-                            val onPc = HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
-                            if (onPc.isNullOrBlank() || !onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                            // Strict read: a failed get throws and lands in the catch
+                            // below (no heal) - an unknown PC state must never look
+                            // like "PC has none" and trigger a push over its folder.
+                            val onPc = HelperClient.getMoviesFolderStrict(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+                            if (onPc.isBlank()) {
                                 HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
-                                true
-                            } else false
-                        } catch (e2: Exception) { false }
+                                "push"
+                            } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                                // The PC's setting wins: pull its folder instead of
+                                // pushing the phone's stale copy over it.
+                                remote.store.moviesPath = onPc
+                                "pull"
+                            } else null
+                        } catch (e2: Exception) { null }
                     }
-                    if (fixed) { loadHelper(rel, restore, healed = true); return@launch }
+                    if (heal == "pull") {
+                        // The folder changed under us: the relative path we were
+                        // loading belongs to the old folder and may not exist under
+                        // the new root, and saved navigation state is stale. Start
+                        // at the new root, same as a folder change while connected.
+                        scrollStack.clear()
+                        loadHelper("", null, healed = true)
+                        return@launch
+                    }
+                    if (heal == "push") { loadHelper(rel, restore, healed = true); return@launch }
                 }
                 if (e is HelperClient.ConnectTimeout) {
                     // The PC app can't answer at all - fall back to VLC for this listing.
@@ -182,7 +214,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun load(dir: String, restore: Pair<Int, Int>? = null) {
-        if (viaHelper) { loadHelper(dir); return }
+        if (!remote.pcReachable) { loading = false; return }
+        if (viaHelper) { loadHelper(dir, restore); return }
         // The PC app first (it answers instantly whether VLC is open or closed - the same
         // order as the Settings folder picker); VLC is only the fallback. This skips the
         // 4-second wait on a closed VLC that made the tab feel slow.
@@ -244,8 +277,35 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         }
     }
 
+    // Auto-reload on reconnect: the 1s poll has already proven the PC answers before this
+    // fires, so there is no Try again button - the screen just fills itself again.
+    var wasLost by remember { mutableStateOf(false) }
+    LaunchedEffect(lost) {
+        if (lost) wasLost = true
+        else if (wasLost) {
+            wasLost = false
+            // Same rule as screen entry: the PC's folder wins when the helper answers.
+            // Without this, a folder changed on the PC during the outage kept the
+            // phone's stale copy (and could push it back over the PC's choice).
+            val fromPc = withContext(Dispatchers.IO) {
+                if (remote.store.helperToken.isBlank()) null
+                else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+            }
+            if (!fromPc.isNullOrBlank() && !fromPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                // New root: the old relative path and saved scroll spots no longer
+                // exist, so viewport preservation only applies within the same folder.
+                remote.store.moviesPath = fromPc
+                scrollStack.clear()
+                load(rootArgForMode(viaHelper, remote.store.moviesPath.trim()))
+            } else {
+                load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+            }
+        }
+    }
+
     // The PC's setting wins when the helper has one; the phone's copy is the fallback.
     LaunchedEffect(Unit) {
+        if (!remote.pcReachable) { loading = false; return@LaunchedEffect }
         val fromPc = withContext(Dispatchers.IO) {
             if (remote.store.helperToken.isBlank()) null
             else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
@@ -269,12 +329,36 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             Spacer(Modifier.width(12.dp))
             Text("Movies", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-        Text(
-            prettyPath(path),
-            color = Muted, fontSize = 13.sp,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        Spacer(Modifier.height(10.dp))
+        // The reconnect banner, verbatim from the home hero: same gradient, radius, ink,
+        // sizes and strings. The Movies title and back arrow stay put above it.
+        if (lost) {
+            Box(
+                Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Orange, spotColor = Orange)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(OrangeGradient)
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+            ) {
+                Column {
+                    Text("Trying to reconnect", color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                    Text("Both devices need to be on the same network", color = Color(0xFF3D2A12), fontSize = 14.sp, letterSpacing = 0.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+        // Root breadcrumb: only rendered when there is a path to show, so the root
+        // view has no blank gap under the header.
+        val crumbs = prettyPath(path)
+        if (crumbs.isNotBlank()) {
+            Text(
+                crumbs,
+                color = Muted, fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
 
         LazyColumn(
             state = listState,
@@ -283,13 +367,19 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 .padding(horizontal = 16.dp),
         ) {
             when {
-                loading -> item { ListMessage("Loading\u2026", loading = true) }
-                error != null -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
+                // While the banner says the PC is gone, the list area stays quiet: no spinner,
+                // no error card, no wrong "No videos" - just the last list if there is one.
+                lost && items.isEmpty() -> item { Spacer(Modifier.height(1.dp)) }
+                loading && !lost -> item { ListMessage("Loading\u2026", loading = true) }
+                error != null && !lost -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
                 items.isEmpty() -> item { ListMessage("No videos in this folder.") }
-                else -> items(items.size, key = { it }) { i ->
+                else -> items(items.size, key = { items[it].path }, contentType = { items[it].isDir }) { i ->
                     val item = items[i]
                     PressTile(
-                        onTap = { open(item) },
+                        onTap = { if (remote.pcReachable) open(item) },
+                        // Reuse the existing Store rather than constructing encrypted
+                        // preferences for each row during composition and scrolling.
+                        hapticsOn = remote.store.haptics,
                         background = CardGradient,
                         modifier = Modifier
                             .fillMaxWidth()

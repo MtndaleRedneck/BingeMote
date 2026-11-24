@@ -81,7 +81,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
     // clock; foreground again: reconnect. `away` also re-keys the pad's gesture block so a
     // latched drag (released on background) doesn't eat the first tap after coming back.
     var away by remember { mutableStateOf(false) }
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, live) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
             when (ev) {

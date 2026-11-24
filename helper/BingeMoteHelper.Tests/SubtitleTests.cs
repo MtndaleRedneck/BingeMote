@@ -5,6 +5,7 @@ using Xunit;
 
 namespace BingeMoteHelper.Tests;
 
+[Collection("HTTP reservation")]
 public class SubtitleTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "bm-subs-" + Guid.NewGuid().ToString("N"));

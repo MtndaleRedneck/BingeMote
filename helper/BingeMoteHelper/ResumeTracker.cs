@@ -158,17 +158,18 @@ internal static class ResumeTracker
         return null;
     }
 
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
+
     private static async Task<string?> Get(int port, string pw, string page)
     {
         try
         {
-            var req = WebRequest.CreateHttp($"http://127.0.0.1:{port}/requests/{page}");
-            req.Headers[HttpRequestHeader.Authorization] =
-                "Basic " + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(":" + pw));
-            req.Timeout = 3000;
-            using var resp = await req.GetResponseAsync();
-            using var sr = new StreamReader(resp.GetResponseStream());
-            return await sr.ReadToEndAsync();
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{port}/requests/{page}");
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Basic", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(":" + pw)));
+            using var resp = await Http.SendAsync(req);
+            resp.EnsureSuccessStatusCode();
+            return await resp.Content.ReadAsStringAsync();
         }
         catch { return null; }
     }

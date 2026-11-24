@@ -129,8 +129,16 @@ class MainActivity : ComponentActivity() {
                 else if (store.setupDone) "main" else "setup") }
             screen = current
             // Scroll positions live above the screen switch so leaving a screen and
-            // coming back lands you where you were instead of back at the top.
+            // coming back lands you where you were - except Settings, which Ezzy wants
+            // re-entered at the top (each navigation into it resets settingsScroll).
             val settingsScroll = rememberScrollState(initial = if (BuildConfig.DEBUG && intent.hasExtra("updateResult")) Int.MAX_VALUE else 0)
+            val navigationScope = rememberCoroutineScope()
+            fun openSettings() {
+                navigationScope.launch {
+                    settingsScroll.scrollTo(0)
+                    current.value = "settings"
+                }
+            }
             if (BuildConfig.DEBUG && intent.hasExtra("updateResult")) {
                 androidx.compose.runtime.LaunchedEffect(settingsScroll.maxValue) {
                     if (settingsScroll.maxValue > 0 && settingsScroll.maxValue < Int.MAX_VALUE)
@@ -148,7 +156,7 @@ class MainActivity : ComponentActivity() {
                         remote,
                         setupScroll,
                         onDone = { remote.start(); current.value = "main" },
-                        onCancel = if (store.setupDone) ({ current.value = "settings" }) else null,
+                        onCancel = if (store.setupDone) ({ openSettings() }) else null,
                         demoVlcPending = BuildConfig.DEBUG && intent.hasExtra("vlcpending"),
                         demoPair = BuildConfig.DEBUG && intent.hasExtra("pairdemo"),
                     )
@@ -159,7 +167,7 @@ class MainActivity : ComponentActivity() {
                         remote,
                         onMouse = { current.value = "mouse" },
                         onMovies = { current.value = "movies" },
-                        onSettings = { current.value = "settings" },
+                        onSettings = { openSettings() },
                         startSubtitlesOpen = true,
                     )
                     "movies" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG && intent.hasExtra("resumeask"))
@@ -176,15 +184,15 @@ class MainActivity : ComponentActivity() {
                     "yourpc" -> YourPCScreen(
                         remote,
                         yourpcScroll,
-                        onBack = { current.value = "settings" },
+                        onBack = { openSettings() },
                         onPairAgain = { current.value = "setup" },
                     )
-                    "feedback" -> FeedbackScreen(feedbackScroll) { current.value = "settings" }
+                    "feedback" -> FeedbackScreen(feedbackScroll) { openSettings() }
                     else -> MainScreen(
                         remote,
                         onMouse = { current.value = "mouse" },
                         onMovies = { current.value = "movies" },
-                        onSettings = { current.value = "settings" },
+                        onSettings = { openSettings() },
                     )
                 }
                 UpdateHost(store)
@@ -192,12 +200,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 126) MediaControls.sync(this, store)
-    }
+    private val notifPermission = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { MediaControls.sync(this, store) }
 
     override fun onStart() {
+        MediaControls.permissionRequest = { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
         super.onStart()
         if (::remote.isInitialized && store.setupDone) remote.start()
         MediaControls.sync(this, store)

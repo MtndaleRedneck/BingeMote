@@ -1,0 +1,221 @@
+name: Modernization verification
+on:
+  push:
+    branches: [tmp/modernization-1124]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # Debug UI evidence and minified release-runtime evidence are separate
+  # jobs on purpose: a debug-only UI flake (e.g. an emulator frame race in
+  # a scroll precondition) must not gate the release-runtime verdict, and
+  # the workflow still fails overall if either job fails.
+  verify-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - name: Unit tests and debug test build
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/modernization-ui.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-modernization-evidence
+          path: |
+            modernization-evidence/
+            app/build/reports/tests/testDebugUnitTest/
+          retention-days: 3
+
+  verify-release-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - name: Signed release build, no public binary upload
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: bingemote
+        run: |
+          set -euo pipefail
+          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          ./gradlew --no-daemon assembleRelease
+          ./gradlew --no-daemon -PrecoveryReleaseTest assembleReleaseAndroidTest
+          stat -c "RELEASE_APK_BYTES=%s" app/build/outputs/apk/release/app-release.apk
+          sha256sum app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
+      - name: Tracing presence gate in both minified APKs
+        run: |
+          set -euo pipefail
+          APKA="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          for apk in app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/androidTest/release/app-release-androidTest.apk; do
+            echo "== $apk"
+            # apkanalyzer prints either a space-separated tree or dotted names
+            # depending on version; match both so a format change cannot false-fail.
+            "$APKA" dex packages "$apk" | grep -E 'androidx[. ]tracing' || echo "NO androidx.tracing classes"
+          done
+          # Defined-class rows only (leading "C d"), exact class anchored at end of
+          # line: referenced-only rows and Trace-prefixed siblings must not count.
+          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
+          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*androidx[. ]tracing[. ]Trace$' || true)
+          if [ "$app_hits" = 0 ] && [ "$test_hits" = 0 ]; then
+            echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
+            exit 1
+          fi
+          # Same anchored defined-row check for the instrumentation runtime's
+          # kotlin.LazyKt linkage (NoClassDefFoundError at registerTestStorage,
+          # runs 45364449159 + 45365558033): the class must be defined in at
+          # least one of the two APKs under its original name.
+          lazy_app=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
+          lazy_test=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE '^C d .*kotlin[. ]LazyKt$' || true)
+          echo "kotlin.LazyKt defined rows: app=$lazy_app test=$lazy_test"
+          if [ "$lazy_app" = 0 ] && [ "$lazy_test" = 0 ]; then
+            echo "GATE FAILED: kotlin.LazyKt absent from both APKs"
+            exit 1
+          fi
+          # The release instrumentation boundary classes must be defined in the
+          # app APK under original names (run 45375818691: Store unresolvable;
+          # the remaining 26 classes are the enumerated boundary closure of
+          # the two release-run test files - see proguard-rules.pro). The
+          # kotlin-stdlib part-class keeps were removed at c21c815:
+          # UpgradeConnectionTest now avoids those statics entirely (java.*
+          # equivalents), so no stdlib merge/chain hazard remains to keep
+          # against (runs 45382268903 NSME, 45386135883 IllegalAccessError).
+          # kotlinx.coroutines.BuildersKt (the runBlocking$default facade)
+          # was added after run 45391411658's auth-verify NSME.
+          # Every one is force-kept, so a zero row here is a build problem.
+          for cls in com.bingemote.Store com.bingemote.HelperClient com.bingemote.RemoteState com.bingemote.VlcStatus com.bingemote.Vlc androidx.security.crypto.EncryptedSharedPreferences 'androidx.security.crypto.EncryptedSharedPreferences$PrefKeyEncryptionScheme' 'androidx.security.crypto.EncryptedSharedPreferences$PrefValueEncryptionScheme' androidx.security.crypto.MasterKey 'androidx.security.crypto.MasterKey$Builder' 'androidx.security.crypto.MasterKey$KeyScheme' kotlinx.coroutines.BuildersKt kotlinx.coroutines.CoroutineScopeKt kotlinx.coroutines.SupervisorKt kotlinx.coroutines.BuildersKt__BuildersKt kotlinx.coroutines.Dispatchers kotlinx.coroutines.Job kotlinx.coroutines.CompletableJob kotlinx.coroutines.MainCoroutineDispatcher kotlin.Unit kotlin.jvm.functions.Function2 kotlin.coroutines.jvm.internal.SuspendLambda kotlin.coroutines.jvm.internal.ContinuationImpl kotlin.coroutines.jvm.internal.BaseContinuationImpl kotlin.jvm.internal.FunctionBase kotlin.coroutines.CoroutineContext 'kotlin.coroutines.CoroutineContext$DefaultImpls' kotlin.coroutines.intrinsics.IntrinsicsKt kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsKt kotlin.coroutines.intrinsics.IntrinsicsKt__IntrinsicsJvmKt kotlin.ResultKt; do
+            # Literal exact match: class rows start with "C d" and end with
+            # the fqcn. The previous ERE interpolation treated the '$' in
+            # nested-class names as end anchors, always counting zero
+            # (I2 reproduction: a defined MasterKey$Builder row counted 0).
+            n=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | awk -v c="$cls" 'index($0,"C d ")==1 { nf=split($0,a,/[ \t]+/); if (a[nf]==c) cnt++ } END { print cnt+0 }')
+            echo "$cls defined rows: app=$n"
+            if [ "$n" = 0 ]; then
+              echo "GATE FAILED: $cls absent from the app APK"
+              exit 1
+            fi
+          done
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/modernization-release.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-release-runtime-evidence
+          path: |
+            release-evidence/
+            app/build/outputs/mapping/release/
+            app/build/outputs/mapping/releaseAndroidTest/
+          retention-days: 3
+
+  pc-unit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Unit, palette and URL permission tests
+        # BINGEMOTE_URLACL_E2E opts the migration test into touching the real URL
+        # reservation; safe here because the runner is disposable. It skips elsewhere.
+        # shell: bash - the default pwsh would not stop on a failing native dotnet
+        # test (no -e equivalent), letting a later successful command mask it, and
+        # would reject this script's syntax outright. The test result and the E2E
+        # execution marker are checked independently: neither can cover the other.
+        shell: bash
+        env:
+          BINGEMOTE_URLACL_E2E: '1'
+        run: |
+          # Freshness: no marker from an earlier attempt may be read as this run's.
+          rm -f helper/BingeMoteHelper.Tests/bin/Release/net10.0-windows/bingemote-urlacl-e2e.marker
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
+          test_exit=$?
+          grep -q EXECUTED helper/BingeMoteHelper.Tests/bin/Release/net10.0-windows/bingemote-urlacl-e2e.marker 2>/dev/null || { echo 'URLACL migration E2E did not execute on the opted-in runner (marker file missing or SKIPPED)'; exit 1; }
+          [ $test_exit -eq 0 ] || { echo "dotnet test failed with exit $test_exit"; exit $test_exit; }
+      - name: Compile production helper
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PC-modernization-evidence
+          path: helper/BingeMoteHelper.Tests/TestResults/*.trx
+          retention-days: 3
+
+  pc-visual:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Render the window for palette review (CI only)
+        timeout-minutes: 5
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
+          $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
+          & helper/shot/BingeMote.exe --window-shot
+          $env:BINGEMOTE_DIALOG_SHOTS = "$PWD\helper"
+          $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -PassThru
+          if (-not $dialogRun.WaitForExit(45000)) { Stop-Process -Id $dialogRun.Id -Force; throw 'Native dialog fixture exceeded 45 second bound' }
+          if ($dialogRun.ExitCode -ne 0) { throw "Native dark-dialog capture failed: $($dialogRun.ExitCode)" }
+          foreach ($name in @('confirm', 'note', 'wifi')) {
+            if (-not (Test-Path "helper/dialog-$name.png")) { throw "Missing native dialog capture: $name" }
+          }
+          $env:BINGEMOTE_OSD_SHOT = "$PWD\helper\osd.png"
+          $env:BINGEMOTE_OSD_SHOT_MUTED = "$PWD\helper\osd-muted.png"
+          & helper/shot/BingeMote.exe --osd-shot
+      - name: Upload the window shot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BingeMote-PC-window-modernization
+          path: |
+            helper/window.png
+            helper/window-screen.png
+            helper/window-diag.txt
+            helper/dialog-*.png
+            helper/dialog-*.txt
+            helper/osd.png
+            helper/osd-muted.png
+            helper/osd.frame.png
+            helper/osd-muted.frame.png
+            helper/dialog-progress.log
+          if-no-files-found: error
