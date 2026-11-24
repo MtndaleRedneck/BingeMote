@@ -274,7 +274,9 @@ internal static class Program
         RegisterAutostart();
         try { RegisterApplicationRestart("/restarted", 0); } catch { } // crash or hang: Windows relaunches us
 
-        if (!File.Exists(FirewallMarker))
+        // Markers from older versions do not attest to the current listen-permission scope.
+        // Recheck the exact URL on upgrades too; a broad legacy grant needs one UAC repair.
+        if (!File.Exists(FirewallMarker) || !FirewallSetup.UrlAclExists())
         {
             // The Setup download adds the rule and listen permission during install; a
             // first run of the plain exe adds them here with one admin prompt.
@@ -291,10 +293,12 @@ internal static class Program
             }
             // Surface the vlc.exe rule inventory the elevated step saved (report only).
             FirewallSetup.LogVlcRuleInventory();
-
-        // Resume places: load the saved ones and watch VLC while it runs.
-        ResumeTracker.Start();
+            // Cancellation or failed verification must not proceed under a broader legacy ACL.
+            if (!FirewallSetup.RuleExists() || !FirewallSetup.UrlAclExists()) return 1;
         }
+
+        // Resume places must load on every startup, not only on first-time firewall setup.
+        ResumeTracker.Start();
 
         // A live pairing code is a way in, so one comes only from the window's Pair button,
         // never from startup. The fixed-code hook below exists only for CI's own copy.

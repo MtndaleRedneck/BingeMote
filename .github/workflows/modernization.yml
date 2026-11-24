@@ -54,3 +54,22 @@ jobs:
             app/build/outputs/mapping/release/
             app/build/reports/tests/testDebugUnitTest/
           retention-days: 3
+
+  pc-unit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Unit, palette and URL permission tests
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
+      - name: Compile production helper
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PC-modernization-evidence
+          path: helper/BingeMoteHelper.Tests/TestResults/*.trx
+          retention-days: 3
