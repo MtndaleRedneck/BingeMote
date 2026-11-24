@@ -27,7 +27,11 @@ class FailureDumpRule : TestWatcher() {
             while (System.currentTimeMillis() < deadline) {
                 val dialog = device.findObject(By.textContains("isn't responding")) ?: break
                 val title = dialog.text ?: "unknown"
-                if (title.startsWith("BingeMote")) return
+                // Whitelist only the identified offender: the emulator's Pixel
+                // Launcher (system app). BingeMote's own ANR, unknown titles, and
+                // any third-party app are never dismissed: leave the dialog up so
+                // the test fails and the failure dump preserves it.
+                if (!title.startsWith("Pixel Launcher")) return
                 runCatching {
                     dir?.let { File(it, "bm-dismissed-dialogs.txt").appendText(title + "\n") }
                 }
