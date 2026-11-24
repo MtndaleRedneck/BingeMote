@@ -83,8 +83,20 @@ class FailureDumpRule : TestWatcher() {
                 sb.append(device.executeShellCommand("logcat -d -t 250"))
             }
             File(dir, "bm-dump-$tag.txt").writeText(sb.toString())
+            val firstAt = System.currentTimeMillis()
             runCatching { device.takeScreenshot(File(dir, "bm-dump-$tag.png")) }
             runCatching { device.dumpWindowHierarchy(File(dir, "bm-dump-$tag.uix")) }
+            // Paired second capture a few seconds later (recurrence discriminator,
+            // I2 Nov 23): a persistent stale tree stays mismatched across the pair;
+            // a transient one converges. The test's assertion stays red either way.
+            Thread.sleep(4000)
+            val secondAt = System.currentTimeMillis()
+            runCatching { device.takeScreenshot(File(dir, "bm-dump2-$tag.png")) }
+            runCatching { device.dumpWindowHierarchy(File(dir, "bm-dump2-$tag.uix")) }
+            runCatching {
+                File(dir, "bm-dump-$tag.txt").appendText(
+                    "\n== paired capture ==\nfirstAt=$firstAt secondAt=$secondAt delayMs=${secondAt - firstAt}\n")
+            }
         } catch (_: Throwable) { }
     }
 }

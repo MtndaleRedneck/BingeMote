@@ -8,6 +8,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -207,6 +208,10 @@ class HapticTickTest {
  * repro.
  */
 class ImmediateFlipTest {
+    // Same failure-evidence rule as the sheet tests: this class failed in run
+    // 45310990361 with zero captures; never leave a failure undocumented.
+    @get:Rule val failureDump = FailureDumpRule()
+
     private data class Post(val at: Long, val playing: Boolean)
 
     private val posts = CopyOnWriteArrayList<Post>()
