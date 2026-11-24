@@ -1,11 +1,11 @@
-## v1.13.0
+## v1.13.0 - November 23, 2026
 
 The subtitles sheet now stays correct when the PC connection drops.
 
 **Fixed**
-- Subtitles sheet when the PC connection is lost or the helper stops answering: shows Off only, no stale errors
-- If a PC that answers fails the subtitle check, the sheet says it can't check right now and offers Retry; gone, older, and unpaired PCs stay quiet
-- Sheet section dividers now appear only when there is real content below them
+- Subtitles sheet when the PC connection is lost or the helper stops answering: shows Off only, no stale errors ([2b5b443](https://github.com/MtndaleRedneck/BingeMote/commit/2b5b443fdf7e765df894a4297693762d8c02c7aa), [1bb2fb3](https://github.com/MtndaleRedneck/BingeMote/commit/1bb2fb31d342ee00e2854d1299293ee84a5afc2a))
+- If a PC that answers fails the subtitle check, the sheet says it can't check right now and offers Retry; gone, older, and unpaired PCs stay quiet ([ce9af5e](https://github.com/MtndaleRedneck/BingeMote/commit/ce9af5ea7a09d20686dde205599f467c0056049a))
+- Sheet section dividers now appear only when there is real content below them ([2b5b443](https://github.com/MtndaleRedneck/BingeMote/commit/2b5b443fdf7e765df894a4297693762d8c02c7aa))
 
 ## v1.12.14
 
@@ -183,4 +183,4 @@ The subtitles sheet now stays correct when the PC connection drops.
 - One-time pairing with the PC program
 - Checks for app updates each time it opens; nothing installs without your OK
 
-Android 12+. See the README for the PC setup.
+See the README for the PC setup.
