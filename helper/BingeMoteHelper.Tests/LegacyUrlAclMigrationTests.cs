@@ -21,6 +21,12 @@ public class LegacyUrlAclMigrationTests
     [Fact]
     public void LegacyEveryoneGrantIsRejectedAndElevatedSetupReplacesIt()
     {
+        // This test deletes and recreates the machine's real http://+:8488/ URL
+        // reservation and runs the elevated setup. Only run where that is safe:
+        // CI opts in via BINGEMOTE_URLACL_E2E=1 on the disposable runner. On a
+        // developer machine it skips so a local test run cannot alter the dev's
+        // own reservation.
+        if (Environment.GetEnvironmentVariable("BINGEMOTE_URLACL_E2E") != "1") return;
         Netsh("http delete urlacl url=http://+:8488/");
         Assert.Equal(0, Netsh("http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-1-0)"));
         Assert.False(FirewallSetup.UrlAclExists());
