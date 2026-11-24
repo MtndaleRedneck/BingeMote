@@ -36,6 +36,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The minified androidTest APK does NOT inherit the rules above; its
+            // instrumentation runtime keeps live in test-proguard.pro.
+            testProguardFiles("test-proguard.pro")
             if (ksFile != null) signingConfig = signingConfigs.getByName("release")
         }
     }
