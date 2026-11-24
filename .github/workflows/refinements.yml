@@ -131,8 +131,11 @@ jobs:
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' }
           $repo = Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/MtndaleRedneck/TestLab'
           if (-not $repo.private) { throw 'Refusing non-private artifact destination' }
-          foreach ($item in @(@('android-v1.12.15','BingeMote-Android-1.12.15.apk'),@('pc-v1.7.15','BingeMote-PC-1.7.15.exe'))) {
-            $tag=$item[0]; $file=$item[1]
+          # pwsh unrolls nested @(@(...)) arrays to flat strings when collected
+          # (the subtitles-off pipeline created junk draft 'a' from string
+          # indexing); use hashtable pairs, which foreach keeps intact.
+          foreach ($pair in @(@{ tag='android-v1.12.15'; file='BingeMote-Android-1.12.15.apk' }, @{ tag='pc-v1.7.15'; file='BingeMote-PC-1.7.15.exe' })) {
+            $tag=$pair.tag; $file=$pair.file
             $releases=Invoke-RestMethod -Headers $headers 'https://api.github.com/repos/MtndaleRedneck/TestLab/releases?per_page=100'
             $release=$releases | Where-Object { $_.tag_name -eq $tag } | Select-Object -First 1
             if ($release -and -not $release.draft) { throw 'Existing visible version cannot be overwritten' }
