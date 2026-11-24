@@ -201,6 +201,7 @@ jobs:
           $env:BINGEMOTE_OSD_SHOT_MUTED = "$PWD\helper\osd-muted.png"
           & helper/shot/BingeMote.exe --osd-shot
       - name: Upload the window shot
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: BingeMote-PC-window-modernization
@@ -214,4 +215,5 @@ jobs:
             helper/osd-muted.png
             helper/osd.frame.png
             helper/osd-muted.frame.png
+            helper/dialog-progress.log
           if-no-files-found: error
