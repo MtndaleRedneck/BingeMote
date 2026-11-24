@@ -525,7 +525,14 @@ class RemoteState(
                     // content and must go too, or it would render an error/Retry the
                     // current failure did not produce.
                     subtitleFolder = null
-                    subtitleListError = null
+                    // Quiet only when the PC is gone (raw socket failure), too old
+                    // (MissingRoute), or unpaired (BadToken - the main screen owns
+                    // that notice). An ANSWERING helper whose check failed keeps an
+                    // honest message + Retry, same wording as its unavailable answer.
+                    subtitleListError = when (e) {
+                        is HelperClient.MissingRoute, is HelperClient.BadToken, is java.io.IOException -> null
+                        else -> "Can't check subtitle files right now."
+                    }
                 }
             } finally { subtitleListInFlight = false; if (request == subtitleListRequest) subtitleListLoading = false }
         }
