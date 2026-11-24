@@ -77,6 +77,9 @@ class MainActivity : ComponentActivity() {
             "cur-g" -> remote.debugForceStatus(unreachable = true, helperDown = true)
             "prop-g" -> remote.debugForceStatus(unreachable = true, helperDown = false)
             "cur-e" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = true) }
+            // Genuinely connected: VLC answering AND helper answering (the sheet's
+            // below-Off content only renders in this state since 1.12.16).
+            "cur-ok" -> { remote.debugSeedStatus(); remote.debugForceStatus(unreachable = false, helperDown = false) }
             "prop-e" -> { remote.debugSeedStatus(); remote.mockHeroNote = "BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume." }
             "prop-unpaired" -> { remote.debugSeedStatus(); remote.mockHeroNote = "This phone isn't paired with the PC anymore - pair again." }
             // Post-1.11.0 production states: the REAL shipped notice branches

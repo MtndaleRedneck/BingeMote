@@ -516,7 +516,7 @@ class RemoteState(
                     else if (folder.truncated) subtitleListError = "This folder is large. Only some subtitle files are shown."
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 if (request == subtitleListRequest && mutationAtStart == subtitleRequest) {
                     // No connection to the PC (or an older PC app without folder
                     // subtitles): folder entries simply stay hidden, exactly like
