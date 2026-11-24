@@ -29,6 +29,7 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           ./gradlew --no-daemon assembleRelease
+          ./gradlew --no-daemon -PrecoveryReleaseTest assembleReleaseAndroidTest
           stat -c "RELEASE_APK_BYTES=%s" app/build/outputs/apk/release/app-release.apk
           sha256sum app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
