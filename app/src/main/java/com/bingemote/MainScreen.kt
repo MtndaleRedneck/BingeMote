@@ -67,7 +67,7 @@ fun MainScreen(
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {
             TopBar(
-                pill = { StatusPill(connected = !remote.unreachable) },
+                pill = { StatusPill(connected = remote.pcReachable) },
                 settings = {
                     HeaderIconButton(onSettings, remote.store.haptics, startPad = 6.dp) {
                         androidx.compose.material3.Icon(
@@ -175,7 +175,7 @@ private fun HomeContent(
     // When the PC is unreachable the card itself says so; no overlay, no Retry.
     // VLC closed but the PC program answers: say that instead (the helper starts VLC from Movies).
     val vlcOut = remote.vlcClosed && !remote.expectingVlc
-    val lost = remote.unreachable && !remote.expectingVlc && !remote.vlcClosed
+    val lost = !remote.pcReachable && !remote.expectingVlc
     val refused = remote.vlcRefused
     Box(
         Modifier

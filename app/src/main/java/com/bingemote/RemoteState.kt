@@ -30,6 +30,9 @@ class RemoteState(
     var unreachable by mutableStateOf(false)
         private set
 
+    /** Either service answering proves the PC is reachable, independently of VLC playback. */
+    val pcReachable: Boolean get() = !(unreachable && helperDown)
+
     /** VLC didn't answer but the helper did: the PC is fine, VLC just isn't open. */
     var vlcClosed by mutableStateOf(false)
     /** VLC refused the password and the one automatic heal (the adoption fetch) is spent:
@@ -198,6 +201,9 @@ class RemoteState(
                     System.currentTimeMillis() - helperDownAt >= 5000
             }
         } else winVolume = null
+        // A cached VLC-closed state must not mask a subsequent loss of the PC.
+        // Helper liveness is checked on every poll, including the skipped VLC cycles.
+        if (helperDown && vlcClosed) vlcClosed = false
         if (skipVlc) return
         try {
             val s = vlcDeferred!!.await()

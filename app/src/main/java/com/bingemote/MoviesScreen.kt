@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +45,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     var viaHelper by remember { mutableStateOf(false) }
     // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
     var starting by remember { mutableStateOf(false) }
+    // PC unreachable: the same state the home hero reads. The approved Movies design shows
+    // the orange reconnect banner under the header and reloads by itself when the PC is back.
+    val lost = !remote.pcReachable && !remote.expectingVlc
     // The PC found a saved place in this movie: offer Resume / Start over (Preview 1).
     var resumeAsk by remember {
         mutableStateOf(
@@ -182,7 +187,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun load(dir: String, restore: Pair<Int, Int>? = null) {
-        if (viaHelper) { loadHelper(dir); return }
+        if (!remote.pcReachable) { loading = false; return }
+        if (viaHelper) { loadHelper(dir, restore); return }
         // The PC app first (it answers instantly whether VLC is open or closed - the same
         // order as the Settings folder picker); VLC is only the fallback. This skips the
         // 4-second wait on a closed VLC that made the tab feel slow.
@@ -244,6 +250,17 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         }
     }
 
+    // Auto-reload on reconnect: the 1s poll has already proven the PC answers before this
+    // fires, so there is no Try again button - the screen just fills itself again.
+    var wasLost by remember { mutableStateOf(false) }
+    LaunchedEffect(lost) {
+        if (lost) wasLost = true
+        else if (wasLost) {
+            wasLost = false
+            load(path, listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+        }
+    }
+
     // The PC's setting wins when the helper has one; the phone's copy is the fallback.
     LaunchedEffect(Unit) {
         val fromPc = withContext(Dispatchers.IO) {
@@ -269,12 +286,36 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             Spacer(Modifier.width(12.dp))
             Text("Movies", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-        Text(
-            prettyPath(path),
-            color = Muted, fontSize = 13.sp,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        Spacer(Modifier.height(10.dp))
+        // The reconnect banner, verbatim from the home hero: same gradient, radius, ink,
+        // sizes and strings. The Movies title and back arrow stay put above it.
+        if (lost) {
+            Box(
+                Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .shadow(10.dp, RoundedCornerShape(20.dp), ambientColor = Orange, spotColor = Orange)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(OrangeGradient)
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+            ) {
+                Column {
+                    Text("Trying to reconnect", color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                    Text("Both devices need to be on the same network", color = Color(0xFF3D2A12), fontSize = 14.sp, letterSpacing = 0.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+        // Root breadcrumb: only rendered when there is a path to show, so the root
+        // view has no blank gap under the header.
+        val crumbs = prettyPath(path)
+        if (crumbs.isNotBlank()) {
+            Text(
+                crumbs,
+                color = Muted, fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
 
         LazyColumn(
             state = listState,
@@ -283,13 +324,19 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 .padding(horizontal = 16.dp),
         ) {
             when {
-                loading -> item { ListMessage("Loading\u2026", loading = true) }
-                error != null -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
+                // While the banner says the PC is gone, the list area stays quiet: no spinner,
+                // no error card, no wrong "No videos" - just the last list if there is one.
+                lost && items.isEmpty() -> item { Spacer(Modifier.height(1.dp)) }
+                loading && !lost -> item { ListMessage("Loading\u2026", loading = true) }
+                error != null && !lost -> item { ListMessage(error!!, isError = true, actionLabel = "Try again", onAction = { load(path) }) }
                 items.isEmpty() -> item { ListMessage("No videos in this folder.") }
-                else -> items(items.size, key = { it }) { i ->
+                else -> items(items.size, key = { items[it].path }, contentType = { items[it].isDir }) { i ->
                     val item = items[i]
                     PressTile(
-                        onTap = { open(item) },
+                        onTap = { if (remote.pcReachable) open(item) },
+                        // Reuse the existing Store rather than constructing encrypted
+                        // preferences for each row during composition and scrolling.
+                        hapticsOn = remote.store.haptics,
                         background = CardGradient,
                         modifier = Modifier
                             .fillMaxWidth()
