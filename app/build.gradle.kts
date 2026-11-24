@@ -68,6 +68,13 @@ dependencies {
     // 45344979448 logcat). Pinned to 1.0.0: the app classpath carries a strict 1.0.0
     // constraint (run 45347694554 conflict), and debug already runs the runner on 1.0.0.
     androidTestImplementation("androidx.tracing:tracing:1.0.0")
+    // Runtime carrier for the minified release instrumentation process:
+    // AndroidJUnitRunner.onCreate needs androidx.tracing.Trace, and R8 strips
+    // it from the test APK (test minification does not apply this module's
+    // keep rules). Carrying it in the app APK (kept via proguard-rules.pro)
+    // resolves it for the shared instrumented classloader. A few KB; also
+    // satisfies the existing strict 1.0.0 constraint natively.
+    implementation("androidx.tracing:tracing:1.0.0")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
