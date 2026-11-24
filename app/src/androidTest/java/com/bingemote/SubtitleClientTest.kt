@@ -96,6 +96,27 @@ class SubtitleClientTest {
             } finally { scope.cancel() }
         }
     }
+    @Test fun answeringPcFailureShowsListErrorAndClearsFolder() = runBlocking {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        Stub().use { stub ->
+            stub.errorCode = 503
+            HapticTickTest.seedPrefs(ctx,false,stub.port)
+            val store = Store(ctx);store.helperToken="fixture";store.helperPort=stub.port
+            val scope = CoroutineScope(SupervisorJob()+Dispatchers.Main)
+            try {
+                val remote = RemoteState(ctx,store,scope)
+                withContext(Dispatchers.Main) { remote.debugSeedStatus();remote.refreshSubtitleFiles() }
+                repeat(100) { if (stub.requests.isNotEmpty()) return@repeat; delay(30) }
+                assertTrue("subtitle list was never requested", stub.requests.isNotEmpty())
+                awaitCondition(8000) { !remote.subtitleFilesLoading }
+                // Owner-approved (2026-11-23): an ANSWERING helper whose subtitle
+                // check fails keeps an honest message (the sheet renders it with
+                // Retry); only gone/older/unpaired PCs stay quiet.
+                assertEquals("Can't check subtitle files right now.", remote.subtitleFileError)
+                assertNull(remote.subtitleFolder)
+            } finally { scope.cancel() }
+        }
+    }
     @Test fun selectFallsBackOnlyForExplicit404() {
         Stub().use { stub ->
             stub.oldPc = true
