@@ -69,23 +69,31 @@
 -keep class androidx.security.crypto.MasterKey$KeyScheme { *; }
 #
 # UpgradeConnectionTest.kt:66-79 calls CoroutineScope(SupervisorJob() +
-# Dispatchers.Main), runBlocking { ... } and scope.cancel(). Facades and
-# Dispatchers: CoroutineScopeKt/SupervisorJobKt/BuildersKt NO-ROW (facade
-# split BuildersKt__BuildersKt REMOVED), Dispatchers renamed zt. Descriptor
-# types: Job renamed nb0, CompletableJob and MainCoroutineDispatcher NO-ROW.
+# Dispatchers.Main), runBlocking { ... } and scope.cancel(). Facade names
+# verified against the resolved kotlinx-coroutines-core-jvm-1.8.1 artifact
+# (declared at app/build.gradle.kts:85): SupervisorJob() lives in
+# SupervisorKt (plain facade, no part class; REMOVED$$534 in the 45375818691
+# mapping), runBlocking in the Builders.kt multifile part class
+# BuildersKt__BuildersKt (REMOVED$$523; the empty facade BuildersKt is not
+# referenced by compiled calls), CoroutineScope()/cancel in CoroutineScopeKt
+# (plain facade; its methods show as inlined-provenance rows, the shell was
+# removed without a row). Dispatchers renamed zt. Descriptor types: Job
+# renamed nb0, CompletableJob and MainCoroutineDispatcher have no rows.
 # (kotlinx.coroutines.CoroutineContext is a typealias for
 # kotlin.coroutines.CoroutineContext - no such class exists.)
 -keep class kotlinx.coroutines.CoroutineScopeKt { *; }
--keep class kotlinx.coroutines.SupervisorJobKt { *; }
--keep class kotlinx.coroutines.BuildersKt { *; }
+-keep class kotlinx.coroutines.SupervisorKt { *; }
+-keep class kotlinx.coroutines.BuildersKt__BuildersKt { *; }
 -keep class kotlinx.coroutines.Dispatchers { *; }
 -keep class kotlinx.coroutines.Job { *; }
 -keep class kotlinx.coroutines.CompletableJob { *; }
 -keep class kotlinx.coroutines.MainCoroutineDispatcher { *; }
 #
 # kotlin stdlib boundary: kotlin.concurrent.thread used at
-# UpgradeConnectionTest.kt:25-26 (ThreadsKt NO-ROW; default args emit
-# thread$default). Lambda-to-Unit coercion emits kotlin.Unit.INSTANCE (Unit
+# UpgradeConnectionTest.kt:25-26. kotlin-stdlib 2.4.21 (Kotlin plugin
+# 2.4.21) ships ThreadsKt as a plain facade with no part class; the app
+# never calls thread() so no mapping rows exist; default args emit
+# thread$default. Lambda-to-Unit coercion emits kotlin.Unit.INSTANCE (Unit
 # renamed zo1). The runBlocking suspend lambda extends
 # kotlin.coroutines.jvm.internal.SuspendLambda (renamed ni1) via
 # ContinuationImpl (ep) and BaseContinuationImpl (wd), implements Function2
