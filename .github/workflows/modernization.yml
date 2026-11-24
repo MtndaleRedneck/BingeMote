@@ -75,10 +75,12 @@ jobs:
           APKA="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
           for apk in app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/androidTest/release/app-release-androidTest.apk; do
             echo "== $apk"
-            "$APKA" dex packages "$apk" | grep 'androidx tracing' || echo "NO androidx.tracing classes"
+            # apkanalyzer prints either a space-separated tree or dotted names
+            # depending on version; match both so a format change cannot false-fail.
+            "$APKA" dex packages "$apk" | grep -E 'androidx[. ]tracing' || echo "NO androidx.tracing classes"
           done
-          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -c 'androidx tracing Trace' || true)
-          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -c 'androidx tracing Trace' || true)
+          app_hits=$("$APKA" dex packages app/build/outputs/apk/release/app-release.apk | grep -cE 'androidx[. ]tracing[. ]Trace' || true)
+          test_hits=$("$APKA" dex packages app/build/outputs/apk/androidTest/release/app-release-androidTest.apk | grep -cE 'androidx[. ]tracing[. ]Trace' || true)
           if [ "$app_hits" = 0 ] && [ "$test_hits" = 0 ]; then
             echo "GATE FAILED: androidx.tracing.Trace absent from both APKs"
             exit 1
