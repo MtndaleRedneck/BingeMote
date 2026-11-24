@@ -1,3 +1,12 @@
+## v1.13.0
+
+The subtitles sheet now stays correct when the PC connection drops.
+
+**Fixed**
+- Subtitles sheet when the PC connection is lost or the helper stops answering: shows Off only, no stale errors
+- If a PC that answers fails the subtitle check, the sheet says it can't check right now and offers Retry; gone, older, and unpaired PCs stay quiet
+- Sheet section dividers now appear only when there is real content below them
+
 ## v1.12.14
 
 - "You're up to date" appears beside the version number and hides after five seconds. Removed only the redundant Updates heading.
@@ -21,7 +30,7 @@
 
 ## v1.12.0
 
-- Restores BingeMote's name and teal couch icon after the mistaken Zephyr update, keeping existing settings and pairing data. No uninstall is needed.
+- Restores BingeMote's name and teal couch icon after the mistaken Zephyr update.
 - Settings now labels Primary skip buttons and Secondary skip buttons. Each set uses the same interval forward and back.
 - New or unset skip choices default to 10 seconds primary and 30 seconds secondary. Valid saved choices stay unchanged.
 - Zephyr is a separate app and can be installed beside BingeMote.
