@@ -81,6 +81,12 @@
 # renamed nb0, CompletableJob and MainCoroutineDispatcher have no rows.
 # (kotlinx.coroutines.CoroutineContext is a typealias for
 # kotlin.coroutines.CoroutineContext - no such class exists.)
+# The facade too: default-arg calls like runBlocking { } compile to
+# BuildersKt.runBlocking$default on the FACADE, and the facade was renamed
+# (kotlinx.coroutines.a) while the member row missed - run 45391411658
+# release-auth-verify NSME. The facade is public (0x0031) and extends
+# Object, so keeping it original-named carries no package-chain hazard.
+-keep class kotlinx.coroutines.BuildersKt { *; }
 -keep class kotlinx.coroutines.CoroutineScopeKt { *; }
 -keep class kotlinx.coroutines.SupervisorKt { *; }
 -keep class kotlinx.coroutines.BuildersKt__BuildersKt { *; }
