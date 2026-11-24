@@ -91,8 +91,11 @@ class AutomaticOnlySetupTest {
         val textDeadline = System.currentTimeMillis() + 3000
         while (addressField.text != "192.0.2.20" && System.currentTimeMillis() < textDeadline) Thread.sleep(100)
         assertEquals("192.0.2.20", addressField.text)
-        Thread.sleep(500)
-        assertFalse(device.hasObject(By.text("Code from your PC")))
+        // Same async timing class as the setText read-back above: the confirmed-address
+        // state update is not instant, so wait (bounded) for the pair-code entry to go
+        // instead of checking once after a fixed sleep (run 45424136205's sibling
+        // 45424136265 failed this one-shot check while two same-tree runs passed it).
+        assertTrue(device.wait(Until.gone(By.text("Code from your PC")), 3000))
         if (device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")) device.pressBack()
         repeat(3) {
             if (!device.hasObject(By.text("Use this address"))) {
