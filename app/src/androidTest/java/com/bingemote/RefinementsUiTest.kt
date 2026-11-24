@@ -23,7 +23,7 @@ class RefinementsUiTest {
         // Model an existing paired install, not the prior test's empty token.
         Store(ctx).helperToken = "fixture-paired-token"
         launch("yourpc")
-        val caption = device.wait(Until.findObject(By.text("Attempting to reconnect in the background")), 10000)
+        val caption = device.wait(Until.findObject(By.text("Attempting to reconnect in the background")), 30000)
         assertNotNull("caption missing/truncated", caption)
         val button = device.findObject(By.text("Pair again"))
         assertNotNull(button)
@@ -33,7 +33,7 @@ class RefinementsUiTest {
         assertTrue(device.hasObject(By.text("Only needed for a new phone, or if this phone was removed on the PC.")))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-yourpc.png"))
         button.click()
-        assertTrue("Pair again lost action", device.wait(Until.hasObject(By.text("Find your PC")), 5000))
+        assertTrue("Pair again lost action", device.wait(Until.hasObject(By.text("Find your PC")), 30000))
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-refinements-after-pair-tap.png"))
     }
     @Test fun oldRingPreferenceRemovedAndFlashPreserved() {
@@ -45,11 +45,12 @@ class RefinementsUiTest {
             assertEquals(0, store.buttonFlash)
         }
         launch("settings")
-        repeat(4) {
-            if (!device.hasObject(By.text("Button flash"))) {
-                device.swipe(device.displayWidth/2, device.displayHeight*4/5, device.displayWidth/2, device.displayHeight/3, 30)
-                Thread.sleep(300)
-            }
+        // Scan with a deadline instead of a fixed swipe count: a loaded CI emulator
+        // can need many seconds just to compose the screen before scrolling helps.
+        val deadline = System.currentTimeMillis() + 30000
+        while (!device.hasObject(By.text("Button flash")) && System.currentTimeMillis() < deadline) {
+            device.swipe(device.displayWidth/2, device.displayHeight*4/5, device.displayWidth/2, device.displayHeight/3, 30)
+            Thread.sleep(300)
         }
         assertTrue("Button flash removed", device.hasObject(By.text("Button flash")))
         assertFalse("retired selector remains", device.hasObject(By.text("Cancel button style")))

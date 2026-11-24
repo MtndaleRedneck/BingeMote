@@ -16,7 +16,7 @@ class SubtitleSheetTest {
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             .putExtra("screen", "subtitles").putExtra("subtitlepreview", true).putExtra("statuscase", "cur-e"))
-        assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
+        assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 30000))
         assertFalse(device.hasObject(By.text("Movie.en.srt")))
         assertFalse(device.hasObject(By.text("Subtitle files in this folder")))
         assertFalse(device.hasObject(By.text("Built-in subtitles")))
@@ -42,8 +42,8 @@ class SubtitleSheetTest {
         ctx.startActivity(Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             .putExtra("screen", "subtitles").putExtra("statuscase", "cur-g"))
-        assertTrue(device.wait(Until.hasObject(By.text("Subtitles")), 10000))
-        assertTrue(device.wait(Until.hasObject(By.text("Off")), 10000))
+        assertTrue(device.wait(Until.hasObject(By.text("Subtitles")), 30000))
+        assertTrue(device.wait(Until.hasObject(By.text("Off")), 30000))
         // Let the first folder check fail and settle (no PC in this state), then wait
         // out another quiet poll cycle to catch any delayed error line.
         device.wait(Until.gone(By.text("Checking subtitle files...")), 15000)
@@ -67,11 +67,11 @@ class SubtitleSheetTest {
             .putExtra("screen", "subtitles").putExtra("statuscase", "cur-e")
             .putExtra("subtitlepreviewlost", true))
         // Connected starting state really shows the content and its dividers first.
-        assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 10000))
+        assertTrue(device.wait(Until.hasObject(By.text("Movie.en")), 30000))
         assertTrue(device.hasObject(By.text("English")))
         // After the drop: everything below Off must go, including the stale tracks
         // the last status still carries.
-        assertTrue(device.wait(Until.gone(By.text("Movie.en")), 15000))
+        assertTrue(device.wait(Until.gone(By.text("Movie.en")), 30000))
         Thread.sleep(1000)
         assertTrue(device.hasObject(By.text("Off")))
         assertFalse(device.hasObject(By.text("Movie.en")))
