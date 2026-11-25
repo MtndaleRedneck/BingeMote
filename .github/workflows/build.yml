@@ -31,6 +31,11 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      force:
+        description: DRY-RUN fault injection (this branch only)
+        type: choice
+        options: [none, focused-fail, skip-scanner]
+        default: none
       restage:
         description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
         type: boolean
@@ -77,7 +82,7 @@ jobs:
       # signed-binary uploads stay on the real public-release path (only == 'all')
       # only. Hidden builds stage to the private TestLab draft below instead.
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+        if: false
         with:
           name: BingeMote-Android-apk
           path: BingeMote-Android-*.apk
@@ -149,7 +154,7 @@ jobs:
         # publicly downloadable, and withheld builds must never publish (run
         # 45029656665's helper job exposed the installer until deleted).
         # only == 'all' too: hidden builds stage privately below, never here.
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+        if: false
         with:
           name: BingeMote-PC-raw
           path: helper/out/BingeMote.exe
@@ -164,7 +169,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         # Publish-path only (see BingeMote-PC-raw gate above).
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+        if: false
         with:
           name: BingeMote-PC
           path: BingeMote-PC-*.exe
@@ -339,7 +344,7 @@ jobs:
 
 
   scanner-test:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
+    if: inputs.force != 'skip-scanner' && (github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify'))
     # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
     # (syntax, every section, summary) and uploads its report. The runner has no
     # BingeMote, so a clean "nothing found" run is the expected result.
@@ -364,6 +369,9 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     runs-on: ubuntu-latest
     steps:
+      - name: DRY-RUN forced failure
+        if: inputs.force == 'focused-fail'
+        run: echo forced focused-ui failure; exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -445,40 +453,7 @@ jobs:
     needs: [release-gate]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      # Exactly the one artifact being published (not a broad pattern), from THIS run.
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.target == 'app' && 'BingeMote-Android-apk' || 'BingeMote-PC' }}
-          path: artifacts
-      - name: Artifact check (exactly one file, sha256 logged)
-        run: |
-          set -e
-          ls -l artifacts
-          [ "$(find artifacts -type f | wc -l)" = 1 ]
-          sha256sum artifacts/*
-      - name: Publish reviewed build
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -e
-          # Release pages show ONLY their own version's notes:
-          # extract the "## v$V" section from the running notes file.
-          if [ "$TARGET" = "app" ]; then
-            V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-            [[ "$V" != 0.* ]]
-            # Headings may carry a date suffix ("## v1.14.0 - November 24, 2026"),
-            # so match the heading by prefix, not exact equality.
-            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if(index($0,v" ")==1 || $0==v){f=1}else if(f){exit} } f' release-notes-app.md > /tmp/notes.md
-            [[ -s /tmp/notes.md ]]
-            gh release create "android-v$V" "artifacts/BingeMote-Android-$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote Android v$V" --notes-file /tmp/notes.md
-          else
-            V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
-            # Helper releases never take "latest" - the installed app's updater reads it.
-            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if(index($0,v" ")==1 || $0==v){f=1}else if(f){exit} } f' release-notes-pc.md > /tmp/notes.md
-            [[ -s /tmp/notes.md ]]
-            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file /tmp/notes.md --latest=false
-          fi
+      - name: DRY RELEASE REACHED (no publish command, no write token on this branch)
+        run: echo "DRY RELEASE JOB RAN - gate passed. Nothing published."
