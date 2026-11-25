@@ -432,6 +432,7 @@ jobs:
       - name: Required-job table (all must be success)
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: printf '%s' "$NEEDS_JSON" | bash scripts/release-gate.sh android helper helper-e2e scanner-test focused-ui screenshots
       - name: Gate self-test (discriminates failure, skipped, cancelled, missing)
         run: bash scripts/release-gate-test.sh
@@ -447,11 +448,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Exactly the one artifact being published (not a broad pattern), from THIS run.
       - uses: actions/download-artifact@v4
         with:
-          pattern: BingeMote*-*
-          merge-multiple: true
+          name: ${{ inputs.target == 'app' && 'BingeMote-Android-apk' || 'BingeMote-PC' }}
           path: artifacts
+      - name: Artifact check (exactly one file, sha256 logged)
+        run: |
+          set -e
+          ls -l artifacts
+          [ "$(find artifacts -type f | wc -l)" = 1 ]
+          sha256sum artifacts/*
       - name: Publish reviewed build
         env:
           GH_TOKEN: ${{ github.token }}

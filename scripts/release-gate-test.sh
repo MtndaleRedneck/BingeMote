@@ -17,7 +17,7 @@ PY
 fail=0
 expect() { # $1 = expected exit class (pass|block), rest = override args
   local want="$1"; shift
-  mk "$@" | bash scripts/release-gate.sh "${REQ[@]}" >/tmp/gate.out 2>&1; local rc=$?
+  mk "$@" | RUN_ATTEMPT=1 bash scripts/release-gate.sh "${REQ[@]}" >/tmp/gate.out 2>&1; local rc=$?
   if [ "$want" = pass ] && [ $rc -eq 0 ]; then echo "ok   all-success -> pass"
   elif [ "$want" = block ] && [ $rc -ne 0 ]; then echo "ok   $1:$* -> blocked (rc=$rc)"
   else echo "BAD  expected $want for '$*' got rc=$rc"; cat /tmp/gate.out; fail=1; fi
@@ -31,6 +31,8 @@ expect block scanner-test failure
 expect block helper-e2e OMIT
 expect block android failure
 python3 scripts/release-gate-structure.py || fail=1
-echo '{}' | bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  empty needs passed"; fail=1; } || echo "ok   empty needs -> blocked"
-echo 'not json' | bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  garbage passed"; fail=1; } || echo "ok   garbage -> blocked"
+mk "" "" | RUN_ATTEMPT=2 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  rerun attempt 2 passed"; fail=1; } || echo "ok   all-success but run_attempt=2 -> blocked"
+mk "" "" | env -u RUN_ATTEMPT bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  unset attempt passed"; fail=1; } || echo "ok   all-success but run_attempt unset -> blocked"
+echo '{}' | RUN_ATTEMPT=1 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  empty needs passed"; fail=1; } || echo "ok   empty needs -> blocked"
+echo 'not json' | RUN_ATTEMPT=1 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  garbage passed"; fail=1; } || echo "ok   garbage -> blocked"
 [ $fail -eq 0 ] && echo "RELEASE GATE SELFTEST PASS" || { echo "RELEASE GATE SELFTEST FAIL"; exit 1; }

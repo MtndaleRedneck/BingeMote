@@ -19,5 +19,7 @@ if rn != "release-gate": print("BAD  release needs", rn); ok = False
 rif = re.search(r"(?m)^    if: (.*)$", jobs["release"]).group(1)
 if "needs.release-gate.result == 'success'" not in rif or "always()" in rif or "failure()" in rif:
     print("BAD  release if:", rif); ok = False
+if "github.run_attempt" not in jobs["release-gate"]: print("BAD  gate does not receive run_attempt"); ok = False
+if "pattern:" in jobs["release"] or "merge-multiple" in jobs["release"]: print("BAD  release downloads by broad pattern"); ok = False
 print("ok   workflow structure: required=%s" % sorted(req) if ok else "BAD  workflow structure")
 sys.exit(0 if ok else 1)
