@@ -61,19 +61,56 @@ class DisconnectedHomeUiTest {
         try {
             HapticTickTest.seedPrefs(ctx, false, stub.port)
             stub.state = "playing"
+            stub.mark("launch")
             launch()
             waitText("1:00:00 total")
+            stub.mark("connected-seen")
             assertTrue(has("0:30"))
             assertTrue(device.hasObject(By.desc("Pause")))
+            stub.mark("failStatus=true")
             stub.failStatus = true
             assertZero()
+            stub.mark("zero-seen")
             shot("disconnected-zero")
+            stub.mark("failStatus=false")
             stub.failStatus = false
-            waitText("1:00:00 total")
+            try {
+                waitText("1:00:00 total")
+            } catch (e: AssertionError) {
+                stub.mark("RECONNECT-WAIT-TIMEOUT")
+                diagCapture("t0")
+                throw e
+            }
+            stub.mark("reconnected-seen")
             assertTrue(has("0:30"))
             assertTrue(device.hasObject(By.desc("Pause")))
             shot("disconnected-reconnected")
-        } finally { stub.stop() }
+        } finally {
+            diagWriteLog(stub)
+            stub.stop()
+        }
+    }
+
+    // DIAGNOSTIC ONLY (cause of run 45683275444 attempt-1 red is unexplained): wall-clock
+    // stub request log, plus an immediate screenshot/hierarchy pair and an unfiltered
+    // logcat at the reconnect timeout. Observes; changes no product or assertion logic.
+    private fun diagCapture(tag: String) {
+        val dir = ctx.getExternalFilesDir(null) ?: return
+        runCatching { device.takeScreenshot(File(dir, "bm-diag-$tag.png")) }
+        runCatching { device.dumpWindowHierarchy(File(dir, "bm-diag-$tag.uix")) }
+        runCatching {
+            Thread.sleep(2000)
+            device.takeScreenshot(File(dir, "bm-diag-$tag-plus2s.png"))
+            device.dumpWindowHierarchy(File(dir, "bm-diag-$tag-plus2s.uix"))
+        }
+    }
+    private fun diagWriteLog(stub: HapticTickTest.StatusStub) {
+        val dir = ctx.getExternalFilesDir(null) ?: return
+        runCatching { File(dir, "bm-stublog-connectedDrop.txt").writeText(stub.reqLog.joinToString("\n") + "\n") }
+        runCatching {
+            val out = device.executeShellCommand("logcat -d -v threadtime -t 4000")
+            File(dir, "bm-logcat-connectedDrop.txt").writeText(out)
+        }
     }
 
     @Test fun vlcClosedReadsZero() {
