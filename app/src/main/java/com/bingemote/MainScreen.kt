@@ -249,7 +249,7 @@ private fun StatusPill(connected: Boolean, modifier: Modifier = Modifier) {
             Modifier
                 .size(9.dp)
                 .clip(CircleShape)
-                .background(if (connected) Orange else ErrorRed),
+                .background(if (connected) OkGreen else ErrorRed),
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -297,7 +297,7 @@ private fun SeekDrag.trackCircle(finger: Offset, rampPx: Float, insetPx: Float, 
  * the whole time - inside the circle too. */
 @Composable
 private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
-    val s = remote.status
+    val s = remote.shownStatus
     val length = s?.lengthSec ?: 0
     val position = if (length > 0) (s?.timeSec ?: 0).toFloat() / length else 0f
 
@@ -588,7 +588,7 @@ private fun VolumeRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, scal
 @Composable
 private fun SkipRow(remote: RemoteState, flashAll: Boolean, gapDp: Float, scale: Float = 1f, seekDrag: SeekDrag? = null) {
     val label = formatSkip(remote.store.skipMainSec)
-    val playing = remote.status?.playing == true
+    val playing = remote.shownStatus?.playing == true
     Row(
         Modifier.fillMaxWidth().padding(horizontal = gapDp.dp),
         verticalAlignment = Alignment.CenterVertically,

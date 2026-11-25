@@ -1,3 +1,15 @@
+## v1.15.0 - November 25, 2026
+
+A handful of small fixes and visual touches.
+
+**Improved**
+- Pairing: the code box now carries the orange outline, and the "Step 2 of 2" label is gone.
+- The Connected dot is green; the feedback arrow is a little more prominent.
+- Settings keeps its place when you come back from a subpage; opening it fresh from Home still starts at the top.
+
+**Fixed**
+- Disconnected with nothing playing: the seek bar, times and play button reset to zero instead of keeping the last video's position.
+
 ## v1.14.0 - November 24, 2026
 
 A full under-the-hood modernization: current foundations, a smaller app, and connection fixes.

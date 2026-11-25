@@ -16,6 +16,7 @@ val Dimmed = Color(0xFF5C5C66)
 val Orange = Color(0xFFF97C02)
 val OrangeLight = Color(0xFFFB9E2E)
 val ErrorRed = Color(0xFFE5484D)
+val OkGreen = Color(0xFF4CAF50)
 val TrackGray = Color(0xFF4A4A52)
 
 val OrangeGradient = Brush.verticalGradient(listOf(OrangeLight, Orange))

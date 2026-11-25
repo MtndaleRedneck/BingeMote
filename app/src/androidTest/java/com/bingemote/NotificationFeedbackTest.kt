@@ -139,6 +139,8 @@ class HapticTickTest {
         /** Next N commands are NOT applied and answer 500 after their delay. */
         @Volatile var failCommands = 0
         @Volatile var failStatus = false
+        /** Answer the status endpoint 401 (VLC refuses the password). */
+        @Volatile var failAuth = false
         @Volatile var beforeStatusResponse: (() -> Unit)? = null
         @Volatile var beforeCommandResponse: (() -> Unit)? = null
         private val running = AtomicBoolean(true)
@@ -170,6 +172,19 @@ class HapticTickTest {
                                     }
                                     snap = state
                                 } else {
+                                    // Helper endpoints when a test pairs this stub as the PC helper:
+                                    // a real volume answer keeps helperDown out of the VLC-closed case.
+                                    if (line.contains("/volume/get")) {
+                                        val vb = """{"volume":50,"mute":false}"""
+                                        val out = sock.getOutputStream()
+                                        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${vb.toByteArray().size}\r\nConnection: close\r\n\r\n$vb".toByteArray())
+                                        out.flush(); sock.close(); return@thread
+                                    }
+                                    if (failAuth) {
+                                        val out = sock.getOutputStream()
+                                        out.write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
+                                        out.flush(); sock.close(); return@thread
+                                    }
                                     if (failStatus) {
                                         val out = sock.getOutputStream()
                                         out.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())

@@ -129,13 +129,14 @@ class MainActivity : ComponentActivity() {
                 else if (store.setupDone) "main" else "setup") }
             screen = current
             // Scroll positions live above the screen switch so leaving a screen and
-            // coming back lands you where you were - except Settings, which Ezzy wants
-            // re-entered at the top (each navigation into it resets settingsScroll).
+            // coming back lands you where you were. Ezzy's Settings rule (2026-11-24):
+            // back from a subpage (Feedback, Your PC, pair re-entry) returns to the
+            // same spot; only opening Settings fresh from Home starts at the top.
             val settingsScroll = rememberScrollState(initial = if (BuildConfig.DEBUG && intent.hasExtra("updateResult")) Int.MAX_VALUE else 0)
             val navigationScope = rememberCoroutineScope()
-            fun openSettings() {
+            fun openSettings(resetScroll: Boolean = false) {
                 navigationScope.launch {
-                    settingsScroll.scrollTo(0)
+                    if (resetScroll) settingsScroll.scrollTo(0)
                     current.value = "settings"
                 }
             }
@@ -167,7 +168,7 @@ class MainActivity : ComponentActivity() {
                         remote,
                         onMouse = { current.value = "mouse" },
                         onMovies = { current.value = "movies" },
-                        onSettings = { openSettings() },
+                        onSettings = { openSettings(resetScroll = true) },
                         startSubtitlesOpen = true,
                     )
                     "movies" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG && intent.hasExtra("resumeask"))
@@ -192,7 +193,7 @@ class MainActivity : ComponentActivity() {
                         remote,
                         onMouse = { current.value = "mouse" },
                         onMovies = { current.value = "movies" },
-                        onSettings = { openSettings() },
+                        onSettings = { openSettings(resetScroll = true) },
                     )
                 }
                 UpdateHost(store)
