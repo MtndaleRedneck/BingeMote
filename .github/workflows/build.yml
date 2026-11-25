@@ -96,6 +96,10 @@ jobs:
         run: |
           set -euo pipefail
           APK=$(ls BingeMote-Android-*.apk)
+          # An all-run stages under a run-unique name, so a red run's asset is never replaced by a later run.
+          NAME="$APK"
+          if [ "${{ inputs.only }}" = "all" ]; then NAME="${APK%.apk}-run${GITHUB_RUN_ID}.apk"; fi
+          echo "Staged asset name: $NAME"
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           echo "Staged APK: $APK"
           echo "Staged APK sha256: $SHA"
@@ -112,7 +116,7 @@ jobs:
             ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
           fi
           echo "TestLab draft release id: $ID"
-          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
+          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$NAME" '.assets[] | select(.name==$n) | .id')
           if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
             echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
             exit 1
@@ -121,7 +125,7 @@ jobs:
             curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
           done
           UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
-          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$APK" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
+          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$NAME" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
 
 
   helper:
