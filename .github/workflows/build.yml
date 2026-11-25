@@ -420,11 +420,28 @@ jobs:
           name: BingeMote-screenshots
           path: screenshots/*
 
+  release-gate:
+    # Fail-closed: every required job must be exactly "success". failure, cancelled,
+    # skipped, missing and unknown all block publication. if: always() so a failed or
+    # skipped need still produces a logged table here instead of silently skipping.
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+    needs: [android, helper, helper-e2e, scanner-test, focused-ui, screenshots]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Required-job table (all must be success)
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: printf '%s' "$NEEDS_JSON" | bash scripts/release-gate.sh android helper helper-e2e scanner-test focused-ui screenshots
+      - name: Gate self-test (discriminates failure, skipped, cancelled, missing)
+        run: bash scripts/release-gate-test.sh
+
   release:
     # Hard-gated to the real public-release dispatch (all + publish): never runs
-    # under limited modes, independent of needs/notes assumptions.
+    # under limited modes, independent of needs/notes assumptions. Needs release-gate,
+    # which passes only when every required job is success.
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
-    needs: [android, helper, helper-e2e, screenshots]
+    needs: [release-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write

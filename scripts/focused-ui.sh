@@ -77,4 +77,12 @@ adb shell cmd statusbar expand-notifications
 sleep 3
 adb exec-out screencap -p > focused-ui/status-icon-shade.png
 adb shell cmd statusbar collapse
-grep -q '^OK (' focused-ui/tests.txt
+# Strict summary: exactly the expected count, and no failure markers anywhere.
+EXPECTED_TESTS=38
+if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg|Process crashed' focused-ui/tests.txt; then
+  echo "FOCUSED-UI GATE FAIL: failure marker in instrumentation output"; exit 1
+fi
+if ! tr -d "\r" < focused-ui/tests.txt | grep -qx "OK ($EXPECTED_TESTS tests)"; then
+  echo "FOCUSED-UI GATE FAIL: missing summary or test count != $EXPECTED_TESTS"; grep -E '^OK \(|Tests run' focused-ui/tests.txt || true; exit 1
+fi
+echo "FOCUSED-UI GATE PASS: OK ($EXPECTED_TESTS tests)"
