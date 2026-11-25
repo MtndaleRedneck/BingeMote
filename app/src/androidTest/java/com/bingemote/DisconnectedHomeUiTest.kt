@@ -56,21 +56,11 @@ class DisconnectedHomeUiTest {
             device.hasObject(By.desc("Pause")))
     }
 
-    // Bounded wait for the settled PLAYING state, mirroring assertZero's bounded wait for the settled
-    // Play state (the earlier fix after run 45556057887): the "1:00:00 total" text and the play
-    // control's desc are separate accessibility nodes, and a single read right after the text appears
-    // can land on a snapshot where they disagree (run 45683275444 diag iter10 failed exactly this
-    // one-shot read: texts at the playing state, desc "Play"). Same final contract, same 20s/10s budgets:
-    // the time text must be there, the Pause glyph must APPEAR within the budget (a never-settling
-    // node still fails), and at that settled moment no contradictory Play desc may be present.
-    // What this does NOT prove: anything before/after that single check point. The cause of the
-    // snapshot split (framework vs product) is neither claimed nor fixed here.
+    // Original contract, unchanged: one-shot reads right after the text appears (no added wait).
+    // Failures are explained by the pre-stop observer, not hidden by synchronization.
     private fun awaitPlayingGlyph(phase: String) {
-        waitText("0:30")
-        assertTrue("$phase: Pause glyph never appeared after the playing state settled",
-            device.wait(Until.hasObject(By.desc("Pause")), 10000))
-        assertFalse("$phase: Play glyph contradicts the settled playing state",
-            device.hasObject(By.desc("Play")))
+        assertTrue(has("0:30"))
+        assertTrue(device.hasObject(By.desc("Pause")))
     }
 
     @Test fun connectedThenDropReadsZeroThenReconnects() {
@@ -126,6 +116,12 @@ class DisconnectedHomeUiTest {
     }
     private fun observe(stub: HapticTickTest.StatusStub) {
         val dir = ctx.getExternalFilesDir(null) ?: return
+        // No-sleep repeat reads of the play-control desc first (single-shot skew vs persistent),
+        // then the stub's last request, then the full probe.
+        ts("t0 desc Pause read1") { device.hasObject(By.desc("Pause")).toString() }
+        ts("t0 desc Pause read2") { device.hasObject(By.desc("Pause")).toString() }
+        ts("t0 desc Play read1") { device.hasObject(By.desc("Play")).toString() }
+        ts("stub last req") { stub.reqLog.lastOrNull().toString() + " flags: " + stub.reqLog.takeLast(1).size }
         probe("t0")
         ts("png1") { device.takeScreenshot(File(dir, "bm-obs-1.png")).toString() }
         ts("uix1") { device.dumpWindowHierarchy(File(dir, "bm-obs-1.uix")); "" }
