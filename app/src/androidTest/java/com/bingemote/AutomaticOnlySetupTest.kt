@@ -18,6 +18,7 @@ class AutomaticOnlySetupTest {
         // One definition shared by the control and the primary below: the two tests
         // can never drift onto different selectors for the same element.
         const val SETUP_TITLE = "Find your PC"
+        const val SCROLL_VIEW_CLASS = "android.widget.ScrollView"
         const val PAIR_CODE_LABEL = "Code from your PC"
         const val PAIR_CARD_BODY = "Enter the code BingeMote is showing on your PC"
         const val DEMO_PC_ROW = "MY-PC  ("
@@ -177,9 +178,10 @@ class AutomaticOnlySetupTest {
             device.hasObject(By.textContains(PAIR_CARD_BODY)))
         // Same-viewport precondition (test-proof strategy, no scrolling proof needed). ONE accessibility
         // tree read (readSetup) must show the address label, the "Use this address" button (label AND its
-        // 48dp tile) and the pair-code label, all fully inside the scroll viewport V, where V is the
-        // nearest scrollable ancestor shared by the three (ambiguity fails). Small swipes may only be used
-        // to REACH that state; nothing after typing scrolls. If it cannot be established, fail closed.
+        // 48dp tile) and the pair-code label, all fully inside the effective viewport Ve, where V is the one container
+        // (scrollable, or the Compose ScrollView class) shared by the address label and the button label (two nested common
+        // containers are ambiguous and fail) and Ve is V's rect intersected with the window and every ancestor's bounds. Small
+        // swipes may only be used to REACH that state; nothing after typing scrolls. If it cannot be established, fail closed.
         val typed = "192.0.2.20"
         var before: SetupView? = null
         var nudges = 0
@@ -242,9 +244,10 @@ class AutomaticOnlySetupTest {
         // selection) keeps chosen set, which (SetupScreen L267-269 and L273) shows a "Selected: host:port" row
         // 8dp under the button tile AND the pair card. Both absent is required. Absence only counts when
         // the region where the row would start is observably inside the viewport in the SAME tree:
-        // tile and address label fully inside V (top included), V and the window unchanged from before
-        // typing, the typed text present in the field, and the full first line of the row
-        // (address-label height as the same-13sp-style stand-in, +4 px for rounding) above V's bottom.
+        // tile and address label fully inside Ve (top included), the same container (class, path, rect) and window as before
+        // typing (its scrollable flag may differ: the page can fit once the card is gone), the typed text present in the field, and
+        // the full first line of the row (address-label height as the same-13sp-style stand-in, +4 px for rounding) between Ve's
+        // top and bottom. A missing scrollable flag is never read as "fits": the arithmetic is.
         // Geometry is re-read on every tick; a missing node or violated condition is an invalid tick,
         // never a pass, and a timeout fails. Two consecutive equal reads are required. This is a
         // conservative visibility HEURISTIC: Compose/UiAutomator exposure of clipped nodes is unproven,
@@ -303,7 +306,7 @@ class AutomaticOnlySetupTest {
         while (control == null && System.currentTimeMillis() < controlBy) {
             device.waitForIdle()
             val now = readSetup()
-            controlWhy = now?.controlProblem(typed, "Selected: $typed:${HelperClient.DEFAULT_PORT}") ?: "no accessibility snapshot"
+            controlWhy = now?.controlProblem(typed, "Selected: $typed:${HelperClient.DEFAULT_PORT}", pre) ?: "no accessibility snapshot"
             if (now != null && controlWhy == "ok") control = now else Thread.sleep(300)
         }
         assertNotNull("positive control failed: $controlWhy", control)
@@ -334,25 +337,29 @@ class AutomaticOnlySetupTest {
 
     // ---- single-tree reads (one getRootInActiveWindow walk per call; nothing is cached between calls) ----
 
-    private class N(val info: AccessibilityNodeInfo, val parent: N?) {
+    private class N(val info: AccessibilityNodeInfo, val parent: N?, val idx: Int) {
         val rect = Rect().also { info.getBoundsInScreen(it) }
         val text: String? = info.text?.toString()
         val cls: String? = info.className?.toString()
         val scrollable = info.isScrollable
         fun ancestors(): List<N> { val out = ArrayList<N>(); var p = parent; while (p != null) { out.add(p); p = p.parent }; return out }
-        fun scrollAncestors(): List<N> = ancestors().filter { it.scrollable }
+        /** Viewport container candidates: a node that reports scrollable, OR the Compose scroll container class (a verticalScroll
+         *  Column whose content fits reports scrollable=false but is still the clip box; seen in BingeMote run 45570170741's dump). */
+        fun containerAncestors(): List<N> = ancestors().filter { it.scrollable || it.cls == SCROLL_VIEW_CLASS }
+        /** Child-index path from the root (root = empty), identical for the same container in another walk of the same screen. */
+        fun path(): List<Int> { val out = ArrayList<Int>(); var n: N? = this; while (n?.parent != null) { out.add(0, n.idx); n = n.parent }; return out }
     }
 
     /** Walks the whole tree. Returns false if ANY node could not be read (a null child or the depth cap),
      *  because an absence read from an incomplete walk proves nothing; callers must treat that tick as invalid. */
-    private fun walk(info: AccessibilityNodeInfo, parent: N?, out: MutableList<N>, depth: Int): Boolean {
-        val n = N(info, parent); out.add(n)
+    private fun walk(info: AccessibilityNodeInfo, parent: N?, out: MutableList<N>, depth: Int, idx: Int): Boolean {
+        val n = N(info, parent, idx); out.add(n)
         if (depth > 60) return info.childCount == 0
         var complete = true
         for (i in 0 until info.childCount) {
             val c = info.getChild(i)
             if (c == null) { complete = false; continue }
-            if (!walk(c, n, out, depth + 1)) complete = false
+            if (!walk(c, n, out, depth + 1, i)) complete = false
         }
         return complete
     }
@@ -361,8 +368,15 @@ class AutomaticOnlySetupTest {
         val window: Rect, val f: N?, val bt: N?, val l: List<N>, val selected: List<N>,
         val fieldText: String?, val v: N?, val vProblem: String?, val tile: Rect?, val tileSource: String,
         val density: Float, val complete: Boolean,
+        /** Effective viewport: V's rect intersected with the window and EVERY ancestor's bounds up to the root (what can be seen). */
+        val ve: Rect?,
+        /** Stable container identity: class, root-to-V child-index path, rect. Deliberately NOT the scrollable flag (it may flip
+         *  when the content shrinks or grows, a healthy transition); each snapshot's own flag is read truthfully. */
+        val vId: String?,
+        /** Full fingerprint for "two consecutive equal reads": identity + this snapshot's scrollable flag + window + all ancestor rects + Ve. */
+        val vFp: String?,
     ) {
-        fun describe() = "complete=$complete window=${rs(window)} V=${rs(v?.rect)} F=${rs(f?.rect)} tile=${rs(tile)}($tileSource) " +
+        fun describe() = "complete=$complete window=${rs(window)} V=${rs(v?.rect)} Ve=${rs(ve)} Vfp=${vFp} F=${rs(f?.rect)} tile=${rs(tile)}($tileSource) " +
             "L=${rs(l.firstOrNull()?.rect)} sel=${selected.size} field='${fieldText}'"
         private fun inside(r: Rect, v: Rect) = r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom && r.height() > 0
         // Text nodes sit inside layout padding, so a node that is only partly visible (its reported
@@ -371,59 +385,72 @@ class AutomaticOnlySetupTest {
         // and the card label, whose heights or centres the clearance arithmetic is derived from.
         private fun insideStrict(r: Rect, v: Rect) = r.left > v.left && r.right < v.right && r.top > v.top && r.bottom < v.bottom && r.height() > 0
 
-        /** Before typing: label, button tile and card label all fully inside one unambiguous viewport. */
-        fun preconditionProblem(): String? {
+        /** Common viewport checks (every tick, every state): complete walk, one unambiguous container, non-empty effective viewport. */
+        private fun viewportProblem(): String? {
             if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
             if (window.isEmpty) return "window bounds empty"
+            if (v == null || ve == null) return "viewport not established ($vProblem): ${describe()}"
+            if (ve.isEmpty) return "effective viewport empty (a failed check, not evidence that the row is absent): ${describe()}"
+            return null
+        }
+
+        /** Before typing: label, button label and tile fully inside the effective viewport; the pair-code label present and inside it. */
+        fun preconditionProblem(): String? {
+            viewportProblem()?.let { return it }
             if (f == null) return "address label not found: ${describe()}"
             if (bt == null || tile == null) return "button label not found: ${describe()}"
             if (l.isEmpty()) return "pair-code label not found: ${describe()}"
-            if (v == null) return "viewport not established ($vProblem): ${describe()}"
-            val vr = v.rect
-            if (!insideStrict(f.rect, vr)) return "address label not strictly inside V (clipped or on the edge): ${describe()}"
-            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside V (clipped or on the edge): ${describe()}"
-            if (!inside(tile, vr)) return "button tile not fully inside V: ${describe()}"
-            if (!insideStrict(l[0].rect, vr)) return "pair-code label not strictly inside V (clipped or on the edge): ${describe()}"
+            val vr = ve!!
+            if (!insideStrict(f.rect, vr)) return "address label not strictly inside Ve (clipped or on the edge): ${describe()}"
+            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside Ve (clipped or on the edge): ${describe()}"
+            if (!inside(tile, vr)) return "button tile not fully inside Ve: ${describe()}"
+            if (!insideStrict(l[0].rect, vr)) return "pair-code label not strictly inside Ve (clipped or on the edge): ${describe()}"
             return null
         }
 
-        /** After typing: the region where a still-present Selected row would start must be observable. */
+        /** After typing: the region where a still-present Selected row would start must be observable inside Ve. */
         fun postProblem(typed: String, pre: SetupView): String? {
-            if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
+            viewportProblem()?.let { return it }
             if (window != pre.window) return "window bounds changed: before=${rs(pre.window)} now=${rs(window)}"
             if (f == null || bt == null || tile == null) return "address label or button missing: ${describe()}"
-            if (v == null) return "viewport not established ($vProblem): ${describe()}"
-            if (v.rect != pre.v!!.rect) return "viewport bounds changed: before=${rs(pre.v.rect)} now=${rs(v.rect)}"
+            // Same container as before typing (class, child-index path, rect). The scrollable flag is NOT compared: typing removes the
+            // pair card and the Selected row, so a page that scrolled before may legitimately fit now.
+            if (vId != pre.vId) return "viewport container changed: before=${pre.vId} now=$vId"
             if (fieldText != typed) return "typed text not in the field in this tree (field='$fieldText')"
-            val vr = v.rect
-            if (!insideStrict(f.rect, vr)) return "address label not strictly inside V (clipped or on the edge): ${describe()}"
-            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside V (clipped or on the edge): ${describe()}"
-            if (!inside(tile, vr)) return "button tile not fully inside V (top included): ${describe()}"
+            val vr = ve!!
+            if (!insideStrict(f.rect, vr)) return "address label not strictly inside Ve (clipped or on the edge): ${describe()}"
+            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside Ve (clipped or on the edge): ${describe()}"
+            if (!inside(tile, vr)) return "button tile not fully inside Ve (top included): ${describe()}"
             // Row first-line height: the larger of the label heights read before and after typing, so a
-            // label that read short in one tree cannot understate the clearance.
+            // label that read short in one tree cannot understate the clearance. Must be positive.
             val lineH = Math.max(f.rect.height(), pre.f!!.rect.height())
+            if (lineH <= 0) return "address label height not positive: ${describe()}"
             val rowTop = tile.bottom + Math.round(8 * density)
-            val need = rowTop + lineH + 4
-            if (need > vr.bottom) return "first line of a would-be Selected row not observable: rowTop=$rowTop need=$need Vbottom=${vr.bottom} (button moved down, clamp or scroll): ${describe()}"
+            val rowBottom = rowTop + lineH + 4
+            if (rowTop < vr.top || rowBottom > vr.bottom) return "first line of a would-be Selected row not observable inside Ve: rowTop=$rowTop rowBottom=$rowBottom Ve=${rs(vr)} scrollable=${v!!.scrollable} (button moved, clamp or scroll): ${describe()}"
             return null
         }
 
-        /** Confirmed-address state: exactly one non-empty Selected row and the card label, inside V. */
-        fun controlProblem(typed: String, expectedRow: String): String {
-            if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
-            if (v == null) return "viewport not established ($vProblem): ${describe()}"
+        /** Confirmed-address state: exactly one non-empty Selected row and the card label, inside Ve, in the SAME container as the verdict
+         *  read. The control runs in its own truthful branch (the flag may differ: more content). It proves the routine finds the row with
+         *  the same query inside Ve; it does not prove the verdict's no-scroll branch. */
+        fun controlProblem(typed: String, expectedRow: String, pre: SetupView): String {
+            viewportProblem()?.let { return it }
+            if (window != pre.window) return "window bounds changed: before=${rs(pre.window)} now=${rs(window)}"
+            if (vId != pre.vId) return "viewport container changed: before=${pre.vId} now=$vId"
             if (fieldText != typed) return "typed text not in the field (field='$fieldText')"
             if (selected.size != 1) return "Selected rows=${selected.size}: ${describe()}"
             val row = selected[0]
             if (row.text != expectedRow) return "Selected text '${row.text}' != '$expectedRow'"
-            if (!inside(row.rect, v.rect)) return "Selected row not inside V: row=${rs(row.rect)} ${describe()}"
-            if (l.isEmpty() || !insideStrict(l[0].rect, v.rect)) return "pair-code label not strictly inside V: ${describe()}"
+            val vr = ve!!
+            if (!inside(row.rect, vr)) return "Selected row not inside Ve: row=${rs(row.rect)} ${describe()}"
+            if (l.isEmpty() || !insideStrict(l[0].rect, vr)) return "pair-code label not strictly inside Ve: ${describe()}"
             // Same containment the verdict relies on, so the control proves the routine can see the row
             // under the same rules (not at the verdict's scroll position, which it does not claim).
             if (f == null || bt == null || tile == null) return "address label or button missing: ${describe()}"
-            if (!insideStrict(f.rect, v.rect) || !insideStrict(bt.rect, v.rect) || !inside(tile, v.rect))
-                return "address label, button label or tile not inside V: ${describe()}"
-            if (!insideStrict(row.rect, v.rect)) return "Selected row not strictly inside V: row=${rs(row.rect)} ${describe()}"
+            if (!insideStrict(f.rect, vr) || !insideStrict(bt.rect, vr) || !inside(tile, vr))
+                return "address label, button label or tile not inside Ve: ${describe()}"
+            if (!insideStrict(row.rect, vr)) return "Selected row not strictly inside Ve: row=${rs(row.rect)} ${describe()}"
             return "ok"
         }
     }
@@ -432,7 +459,7 @@ class AutomaticOnlySetupTest {
         val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
         val root = ui.rootInActiveWindow ?: return null
         val nodes = ArrayList<N>()
-        val complete = walk(root, null, nodes, 0)
+        val complete = walk(root, null, nodes, 0, 0)
         val window = Rect().also { root.getBoundsInScreen(it) }
         val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
         val f = nodes.filter { it.text == "Or type the PC's address:" }.singleOrNull()
@@ -442,14 +469,29 @@ class AutomaticOnlySetupTest {
         val field = nodes.filter { it.cls == "android.widget.EditText" }.minByOrNull { it.rect.top }
         var v: N? = null
         var vProblem: String? = null
+        var ve: Rect? = null
+        var vId: String? = null
+        var vFp: String? = null
+        // V is resolved from the two nodes that are PRESENT in every state (address label and the button label); the pair-code label is
+        // absent in the bug case and must not anchor anything. Exactly one container may be a common ancestor of the two (nested ones are
+        // ambiguous and fail closed). There is never a window fallback.
         if (f == null || bt == null) vProblem = "address label or button not unique/present"
         else {
-            val sf = f.scrollAncestors(); val sb = bt.scrollAncestors()
-            val sl = l.firstOrNull()?.scrollAncestors()
-            if (sf.isEmpty()) vProblem = "no scrollable ancestor of the address label"
-            else if (sb.isEmpty() || sf.first().info != sb.first().info && sf.first().rect != sb.first().rect) vProblem = "label and button have different nearest scrollable ancestors"
-            else if (sl != null && (sl.isEmpty() || sf.first().rect != sl.first().rect)) vProblem = "pair-code label has a different nearest scrollable ancestor"
-            else v = sf.first()
+            val cf = f.containerAncestors(); val cb = bt.containerAncestors()
+            val common = cf.filter { c -> cb.any { it === c } }
+            if (common.isEmpty()) vProblem = "no container (scrollable or ScrollView) shared by the address label and the button label"
+            else if (common.size > 1) vProblem = "ambiguous viewport: ${common.size} nested containers are common ancestors (${common.joinToString { rs(it.rect) }})"
+            else {
+                val c = common[0]
+                val ancestorRects = c.ancestors().map { it.rect }
+                val e = Rect(c.rect)
+                var ok = e.intersect(window)
+                for (r in ancestorRects) ok = ok && e.intersect(r)
+                v = c
+                ve = if (ok) e else Rect()
+                vId = "${c.cls}|path=${c.path()}|rect=${rs(c.rect)}"
+                vFp = "$vId|scrollable=${c.scrollable}|window=${rs(window)}|anc=${ancestorRects.joinToString(",") { rs(it) }}|ve=${rs(ve)}"
+            }
         }
         var tile: Rect? = null
         var tileSource = "none"
@@ -463,7 +505,7 @@ class AutomaticOnlySetupTest {
                 tileSource = "label-center+24dp"
             }
         }
-        return SetupView(window, f, bt, l, selected, field?.text?.toString(), v, vProblem, tile, tileSource, density, complete)
+        return SetupView(window, f, bt, l, selected, field?.text?.toString(), v, vProblem, tile, tileSource, density, complete, ve, vId, vFp)
     }
 }
 
