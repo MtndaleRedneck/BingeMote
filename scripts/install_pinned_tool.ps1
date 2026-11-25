@@ -36,7 +36,9 @@ function Test-Installed {
     if (-not (Test-Path $vlcExe)) { return $false }
     $script:seen = "vlc.exe ProductVersion '$((Get-Item $vlcExe).VersionInfo.ProductVersion)'"
     Write-Host "found $script:seen"
-    return ((Get-Item $vlcExe).VersionInfo.ProductVersion -like '3.0.24*')
+    # Windows reports ProductVersion as '3,0,24,0' (commas): normalise, then exact 3.0.24 with one optional numeric 4th field.
+    $v = ((Get-Item $vlcExe).VersionInfo.ProductVersion -replace '[,\s]+','.')
+    return ($v -match '^3\.0\.24(\.\d+)?$')
   }
   $ff = (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue).Source
   if (-not $ff) { return $false }

@@ -43,7 +43,7 @@ Assert ((Get-Item $wav).Length -eq 44 + $dataSize) "test wav written"
 Write-Host "== VLC (pinned install from the workflow step) =="
 $vlcExe = 'C:\Program Files\VideoLAN\VLC\vlc.exe'
 Assert (Test-Path $vlcExe) "vlc present at the pinned install path (workflow step must have installed it)"
-Assert ((Get-Item $vlcExe).VersionInfo.ProductVersion -like '3.0.24*') "vlc is the pinned 3.0.24"
+Assert (((Get-Item $vlcExe).VersionInfo.ProductVersion -replace '[,\s]+','.') -match '^3\.0\.24(\.\d+)?$') "vlc is the pinned 3.0.24"
 & $vlcExe --version
 $proc = Start-Process $vlcExe -PassThru -ArgumentList '-I','dummy','--aout=afile','--audiofile-file=NUL','--audiofile-format=s16l','--extraintf','http','--http-host','127.0.0.1','--http-port','8080','--http-password',$pass
 try {
