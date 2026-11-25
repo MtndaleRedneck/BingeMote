@@ -90,41 +90,6 @@ jobs:
       # Hidden-build staging: the signed APK goes straight to the private TestLab
       # repo's draft release (collaborator-only visibility), never to a public
       # artifact. Prints the sha256 of the staged bytes for the review brief.
-      - name: Stage the signed APK to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          set -euo pipefail
-          APK=$(ls BingeMote-Android-*.apk)
-          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          echo "Staged APK: $APK"
-          echo "Staged APK sha256: $SHA"
-          AUTH="Authorization: Bearer $TESTLAB_PAT"
-          REPO=MtndaleRedneck/TestLab
-          TAG="android-v${VERSION}"
-          VISIBLE=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.tag_name==$t and (.draft|not))][0].id // empty')
-          if [ -n "$VISIBLE" ]; then
-            echo "::error::Existing visible release $TAG cannot be overwritten"
-            exit 1
-          fi
-          ID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.draft==true and .tag_name==$t)][0].id // empty')
-          if [ -z "$ID" ]; then
-            ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
-          fi
-          echo "TestLab draft release id: $ID"
-          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
-          if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
-            echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
-            exit 1
-          fi
-          for a in $EXISTING; do
-            curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
-          done
-          UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
-          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$APK" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
-
-
   helper:
     # Android-only private staging must not replace an already reviewed PC asset.
     if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage' || inputs.target == 'helper'
@@ -178,40 +143,6 @@ jobs:
       # Hidden-build staging: the installer goes straight to the private TestLab
       # repo's draft release (collaborator-only visibility), never to a public
       # artifact. Prints the sha256 of the staged bytes for the review brief.
-      - name: Stage the installer to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $exe = (Get-Item BingeMote-PC-*.exe).Name
-          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          Write-Output "Staged installer: $exe"
-          Write-Output "Staged installer sha256: $sha"
-          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT" }
-          $repo = 'MtndaleRedneck/TestLab'
-          $tag = "pc-v$env:HELPER_VERSION"
-          $rels = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
-          $visible = $rels | Where-Object { (-not $_.draft) -and $_.tag_name -eq $tag } | Select-Object -First 1
-          if ($visible) { throw 'Existing visible version cannot be overwritten' }
-          $draft = $rels | Where-Object { $_.draft -and $_.tag_name -eq $tag } | Select-Object -First 1
-          if (-not $draft) {
-            $body = @{ tag_name = $tag; name = "BingeMote PC $env:HELPER_VERSION"; draft = $true; body = "Staged for independent review. Source: MtndaleRedneck/BingeMote@$env:GITHUB_SHA, run $env:GITHUB_RUN_ID." } | ConvertTo-Json
-            $draft = Invoke-RestMethod -Method Post -Headers $headers -Body $body -ContentType 'application/json' "https://api.github.com/repos/$repo/releases"
-          }
-          Write-Output "TestLab draft release id: $($draft.id)"
-          $rel = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/$($draft.id)"
-          $existing = @($rel.assets | Where-Object { $_.name -eq $exe })
-          if ($existing.Count -gt 0 -and '${{ inputs.restage }}' -ne 'true') { throw 'Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)' }
-          foreach ($a in $existing) {
-            Invoke-RestMethod -Method Delete -Headers $headers "https://api.github.com/repos/$repo/releases/assets/$($a.id)" | Out-Null
-          }
-          $upload = $rel.upload_url -replace '\{\?name,label\}', ''
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
-          $upHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/octet-stream' }
-          $asset = Invoke-RestMethod -Method Post -Headers $upHeaders -Body $bytes ("$upload" + "?name=$exe")
-          Write-Output "Staged asset id: $($asset.id)"
-
   helper-e2e:
     if: github.event_name != 'workflow_dispatch' || (inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: windows-latest
@@ -273,21 +204,6 @@ jobs:
       # staged installer asset from the hidden TestLab draft (collaborator-only)
       # instead of a public run artifact. helper-e2e.ps1 asserts its hash against
       # the shipping_sha256 input before installing.
-      - name: Download the shipping installer from the TestLab draft (exact staged bytes)
-        if: ${{ inputs.shipping_testlab_asset_id != '' }}
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          New-Item -ItemType Directory -Force helper/Shipping | Out-Null
-          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT"; Accept = 'application/octet-stream' }
-          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
-          New-Item -ItemType Directory -Force helper/Prior | Out-Null
-          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/784504607" -OutFile helper/Prior/BingeMote-PC-1.7.15.exe
-          $priorHash = (Get-FileHash helper/Prior/BingeMote-PC-1.7.15.exe -Algorithm SHA256).Hash.ToLower()
-          if ($priorHash -ne 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd') { throw 'Exact prior1.7.15 hash mismatch' }
-          Write-Host "Exact prior1.7.15 installer sha256: $priorHash"
-
-
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
         timeout-minutes: 6
         env:
