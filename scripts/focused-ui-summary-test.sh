@@ -14,11 +14,11 @@ run() { # $1 want(pass|fail) $2 label ; fixture on stdin
   else echo "BAD  $2: want $1 rc=$rc"; cat "$w/out.txt"; fail=1; fi
 }
 blocks() { for i in $(seq 1 "$2"); do printf 'INSTRUMENTATION_STATUS: numtests=%s\r\nINSTRUMENTATION_STATUS: test=t%s\r\n' "$1" "$i"; done; }
-{ blocks 38 76; printf '\r\nOK (38 tests)\r\n\r\n'; } | run pass "healthy 38 blocks + OK (38 tests), CRLF"
-{ blocks 38 75; blocks 37 1; printf 'OK (38 tests)\r\n'; } | run fail "one block numtests=37"
-printf 'OK (38 tests)\r\n' | run fail "no numtests"
-{ blocks 38 76; printf 'OK (37 tests)\r\n'; } | run fail "OK (37 tests)"
-{ blocks 38 76; printf 'FAILURES!!!\r\nTests run: 38,  Failures: 1\r\n'; } | run fail "FAILURES!!! present"
-{ blocks 38 76; printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\r\n'; } | run fail "process crashed"
-: | run fail "empty file"
+run pass "healthy 38 blocks + OK (38 tests), CRLF" < <({ blocks 38 76; printf '\r\nOK (38 tests)\r\n\r\n'; })
+run fail "one block numtests=37" < <({ blocks 38 75; blocks 37 1; printf 'OK (38 tests)\r\n'; })
+run fail "no numtests" < <(printf 'OK (38 tests)\r\n')
+run fail "OK (37 tests)" < <({ blocks 38 76; printf 'OK (37 tests)\r\n'; })
+run fail "FAILURES!!! present" < <({ blocks 38 76; printf 'FAILURES!!!\r\nTests run: 38,  Failures: 1\r\n'; })
+run fail "process crashed" < <({ blocks 38 76; printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\r\n'; })
+run fail "empty file" < <(:)
 [ $fail -eq 0 ] && echo "FOCUSED-UI SUMMARY SELFTEST PASS" || { echo "FOCUSED-UI SUMMARY SELFTEST FAIL"; exit 1; }
