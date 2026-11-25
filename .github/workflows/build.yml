@@ -353,6 +353,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: DRY-RUN source assert (no PAT, token, release, write permission or foreign secrets)
+        run: bash scripts/dry-assert.sh
       - name: Required-job table (all must be success)
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
