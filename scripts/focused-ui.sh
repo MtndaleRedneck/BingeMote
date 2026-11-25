@@ -87,8 +87,9 @@ if ! tr -d "\r" < focused-ui/tests.txt | grep -qx "OK ($EXPECTED_TESTS tests)"; 
 fi
 # numtests (on every status block of the raw -r stream) must be present and equal the expected
 # count on EVERY block, so a silently shrunk or partial run cannot pass.
-nt_all=$(tr -d "\r" < focused-ui/tests.txt | grep -cE '^INSTRUMENTATION_STATUS: numtests=' || true)
-nt_bad=$(tr -d "\r" < focused-ui/tests.txt | grep -E '^INSTRUMENTATION_STATUS: numtests=' | grep -vxF "INSTRUMENTATION_STATUS: numtests=$EXPECTED_TESTS" | wc -l)
+# awk counts (always exit 0): a grep -v that selects nothing exits 1 and would kill the script
+# under set -e/pipefail on a HEALTHY run.
+read -r nt_all nt_bad < <(tr -d "\r" < focused-ui/tests.txt | awk -v want="$EXPECTED_TESTS" '/^INSTRUMENTATION_STATUS: numtests=/{a++; if ($0 != "INSTRUMENTATION_STATUS: numtests=" want) b++} END{print a+0, b+0}')
 if [ "$nt_all" -lt 1 ] || [ "$nt_bad" -ne 0 ]; then
   echo "FOCUSED-UI GATE FAIL: numtests missing ($nt_all) or != $EXPECTED_TESTS on $nt_bad block(s)"; exit 1
 fi

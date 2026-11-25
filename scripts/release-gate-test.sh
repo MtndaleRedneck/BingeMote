@@ -35,4 +35,5 @@ mk "" "" | RUN_ATTEMPT=2 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&
 mk "" "" | env -u RUN_ATTEMPT bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  unset attempt passed"; fail=1; } || echo "ok   all-success but run_attempt unset -> blocked"
 echo '{}' | RUN_ATTEMPT=1 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  empty needs passed"; fail=1; } || echo "ok   empty needs -> blocked"
 echo 'not json' | RUN_ATTEMPT=1 bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  garbage passed"; fail=1; } || echo "ok   garbage -> blocked"
+bash scripts/focused-ui-summary-test.sh || fail=1
 [ $fail -eq 0 ] && echo "RELEASE GATE SELFTEST PASS" || { echo "RELEASE GATE SELFTEST FAIL"; exit 1; }
