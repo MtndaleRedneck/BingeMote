@@ -31,6 +31,10 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      stage_tested_apk:
+        description: 'With only=all and publish=false: stage the signed APK built by THIS run (the exact tested bytes) to the PRIVATE TestLab draft. Never public. Default false.'
+        type: boolean
+        default: false
       restage:
         description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
         type: boolean
@@ -86,12 +90,16 @@ jobs:
       # repo's draft release (collaborator-only visibility), never to a public
       # artifact. Prints the sha256 of the staged bytes for the review brief.
       - name: Stage the signed APK to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
+        if: github.event_name == 'workflow_dispatch' && (inputs.only == 'stage' || (inputs.only == 'all' && inputs.publish == false && inputs.stage_tested_apk == true))
         env:
           TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
         run: |
           set -euo pipefail
           APK=$(ls BingeMote-Android-*.apk)
+          # An all-run stages under a run-unique name, so a red run's asset is never replaced by a later run.
+          NAME="$APK"
+          if [ "${{ inputs.only }}" = "all" ]; then NAME="${APK%.apk}-run${GITHUB_RUN_ID}.apk"; fi
+          echo "Staged asset name: $NAME"
           SHA=$(sha256sum "$APK" | cut -d' ' -f1)
           echo "Staged APK: $APK"
           echo "Staged APK sha256: $SHA"
@@ -108,7 +116,7 @@ jobs:
             ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
           fi
           echo "TestLab draft release id: $ID"
-          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
+          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$NAME" '.assets[] | select(.name==$n) | .id')
           if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
             echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
             exit 1
@@ -117,7 +125,7 @@ jobs:
             curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
           done
           UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
-          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$APK" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
+          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$NAME" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
 
 
   helper:
@@ -223,9 +231,13 @@ jobs:
       - name: Publish helper exe (with the CI-only pairing hook)
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK" -o helper/out
 
-      # The movies test launches real VLC; install it as its own step so a mirror hiccup is visible.
-      - name: Install VLC (for the movies launch test)
-        run: choco install vlc --no-progress -y
+      # The movies test launches real VLC. Pinned official download, sha256-verified BEFORE it is run
+      # (replaces `choco install vlc`: the feed's 503 was swallowed here and only failed later as a
+      # test assertion). Fails closed as "TOOL NOT RUN" before any test; no unverified fallback.
+      # scripts/install_pinned_tool.ps1 is the qualified Zephyr helper (git blob 1d0e1aae1709); only the vlc leg is used.
+      - name: Install VLC (pinned 3.0.24, sha256-verified; for the movies launch test)
+        timeout-minutes: 12
+        run: pwsh -File scripts/install_pinned_tool.ps1 -Tool vlc
 
       - name: Build the installer from the test build (for the install/uninstall test)
         run: |
@@ -420,21 +432,45 @@ jobs:
           name: BingeMote-screenshots
           path: screenshots/*
 
+  release-gate:
+    # Fail-closed: every required job must be exactly "success". failure, cancelled,
+    # skipped, missing and unknown all block publication. if: always() so a failed or
+    # skipped need still produces a logged table here instead of silently skipping.
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.publish == true || inputs.stage_tested_apk == true) && inputs.only == 'all'
+    needs: [android, helper, helper-e2e, scanner-test, focused-ui, screenshots]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Required-job table (all must be success)
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: printf '%s' "$NEEDS_JSON" | bash scripts/release-gate.sh android helper helper-e2e scanner-test focused-ui screenshots
+      - name: Gate self-test (discriminates failure, skipped, cancelled, missing)
+        run: bash scripts/release-gate-test.sh
+
   release:
     # Hard-gated to the real public-release dispatch (all + publish): never runs
-    # under limited modes, independent of needs/notes assumptions.
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
-    needs: [android, helper, helper-e2e, screenshots]
+    # under limited modes, independent of needs/notes assumptions. Needs release-gate,
+    # which passes only when every required job is success.
+    if: needs.release-gate.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+    needs: [release-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Exactly the one artifact being published (not a broad pattern), from THIS run.
       - uses: actions/download-artifact@v4
         with:
-          pattern: BingeMote*-*
-          merge-multiple: true
+          name: ${{ inputs.target == 'app' && 'BingeMote-Android-apk' || 'BingeMote-PC' }}
           path: artifacts
+      - name: Artifact check (exactly one file, sha256 logged)
+        run: |
+          set -e
+          ls -l artifacts
+          [ "$(find artifacts -type f | wc -l)" = 1 ]
+          sha256sum artifacts/*
       - name: Publish reviewed build
         env:
           GH_TOKEN: ${{ github.token }}

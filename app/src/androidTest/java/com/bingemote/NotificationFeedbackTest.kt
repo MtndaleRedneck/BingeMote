@@ -133,6 +133,9 @@ class HapticTickTest {
     class StatusStub {
         val polls = AtomicInteger(0)
         val commands = CopyOnWriteArrayList<String>()
+        /** Diagnostic only: wall-clock request/response log (ms epoch), read by tests that opt in. */
+        val reqLog = CopyOnWriteArrayList<String>()
+        fun mark(what: String) { reqLog += "${System.currentTimeMillis()} MARK $what" }
         @Volatile var state = "paused"
         @Volatile var commandDelayMs = 0L
         @Volatile var statusDelayMs = 0L
@@ -157,6 +160,7 @@ class HapticTickTest {
                                 val r = BufferedReader(InputStreamReader(sock.getInputStream()))
                                 val line = r.readLine() ?: ""
                                 while (true) { val h = r.readLine() ?: break; if (h.isEmpty()) break }
+                                reqLog += "${System.currentTimeMillis()} ARRIVE ${line.take(70)} failStatus=$failStatus failAuth=$failAuth state=$state"
                                 val snap: String
                                 if (line.contains("command=")) {
                                     val fail = failCommands > 0
@@ -194,6 +198,7 @@ class HapticTickTest {
                                         out.flush(); sock.close(); return@thread
                                     }
                                     if (failStatus) {
+                                        reqLog += "${System.currentTimeMillis()} RESP 500 (failStatus)"
                                         val out = sock.getOutputStream()
                                         out.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
                                         out.flush(); sock.close(); return@thread
@@ -203,6 +208,7 @@ class HapticTickTest {
                                     if (statusDelayMs > 0) Thread.sleep(statusDelayMs)
                                 }
                                 if (!line.contains("command=")) beforeStatusResponse?.invoke()
+                                reqLog += "${System.currentTimeMillis()} RESP 200 snap=$snap"
                                 val body = """{"time":30,"length":3600,"volume":128,"state":"$snap","information":{"category":{"meta":{"filename":"demo.mkv"}}}}"""
                                 val out = sock.getOutputStream()
                                 out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body".toByteArray())

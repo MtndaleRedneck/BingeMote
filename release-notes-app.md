@@ -1,3 +1,10 @@
+## v1.15.2 - November 25, 2026
+
+A small navigation fix.
+
+**Fixed**
+- Feedback, Your PC and pair again now open at the top every time. Going Back from Feedback to Settings still keeps your place in Settings.
+
 ## v1.15.0 - November 25, 2026
 
 A handful of small fixes and visual touches.

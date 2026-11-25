@@ -5,7 +5,7 @@ adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 # Clear only our own FailureDumpRule/test-failure outputs (any extension) so anything
 # pulled later belongs to THIS run; dump file names carry the test method
 # (FailureDumpRule tags with description.methodName), giving per-test attribution.
-if ! adb shell "rm -f /sdcard/Android/data/com.bingemote/files/bm-dump* /sdcard/Android/data/com.bingemote/files/bm-andialog* /sdcard/Android/data/com.bingemote/files/bm-dismissed-dialogs.txt /sdcard/Android/data/com.bingemote/files/bm-setup-selected-pc-fail.* /sdcard/Android/data/com.bingemote/files/bm-setup-confirmed-address-fail.*" 2>/dev/null; then
+if ! adb shell "rm -f /sdcard/Android/data/com.bingemote/files/bm-dump* /sdcard/Android/data/com.bingemote/files/bm-obs* /sdcard/Android/data/com.bingemote/files/bm-stublog* /sdcard/Android/data/com.bingemote/files/bm-logcat* /sdcard/Android/data/com.bingemote/files/bm-andialog* /sdcard/Android/data/com.bingemote/files/bm-dismissed-dialogs.txt /sdcard/Android/data/com.bingemote/files/bm-setup-selected-pc-fail.* /sdcard/Android/data/com.bingemote/files/bm-setup-confirmed-address-fail.*" 2>/dev/null; then
   echo "CLEAR DIAG: stale-evidence cleanup failed - this run's pulls may include files from an earlier run on this emulator"
 fi
 
@@ -63,7 +63,7 @@ done
 if dump_listing=$(adb shell "ls /sdcard/Android/data/com.bingemote/files/ 2>/dev/null"); then :; else
   ls_rc=$?; echo "PULL DIAG: evidence dir listing failed (rc=$ls_rc) - cannot confirm which failure evidence exists this run"; dump_listing=""
 fi
-dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|andialog|dismissed-dialogs|setup-selected-pc-fail|setup-confirmed-address-fail)' || true)
+dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|obs|stublog|logcat|andialog|dismissed-dialogs|setup-selected-pc-fail|setup-confirmed-address-fail)' || true)
 if [ -z "$dumps" ]; then echo "PULL DIAG: no FailureDumpRule/test-failure evidence files listed (none written, or listing failed above)"; fi
 for dump in $dumps; do pull_device_file "$dump" focused-ui; done
 
@@ -77,4 +77,20 @@ adb shell cmd statusbar expand-notifications
 sleep 3
 adb exec-out screencap -p > focused-ui/status-icon-shade.png
 adb shell cmd statusbar collapse
-grep -q '^OK (' focused-ui/tests.txt
+# Strict summary: exactly the expected count, and no failure markers anywhere.
+EXPECTED_TESTS=38
+if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg|Process crashed' focused-ui/tests.txt; then
+  echo "FOCUSED-UI GATE FAIL: failure marker in instrumentation output"; exit 1
+fi
+if ! tr -d "\r" < focused-ui/tests.txt | grep -qx "OK ($EXPECTED_TESTS tests)"; then
+  echo "FOCUSED-UI GATE FAIL: missing summary or test count != $EXPECTED_TESTS"; grep -E '^OK \(|Tests run' focused-ui/tests.txt || true; exit 1
+fi
+# numtests (on every status block of the raw -r stream) must be present and equal the expected
+# count on EVERY block, so a silently shrunk or partial run cannot pass.
+# awk counts (always exit 0): a grep -v that selects nothing exits 1 and would kill the script
+# under set -e/pipefail on a HEALTHY run.
+read -r nt_all nt_bad < <(tr -d "\r" < focused-ui/tests.txt | awk -v want="$EXPECTED_TESTS" '/^INSTRUMENTATION_STATUS: numtests=/{a++; if ($0 != "INSTRUMENTATION_STATUS: numtests=" want) b++} END{print a+0, b+0}')
+if [ "$nt_all" -lt 1 ] || [ "$nt_bad" -ne 0 ]; then
+  echo "FOCUSED-UI GATE FAIL: numtests missing ($nt_all) or != $EXPECTED_TESTS on $nt_bad block(s)"; exit 1
+fi
+echo "FOCUSED-UI GATE PASS: OK ($EXPECTED_TESTS tests)"

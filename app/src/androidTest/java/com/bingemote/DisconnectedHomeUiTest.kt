@@ -56,24 +56,96 @@ class DisconnectedHomeUiTest {
             device.hasObject(By.desc("Pause")))
     }
 
+    // Original contract, unchanged: one-shot reads right after the text appears (no added wait).
+    // Failures are explained by the pre-stop observer, not hidden by synchronization.
+    private fun awaitPlayingGlyph(phase: String) {
+        assertTrue(has("0:30"))
+        assertTrue(device.hasObject(By.desc("Pause")))
+    }
+
     @Test fun connectedThenDropReadsZeroThenReconnects() {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
             HapticTickTest.seedPrefs(ctx, false, stub.port)
             stub.state = "playing"
+            stub.mark("launch")
             launch()
-            waitText("1:00:00 total")
-            assertTrue(has("0:30"))
-            assertTrue(device.hasObject(By.desc("Pause")))
-            stub.failStatus = true
-            assertZero()
-            shot("disconnected-zero")
-            stub.failStatus = false
-            waitText("1:00:00 total")
-            assertTrue(has("0:30"))
-            assertTrue(device.hasObject(By.desc("Pause")))
-            shot("disconnected-reconnected")
-        } finally { stub.stop() }
+            try {
+                waitText("1:00:00 total")
+                stub.mark("connected-seen")
+                awaitPlayingGlyph("connected")
+                stub.mark("failStatus=true")
+                stub.failStatus = true
+                assertZero()
+                stub.mark("zero-seen")
+                shot("disconnected-zero")
+                stub.mark("failStatus=false")
+                stub.failStatus = false
+                waitText("1:00:00 total")
+                stub.mark("reconnected-seen")
+                awaitPlayingGlyph("reconnected")
+                shot("disconnected-reconnected")
+            } catch (e: Throwable) {
+                // OBSERVER ONLY: runs BEFORE the finally below, i.e. while the stub is still up.
+                stub.mark("FAILED ${e.javaClass.simpleName} ${e.stackTrace.firstOrNull { it.className.endsWith("DisconnectedHomeUiTest") }}")
+                observe(stub)
+                throw e
+            }
+        } finally {
+            stub.mark("STOP")
+            diagWriteLog(stub)
+            stub.stop()
+        }
+    }
+
+    // OBSERVER (diagnostic only, no assertion or product change). Every step is wall-clock
+    // stamped (start/end) so capture order and latency are known; queries and captures read
+    // the live UI before the stub is stopped.
+    private val obs = StringBuilder()
+    private fun ts(what: String, block: () -> String = { "" }) {
+        val a = System.currentTimeMillis()
+        val r = runCatching(block).getOrElse { "ERR " + it }
+        obs.append("$a-${System.currentTimeMillis()} $what $r\n")
+    }
+    private fun probe(tag: String) {
+        ts("$tag hasPause(desc)") { device.hasObject(By.desc("Pause")).toString() }
+        ts("$tag hasPlay(desc)") { device.hasObject(By.desc("Play")).toString() }
+        ts("$tag has(1:00:00 total)") { has("1:00:00 total").toString() }
+        ts("$tag has(0:00 total)") { has("0:00 total").toString() }
+        ts("$tag has(Connected)") { has("Connected").toString() }
+    }
+    private fun observe(stub: HapticTickTest.StatusStub) {
+        val dir = ctx.getExternalFilesDir(null) ?: return
+        // No-sleep repeat reads of the play-control desc first (single-shot skew vs persistent),
+        // then the stub's last request, then the full probe.
+        ts("t0 desc Pause read1") { device.hasObject(By.desc("Pause")).toString() }
+        ts("t0 desc Pause read2") { device.hasObject(By.desc("Pause")).toString() }
+        ts("t0 desc Play read1") { device.hasObject(By.desc("Play")).toString() }
+        ts("stub last req") { stub.reqLog.lastOrNull().toString() + " flags: " + stub.reqLog.takeLast(1).size }
+        ts("lifecycle") { device.executeShellCommand("dumpsys activity activities").lineSequence().filter { it.contains("com.bingemote") && (it.contains("state=") || it.contains("mResumedActivity") || it.contains("topResumedActivity")) }.take(12).joinToString(" | ") }
+        probe("t0")
+        ts("png1") { device.takeScreenshot(File(dir, "bm-obs-1.png")).toString() }
+        ts("uix1") { device.dumpWindowHierarchy(File(dir, "bm-obs-1.uix")); "" }
+        ts("uix2") { device.dumpWindowHierarchy(File(dir, "bm-obs-2.uix")); "" }
+        ts("png2") { device.takeScreenshot(File(dir, "bm-obs-2.png")).toString() }
+        Thread.sleep(1000)
+        probe("t+1s")
+        ts("png3") { device.takeScreenshot(File(dir, "bm-obs-3.png")).toString() }
+        ts("uix3") { device.dumpWindowHierarchy(File(dir, "bm-obs-3.uix")); "" }
+        Thread.sleep(2000)
+        probe("t+3s")
+        ts("png4") { device.takeScreenshot(File(dir, "bm-obs-4.png")).toString() }
+        ts("uix4") { device.dumpWindowHierarchy(File(dir, "bm-obs-4.uix")); "" }
+        stub.mark("observer-done")
+    }
+    private fun diagWriteLog(stub: HapticTickTest.StatusStub) {
+        val dir = ctx.getExternalFilesDir(null) ?: return
+        runCatching { File(dir, "bm-stublog-connectedDrop.txt").writeText(stub.reqLog.joinToString("\n") + "\n") }
+        runCatching { File(dir, "bm-obs-timeline.txt").writeText(obs.toString()) }
+        runCatching {
+            val out = device.executeShellCommand("logcat -d -v threadtime -t 4000")
+            File(dir, "bm-logcat-connectedDrop.txt").writeText(out)
+        }
     }
 
     @Test fun vlcClosedReadsZero() {
