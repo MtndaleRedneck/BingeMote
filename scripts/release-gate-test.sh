@@ -30,6 +30,7 @@ expect block screenshots skipped
 expect block scanner-test failure
 expect block helper-e2e OMIT
 expect block android failure
+python3 scripts/release-gate-structure.py || fail=1
 echo '{}' | bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  empty needs passed"; fail=1; } || echo "ok   empty needs -> blocked"
 echo 'not json' | bash scripts/release-gate.sh "${REQ[@]}" >/dev/null 2>&1 && { echo "BAD  garbage passed"; fail=1; } || echo "ok   garbage -> blocked"
 [ $fail -eq 0 ] && echo "RELEASE GATE SELFTEST PASS" || { echo "RELEASE GATE SELFTEST FAIL"; exit 1; }

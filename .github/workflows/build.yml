@@ -440,7 +440,7 @@ jobs:
     # Hard-gated to the real public-release dispatch (all + publish): never runs
     # under limited modes, independent of needs/notes assumptions. Needs release-gate,
     # which passes only when every required job is success.
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+    if: needs.release-gate.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
     needs: [release-gate]
     runs-on: ubuntu-latest
     permissions:

@@ -85,4 +85,11 @@ fi
 if ! tr -d "\r" < focused-ui/tests.txt | grep -qx "OK ($EXPECTED_TESTS tests)"; then
   echo "FOCUSED-UI GATE FAIL: missing summary or test count != $EXPECTED_TESTS"; grep -E '^OK \(|Tests run' focused-ui/tests.txt || true; exit 1
 fi
+# numtests (on every status block of the raw -r stream) must be present and equal the expected
+# count on EVERY block, so a silently shrunk or partial run cannot pass.
+nt_all=$(tr -d "\r" < focused-ui/tests.txt | grep -cE '^INSTRUMENTATION_STATUS: numtests=' || true)
+nt_bad=$(tr -d "\r" < focused-ui/tests.txt | grep -E '^INSTRUMENTATION_STATUS: numtests=' | grep -vxF "INSTRUMENTATION_STATUS: numtests=$EXPECTED_TESTS" | wc -l)
+if [ "$nt_all" -lt 1 ] || [ "$nt_bad" -ne 0 ]; then
+  echo "FOCUSED-UI GATE FAIL: numtests missing ($nt_all) or != $EXPECTED_TESTS on $nt_bad block(s)"; exit 1
+fi
 echo "FOCUSED-UI GATE PASS: OK ($EXPECTED_TESTS tests)"
