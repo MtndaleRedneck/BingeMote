@@ -95,9 +95,9 @@ class DisconnectedHomeUiTest {
                 stub.mark("reconnected-seen")
                 awaitPlayingGlyph("reconnected")
                 shot("disconnected-reconnected")
-            } catch (e: AssertionError) {
+            } catch (e: Throwable) {
                 // OBSERVER ONLY: runs BEFORE the finally below, i.e. while the stub is still up.
-                stub.mark("ASSERT-FAILED ${e.stackTrace.firstOrNull { it.className.endsWith("DisconnectedHomeUiTest") }}")
+                stub.mark("FAILED ${e.javaClass.simpleName} ${e.stackTrace.firstOrNull { it.className.endsWith("DisconnectedHomeUiTest") }}")
                 observe(stub)
                 throw e
             }

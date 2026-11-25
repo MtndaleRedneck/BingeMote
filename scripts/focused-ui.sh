@@ -5,7 +5,7 @@ adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 # Clear only our own FailureDumpRule/test-failure outputs (any extension) so anything
 # pulled later belongs to THIS run; dump file names carry the test method
 # (FailureDumpRule tags with description.methodName), giving per-test attribution.
-if ! adb shell "rm -f /sdcard/Android/data/com.bingemote/files/bm-dump* /sdcard/Android/data/com.bingemote/files/bm-andialog* /sdcard/Android/data/com.bingemote/files/bm-dismissed-dialogs.txt /sdcard/Android/data/com.bingemote/files/bm-setup-selected-pc-fail.* /sdcard/Android/data/com.bingemote/files/bm-setup-confirmed-address-fail.*" 2>/dev/null; then
+if ! adb shell "rm -f /sdcard/Android/data/com.bingemote/files/bm-dump* /sdcard/Android/data/com.bingemote/files/bm-obs* /sdcard/Android/data/com.bingemote/files/bm-stublog* /sdcard/Android/data/com.bingemote/files/bm-logcat* /sdcard/Android/data/com.bingemote/files/bm-andialog* /sdcard/Android/data/com.bingemote/files/bm-dismissed-dialogs.txt /sdcard/Android/data/com.bingemote/files/bm-setup-selected-pc-fail.* /sdcard/Android/data/com.bingemote/files/bm-setup-confirmed-address-fail.*" 2>/dev/null; then
   echo "CLEAR DIAG: stale-evidence cleanup failed - this run's pulls may include files from an earlier run on this emulator"
 fi
 
@@ -63,7 +63,7 @@ done
 if dump_listing=$(adb shell "ls /sdcard/Android/data/com.bingemote/files/ 2>/dev/null"); then :; else
   ls_rc=$?; echo "PULL DIAG: evidence dir listing failed (rc=$ls_rc) - cannot confirm which failure evidence exists this run"; dump_listing=""
 fi
-dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|andialog|dismissed-dialogs|setup-selected-pc-fail|setup-confirmed-address-fail)' || true)
+dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|obs|stublog|logcat|andialog|dismissed-dialogs|setup-selected-pc-fail|setup-confirmed-address-fail)' || true)
 if [ -z "$dumps" ]; then echo "PULL DIAG: no FailureDumpRule/test-failure evidence files listed (none written, or listing failed above)"; fi
 for dump in $dumps; do pull_device_file "$dump" focused-ui; done
 
