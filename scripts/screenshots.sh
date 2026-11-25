@@ -205,9 +205,41 @@ bounds_ok() { grep -q '^fwd ' "$1" && grep -q '^back ' "$1"; }
 #    the gesture and asserts the live preview DURING it; the seekTo log check
 #    happens here after the run.
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+# Clear only our own FailureDumpRule/test-failure outputs (any extension) so anything
+# pulled later belongs to THIS run; dump file names carry the test method
+# (FailureDumpRule tags with description.methodName), giving per-test attribution.
+if ! adb shell "rm -f /sdcard/Android/data/com.bingemote/files/bm-dump* /sdcard/Android/data/com.bingemote/files/bm-andialog* /sdcard/Android/data/com.bingemote/files/bm-dismissed-dialogs.txt /sdcard/Android/data/com.bingemote/files/bm-setup-selected-pc-fail.* /sdcard/Android/data/com.bingemote/files/bm-setup-confirmed-address-fail.*" 2>/dev/null; then
+  echo "CLEAR DIAG: stale-evidence cleanup failed - this run's pulls may include files from an earlier run on this emulator"
+fi
+
+# Verified pull from the app's files dir (where FailureDumpRule and the setup tests
+# write, via getExternalFilesDir): temp name, per-type signature check, keep-or-log.
+# A failed or error-text pull is deleted and logged, never kept as a fake capture.
+pull_device_file() { # $1=device file name under the app files dir, $2=local dir
+  local name="$1" dir="$2" sz sig
+  if ! adb exec-out cat "/sdcard/Android/data/com.bingemote/files/$name" > "$dir/$name.tmp" 2>/dev/null; then
+    rm -f "$dir/$name.tmp"; echo "PULL DIAG: $name transport failed - not kept"; return 0
+  fi
+  sz=$(stat -c%s "$dir/$name.tmp" 2>/dev/null || echo 0)
+  sig=$(file -b "$dir/$name.tmp" 2>/dev/null | cut -c1-60)
+  # adb exec-out of a missing/unreadable device file yields a SMALL text stub whose
+  # body is the error line; a real .uix/.txt dump (window hierarchy, logcat) is KBs
+  # and can legitimately MENTION these phrases, so reject only the small-stub shape.
+  is_adb_error_stub() { [ "$1" -lt 200 ] && grep -qm1 'No such file\|Permission denied' "$2"; }
+  case "$name" in
+    *.png) echo "$sig" | grep -q 'PNG image' || { rm -f "$dir/$name.tmp"; echo "PULL DIAG: $name not a PNG ($sz bytes, $sig) - not kept"; return 0; };;
+    *.uix|*.xml) echo "$sig" | grep -Eq 'XML|text' && ! is_adb_error_stub "$sz" "$dir/$name.tmp" || { rm -f "$dir/$name.tmp"; echo "PULL DIAG: $name not XML ($sz bytes, $sig) - not kept"; return 0; };;
+    *) [ "$sz" -gt 0 ] && ! is_adb_error_stub "$sz" "$dir/$name.tmp" || { rm -f "$dir/$name.tmp"; echo "PULL DIAG: $name empty/error-stub ($sz bytes) - not kept"; return 0; };;
+  esac
+  mv "$dir/$name.tmp" "$dir/$name"
+  echo "PULLED: $name ($sz bytes, $sig)"
+}
+
+
 adb logcat -c
 adb shell am instrument -w -e class com.bingemote.SeekGestureTest \
-  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/seek-slide-instrument.txt
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/seek-slide-instrument.txt \
+  || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - partial output above; the grep assert below records the failure"
 # Keep the full logcat whatever happened: a crashed test process leaves its stack here.
 adb logcat -d > screenshots/seek-slide-logcat.txt
 grep -q '^OK (1 test)' screenshots/seek-slide-instrument.txt || { echo 'ASSERT FAIL: continuous hold-then-slide test failed (see seek-slide-instrument.txt)'; SEEK_FAIL=1; }
@@ -250,7 +282,8 @@ grep -Eq 'seekTo seconds=[4-6][0-9]{3}' screenshots/seek-slide-command.txt || { 
 #    the seek-slide log checks above.
 adb logcat -c
 adb shell am instrument -w -e class com.bingemote.CancelGestureTest,com.bingemote.StoreMigrationTest \
-  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/cancel-instrument.txt \
+  || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - partial output above; the grep assert below records the failure"
 adb logcat -d > screenshots/cancel-logcat.txt
 grep -q '^OK (6 tests)' screenshots/cancel-instrument.txt || { echo 'ASSERT FAIL: cancel-circle/migration tests failed (see cancel-instrument.txt)'; SEEK_FAIL=1; }
 for tag in ring fills interrupted; do
@@ -262,7 +295,8 @@ done
 #     are the deliverable, not a gate on the cadence itself.
 adb logcat -c
 adb shell am instrument -w -e class com.bingemote.MouseCadenceTest \
-  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/mouse-cadence-instrument.txt
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/mouse-cadence-instrument.txt \
+  || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - partial output above; the grep assert below records the failure"
 adb logcat -d -s BMMouse:I > screenshots/mouse-cadence.txt
 cat screenshots/mouse-cadence.txt
 grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSERT FAIL: mouse cadence test failed (see mouse-cadence-instrument.txt)'; SEEK_FAIL=1; }
@@ -273,7 +307,8 @@ grep -q '^OK (1 test)' screenshots/mouse-cadence-instrument.txt || { echo 'ASSER
 #     VLC answers the command + reverts when the PC never takes it. The felt buzz
 #     itself is untestable on an emulator - a seam records the exact calls.
 adb shell am instrument -w -e class com.bingemote.HapticTickTest,com.bingemote.ImmediateFlipTest \
-  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/haptic-flip-instrument.txt
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/haptic-flip-instrument.txt \
+  || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - partial output above; the grep assert below records the failure"
 # Exact expected inventory, computed from source so the check neither goes stale
 # when the suite grows (the hardcoded 9 did, Nov 23) nor passes a partial/zero
 # run on a bare '^OK (' match. Both run classes live in this one file.
@@ -297,16 +332,28 @@ for f in cancel-inside-ring.png cancel-after-ring.png \
 done
 # Automatic-only setup: keep the PC-address fallback and Done, with no manual VLC fields.
 adb shell am instrument -w -e class com.bingemote.AutomaticOnlySetupTest,com.bingemote.AutoSetupCheckTest \
-  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/automatic-setup-instrument.txt
+  com.bingemote.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee screenshots/automatic-setup-instrument.txt \
+  || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - partial output above; the grep assert below records the failure"
 grep -q '^OK (' screenshots/automatic-setup-instrument.txt || { echo 'ASSERT FAIL: automatic-only setup tests failed'; SEEK_FAIL=1; }
+# Named setup captures via the same verified pull: a missing/failed/error pull is
+# logged and NOT kept (never an empty stub), and never aborts the run before the
+# failure-evidence pull below; the instrument grep assert keeps the exit semantics.
 for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings; do
-  adb exec-out cat "/sdcard/bm-$capture.png" > "screenshots/$capture.png"
+  pull_device_file "bm-$capture.png" screenshots
 done
-# Failure evidence captures (only written when the pair-code reveal assert fails).
-adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.png" > "screenshots/setup-selected-pc-fail.png" 2>/dev/null || true
-adb exec-out cat "/sdcard/bm-setup-selected-pc-fail.xml" > "screenshots/setup-selected-pc-fail.xml" 2>/dev/null || true
-adb exec-out cat "/sdcard/bm-setup-confirmed-address-fail.png" > "screenshots/setup-confirmed-address-fail.png" 2>/dev/null || true
-adb exec-out cat "/sdcard/bm-setup-confirmed-address-fail.xml" > "screenshots/setup-confirmed-address-fail.xml" 2>/dev/null || true
+# FailureDumpRule evidence (screenshot + window hierarchy + logcat, plus the paired
+# 4s-later recurrence capture) is written on ANY instrumented failure, and the setup
+# tests write their own *-fail captures on reveal failures - none of it was ever
+# pulled: runs 45547260244 and 45549797139 failed with zero failure pixels (the old
+# lines also read /sdcard root while the writers use the files dir). Placement: after
+# all instrument asserts, before the script's existing exit checks, so a failure is
+# collected first and still propagates through the unchanged grep asserts.
+if dump_listing=$(adb shell "ls /sdcard/Android/data/com.bingemote/files/ 2>/dev/null"); then :; else
+  ls_rc=$?; echo "PULL DIAG: evidence dir listing failed (rc=$ls_rc) - cannot confirm which failure evidence exists this run"; dump_listing=""
+fi
+dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|andialog|dismissed-dialogs|setup-selected-pc-fail|setup-confirmed-address-fail)' || true)
+if [ -z "$dumps" ]; then echo "PULL DIAG: no FailureDumpRule/test-failure evidence files listed (none written, or listing failed above)"; fi
+for dump in $dumps; do pull_device_file "$dump" screenshots; done
 # Counter-region pixel proof: the seed counters after cancel/interruption must
 # match the pre-gesture baseline exactly. This is the tree-independent check -
 # a stale accessibility tree cannot fake pixels.
