@@ -1,4 +1,4 @@
-name: Exact private Android upgrade verification
+name: Exact signed APK navigation verification
 on:
   workflow_dispatch:
     inputs:
@@ -11,17 +11,31 @@ on:
 permissions:
   contents: read
 jobs:
-  exact-upgrade:
+  exact-nav:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 tag head resolved 2026-11-25
+      - name: Bind test source to the reviewed head
+        env:
+          EXPECTED_BASE: 72404a82e3d4d2b1cd9b9425b17fc22ab29e1b61
+        run: |
+          set -euo pipefail
+          mkdir -p nav-evidence
+          fail_bind() { printf 'classification: SOURCE_BINDING_MISMATCH\ndetail: %s\n' "$1" | tee nav-evidence/classification.txt; exit 1; }
+          git fetch --no-tags --depth=1 origin "$EXPECTED_BASE" || fail_bind "cannot fetch the expected base $EXPECTED_BASE; nothing built or installed"
+          head=$(git rev-parse HEAD)
+          diff=$(git diff --name-status "$EXPECTED_BASE" HEAD)
+          printf 'checkout_head=%s\nexpected_base=%s\ndiff_vs_base:\n%s\n' "$head" "$EXPECTED_BASE" "$diff" | tee nav-evidence/source-binding.txt
+          want=$(printf 'M\t.github/workflows/exact-upgrade.yml\nA\tscripts/exact-nav.sh')
+          [ "$diff" = "$want" ] || fail_bind "checkout is not the reviewed base plus exactly the two harness changes (modified exact-upgrade.yml, added scripts/exact-nav.sh); test source/build inputs would differ from what produced the staged APK"
+          echo "source bound: every tracked file except the two harness changes equals $EXPECTED_BASE" | tee -a nav-evidence/source-binding.txt
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4 tag head resolved 2026-11-25
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
-      - name: Get exact prior and staged private APKs
+      - name: Get exact staged private APK
         env:
           GH_TOKEN: ${{ secrets.TESTLAB_PAT }}
           NEW_ASSET_ID: ${{ inputs.asset_id }}
@@ -30,10 +44,7 @@ jobs:
           set -euo pipefail
           [[ "$NEW_ASSET_ID" =~ ^[0-9]+$ ]]
           [[ "$NEW_HASH" =~ ^[a-f0-9]{64}$ ]]
-          # Prior = the LIVE public 1.15.0 release asset (hash-pinned below), not a private legacy asset.
-          GH_TOKEN=${{ github.token }} gh release download android-v1.15.0 -R MtndaleRedneck/BingeMote -p 'BingeMote-Android-1.15.0.apk' -O prior.apk
           gh api -H 'Accept: application/octet-stream' "repos/MtndaleRedneck/TestLab/releases/assets/$NEW_ASSET_ID" > staged.apk
-          echo '283eb18cfae1fe94856a960b41c14a86450de890b7e86ee362463fabc1bdbbc7  prior.apk' | sha256sum -c
           printf '%s  staged.apk\n' "$NEW_HASH" | sha256sum -c
       - name: Build same-signer instrumentation only
         env:
@@ -46,40 +57,46 @@ jobs:
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           ./gradlew --no-daemon -PrecoveryReleaseTest assembleReleaseAndroidTest
-          for apk in prior.apk staged.apk app/build/outputs/apk/androidTest/release/app-release-androidTest.apk; do
-            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
-          done
-          old_cert=$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs prior.apk | grep 'Signer #1 certificate SHA-256 digest:')
-          new_cert=$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs staged.apk | grep 'Signer #1 certificate SHA-256 digest:')
-          test "$old_cert" = "$new_cert"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        env:
+          NEW_HASH: ${{ inputs.sha256 }}
+          EXPECTED_SIGNER: 2d15b89bf5fec3f558570e80a44bd0a93526c507b6e3982abf43865ae65b62f9
         with:
           api-level: 34
           arch: x86_64
           target: google_apis
           profile: pixel_6
           disable-animations: true
-          script: |
-            mkdir -p exact-upgrade-evidence
-            adb install prior.apk
-            adb install app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
-            adb shell am instrument -w -r -e class com.bingemote.RecoveryContinuityTest -e phase seed com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee exact-upgrade-evidence/seed.txt
-            grep -q '^OK (' exact-upgrade-evidence/seed.txt
-            adb install -r staged.apk
-            adb shell am instrument -w -r -e class com.bingemote.RecoveryContinuityTest -e phase verify com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee exact-upgrade-evidence/verify.txt
-            grep -q '^OK (' exact-upgrade-evidence/verify.txt
-            adb shell dumpsys package com.bingemote > exact-upgrade-evidence/package.txt
-            adb shell am start -n com.bingemote/.MainActivity
-            sleep 4
-            adb exec-out screencap -p > exact-upgrade-evidence/production-native.png
-      - uses: actions/upload-artifact@v4
+          script: bash scripts/exact-nav.sh
+      - name: Evidence summary
+        if: always()
+        run: |
+          {
+            echo '### Exact signed APK navigation'
+            echo '```'
+            cat nav-evidence/classification.txt 2>/dev/null || echo 'no classification file (script did not start)'
+            cat nav-evidence/source-binding.txt 2>/dev/null || true
+            echo 'The test APK is built fresh from the checked-out source; only the app APK is the exact staged bytes.'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Guard, no binaries in evidence
+        if: always()
+        run: |
+          mkdir -p nav-evidence
+          bad=0
+          while read -r f; do
+            ty=$(file -b "$f" | cut -c1-60)
+            if [ "$(stat -c%s "$f")" -gt 8388608 ] || ! echo "$ty" | grep -Eq 'PNG image|text|XML|empty|ASCII|UTF-8'; then echo "GUARD: removing $f ($ty)"; rm -f "$f"; bad=1; fi
+          done < <(find nav-evidence -type f)
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 tag head resolved 2026-11-25
         if: always()
         with:
-          name: Exact-private-upgrade-evidence
-          path: exact-upgrade-evidence/
-          retention-days: 3
+          name: Exact-signed-nav-evidence
+          path: nav-evidence/
+          retention-days: 1
