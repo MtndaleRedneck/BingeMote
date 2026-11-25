@@ -3,7 +3,7 @@
 A small navigation fix.
 
 **Fixed**
-- Feedback, Your PC and pair again now start at the top each time you open them. Going Back to a page still keeps your place, in Settings, Feedback and folder browsing.
+- Feedback, Your PC and pair again now open at the top every time. Going Back from Feedback to Settings still keeps your place in Settings.
 
 ## v1.15.0 - November 25, 2026
 
