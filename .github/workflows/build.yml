@@ -31,6 +31,11 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      force:
+        description: GATE-PROOF fault injection
+        type: choice
+        options: [none, focused-fail, skip-scanner]
+        default: none
       restage:
         description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
         type: boolean
@@ -44,382 +49,36 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
-
-      - name: Unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
-
-      - name: Build APKs
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: bingemote
-        run: |
-          if [ -z "$KEYSTORE_B64" ]; then echo "No signing secrets set"; exit 1; fi
-          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          export KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
-          ./gradlew --no-daemon assembleRelease assembleDebug
-          rm -f "$RUNNER_TEMP/release.keystore"
-
-      - name: Name the APK
-        run: |
-          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          echo "VERSION=$V" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/app-release.apk BingeMote-Android-$V.apk
-
-      # Public-repo artifacts are downloadable by any signed-in GitHub user, so
-      # signed-binary uploads stay on the real public-release path (only == 'all')
-      # only. Hidden builds stage to the private TestLab draft below instead.
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
-        with:
-          name: BingeMote-Android-apk
-          path: BingeMote-Android-*.apk
-
-      # Hidden-build staging: the signed APK goes straight to the private TestLab
-      # repo's draft release (collaborator-only visibility), never to a public
-      # artifact. Prints the sha256 of the staged bytes for the review brief.
-      - name: Stage the signed APK to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          set -euo pipefail
-          APK=$(ls BingeMote-Android-*.apk)
-          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
-          echo "Staged APK: $APK"
-          echo "Staged APK sha256: $SHA"
-          AUTH="Authorization: Bearer $TESTLAB_PAT"
-          REPO=MtndaleRedneck/TestLab
-          TAG="android-v${VERSION}"
-          VISIBLE=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.tag_name==$t and (.draft|not))][0].id // empty')
-          if [ -n "$VISIBLE" ]; then
-            echo "::error::Existing visible release $TAG cannot be overwritten"
-            exit 1
-          fi
-          ID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases?per_page=100" | jq -r --arg t "$TAG" '[.[] | select(.draft==true and .tag_name==$t)][0].id // empty')
-          if [ -z "$ID" ]; then
-            ID=$(curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/json' "https://api.github.com/repos/$REPO/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"BingeMote Android $VERSION\",\"draft\":true,\"body\":\"Staged for independent review. Source: MtndaleRedneck/BingeMote@${GITHUB_SHA}, run ${GITHUB_RUN_ID}.\"}" | jq -r '.id')
-          fi
-          echo "TestLab draft release id: $ID"
-          EXISTING=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r --arg n "$APK" '.assets[] | select(.name==$n) | .id')
-          if [ -n "$EXISTING" ] && [ "${{ inputs.restage }}" != "true" ]; then
-            echo "::error::Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)"
-            exit 1
-          fi
-          for a in $EXISTING; do
-            curl -sf -X DELETE -H "$AUTH" "https://api.github.com/repos/$REPO/releases/assets/$a" >/dev/null
-          done
-          UPLOAD_URL=$(curl -sf -H "$AUTH" "https://api.github.com/repos/$REPO/releases/$ID" | jq -r '.upload_url' | sed 's/{?name,label}//')
-          curl -sf -X POST -H "$AUTH" -H 'Content-Type: application/vnd.android.package-archive' --data-binary @"$APK" "$UPLOAD_URL?name=$APK" | jq -r '.id' | xargs -I{} echo "Staged asset id: {}"
-
-
+      - run: echo trivial android ok
   helper:
-    # Android-only private staging must not replace an already reviewed PC asset.
     if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage' || inputs.target == 'helper'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.x
-
-      - name: Helper unit tests
-        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc'
-
-      - name: Publish helper exe
-        run: |
-          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
-
-      - name: Name the exe (helper versions separately from the app)
-        run: |
-          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
-          echo "HELPER_VERSION=$v" >> $env:GITHUB_ENV
-
-      # The raw shipped single-file exe, for the binary-level CI-hook absence proof:
-      # the installer compresses its payload, so only the raw exe can be string-scanned.
-      - uses: actions/upload-artifact@v4
-        # Binary uploads are publish-path only: artifacts on a public repo are
-        # publicly downloadable, and withheld builds must never publish (run
-        # 45029656665's helper job exposed the installer until deleted).
-        # only == 'all' too: hidden builds stage privately below, never here.
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
-        with:
-          name: BingeMote-PC-raw
-          path: helper/out/BingeMote.exe
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Build the installer (Inno Setup)
-        run: |
-          choco install innosetup --no-progress -y
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
-          Move-Item helper/Output/BingeMote-PC-*.exe .
-
-      - uses: actions/upload-artifact@v4
-        # Publish-path only (see BingeMote-PC-raw gate above).
-        if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
-        with:
-          name: BingeMote-PC
-          path: BingeMote-PC-*.exe
-          retention-days: 1
-
-      # Hidden-build staging: the installer goes straight to the private TestLab
-      # repo's draft release (collaborator-only visibility), never to a public
-      # artifact. Prints the sha256 of the staged bytes for the review brief.
-      - name: Stage the installer to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $exe = (Get-Item BingeMote-PC-*.exe).Name
-          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          Write-Output "Staged installer: $exe"
-          Write-Output "Staged installer sha256: $sha"
-          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT" }
-          $repo = 'MtndaleRedneck/TestLab'
-          $tag = "pc-v$env:HELPER_VERSION"
-          $rels = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=100"
-          $visible = $rels | Where-Object { (-not $_.draft) -and $_.tag_name -eq $tag } | Select-Object -First 1
-          if ($visible) { throw 'Existing visible version cannot be overwritten' }
-          $draft = $rels | Where-Object { $_.draft -and $_.tag_name -eq $tag } | Select-Object -First 1
-          if (-not $draft) {
-            $body = @{ tag_name = $tag; name = "BingeMote PC $env:HELPER_VERSION"; draft = $true; body = "Staged for independent review. Source: MtndaleRedneck/BingeMote@$env:GITHUB_SHA, run $env:GITHUB_RUN_ID." } | ConvertTo-Json
-            $draft = Invoke-RestMethod -Method Post -Headers $headers -Body $body -ContentType 'application/json' "https://api.github.com/repos/$repo/releases"
-          }
-          Write-Output "TestLab draft release id: $($draft.id)"
-          $rel = Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/$($draft.id)"
-          $existing = @($rel.assets | Where-Object { $_.name -eq $exe })
-          if ($existing.Count -gt 0 -and '${{ inputs.restage }}' -ne 'true') { throw 'Existing staged asset: do not silently replace review bytes (dispatch with restage=true to authorize replacement)' }
-          foreach ($a in $existing) {
-            Invoke-RestMethod -Method Delete -Headers $headers "https://api.github.com/repos/$repo/releases/assets/$($a.id)" | Out-Null
-          }
-          $upload = $rel.upload_url -replace '\{\?name,label\}', ''
-          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe))
-          $upHeaders = @{ Authorization = $headers.Authorization; 'Content-Type' = 'application/octet-stream' }
-          $asset = Invoke-RestMethod -Method Post -Headers $upHeaders -Body $bytes ("$upload" + "?name=$exe")
-          Write-Output "Staged asset id: $($asset.id)"
-
+      - run: echo trivial helper ok
   helper-e2e:
     if: github.event_name != 'workflow_dispatch' || (inputs.only != 'stage' && inputs.only != 'verify')
-    runs-on: windows-latest
     needs: helper
+    runs-on: ubuntu-latest
     steps:
-      # Full history: the upgrade-baseline build checks out the 1.7.11 ancestor below.
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.x
-
-      - name: Publish helper exe (with the CI-only pairing hook)
-        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK" -o helper/out
-
-      # The movies test launches real VLC; install it as its own step so a mirror hiccup is visible.
-      - name: Install VLC (for the movies launch test)
-        run: choco install vlc --no-progress -y
-
-      - name: Build the installer from the test build (for the install/uninstall test)
-        run: |
-          choco install innosetup --no-progress -y
-          $v = Select-String -Path helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
-          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
-
-      # The real previous release, built from its own source with no hooks: the e2e
-      # installs it first and then upgrades, so the upgrade path under test is the
-      # actual 1.7.12 -> 1.7.13 one, not simulated leftovers. The baseline is the
-      # tmp/pc-1712 commit, an ancestor of this branch (pinned sha; the branch
-      # itself is not kept on the remote).
-      - name: Build the real 1.7.12 installer (upgrade baseline)
-        run: |
-          git worktree add old 2d3b54e9eb66dda5c1870331e76e342fde2f8d2a
-          dotnet publish old/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o old/helper/out
-          $v = Select-String -Path old/helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" old/helper/installer.iss
-          if ($LASTEXITCODE -ne 0) { throw "ISCC (baseline) failed" }
-          New-Item -ItemType Directory -Force helper/Output-old | Out-Null
-          Copy-Item old/helper/Output/BingeMote-PC-*.exe helper/Output-old/
-
-      # The exact shipping installer (no hooks). Runs only when a publish run is
-      # pinned via the shipping_run_id dispatch input: those bytes are the ones
-      # bound for the hidden TestLab draft, and the e2e shipping leg asserts the
-      # installer hash (shipping_sha256 input) before installing. Skipped on
-      # source-only push runs, where no published artifact exists yet.
-      - name: Download the shipping installer (exact TestLab-bound bytes)
-        if: ${{ inputs.shipping_run_id != '' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: BingeMote-PC
-          path: helper/Shipping
-          repository: MtndaleRedneck/BingeMote
-          run-id: ${{ inputs.shipping_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Same exact-bytes guarantee from the private staging area: downloads the
-      # staged installer asset from the hidden TestLab draft (collaborator-only)
-      # instead of a public run artifact. helper-e2e.ps1 asserts its hash against
-      # the shipping_sha256 input before installing.
-      - name: Download the shipping installer from the TestLab draft (exact staged bytes)
-        if: ${{ inputs.shipping_testlab_asset_id != '' }}
-        env:
-          TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
-        run: |
-          New-Item -ItemType Directory -Force helper/Shipping | Out-Null
-          $headers = @{ Authorization = "Bearer $env:TESTLAB_PAT"; Accept = 'application/octet-stream' }
-          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/${{ inputs.shipping_testlab_asset_id }}" -OutFile helper/Shipping/BingeMote-PC-staged.exe
-          New-Item -ItemType Directory -Force helper/Prior | Out-Null
-          Invoke-WebRequest -Headers $headers "https://api.github.com/repos/MtndaleRedneck/TestLab/releases/assets/784504607" -OutFile helper/Prior/BingeMote-PC-1.7.15.exe
-          $priorHash = (Get-FileHash helper/Prior/BingeMote-PC-1.7.15.exe -Algorithm SHA256).Hash.ToLower()
-          if ($priorHash -ne 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd') { throw 'Exact prior1.7.15 hash mismatch' }
-          Write-Host "Exact prior1.7.15 installer sha256: $priorHash"
-
-
-      - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
-        timeout-minutes: 6
-        env:
-          BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
-          BINGEMOTE_SHIPPING_ONLY: ${{ inputs.shipping_testlab_asset_id != '' && '1' || '0' }}
-        run: pwsh -File scripts/helper-e2e.ps1
-
-      - name: Render the window for layout review (CI only)
-        timeout-minutes: 5
-        run: |
-          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
-          $env:BINGEMOTE_WINDOW_SHOT = "$PWD\helper\window.png"
-          & helper/shot/BingeMote.exe --window-shot
-          $env:BINGEMOTE_DIALOG_SHOTS = "$PWD\helper"
-          $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -PassThru
-          if (-not $dialogRun.WaitForExit(45000)) { Stop-Process -Id $dialogRun.Id -Force; throw 'Native dialog fixture exceeded 45 second bound' }
-          if ($dialogRun.ExitCode -ne 0) { throw "Native dark-dialog capture failed: $($dialogRun.ExitCode)" }
-          foreach ($name in @('confirm', 'note', 'wifi')) {
-            if (-not (Test-Path "helper/dialog-$name.png")) { throw "Missing native dialog capture: $name" }
-          }
-          $env:BINGEMOTE_OSD_SHOT = "$PWD\helper\osd.png"
-          $env:BINGEMOTE_OSD_SHOT_MUTED = "$PWD\helper\osd-muted.png"
-          & helper/shot/BingeMote.exe --osd-shot
-
-      - name: Upload the window shot
-        uses: actions/upload-artifact@v4
-        with:
-          name: BingeMote-PC-window
-          path: |
-            helper/window.png
-            helper/window-screen.png
-            helper/window-diag.txt
-            helper/dialog-*.png
-            helper/dialog-*.txt
-            helper/osd.png
-            helper/osd-muted.png
-            helper/osd.frame.png
-            helper/osd-muted.frame.png
-          if-no-files-found: error
-
-      - name: Upload e2e failure diagnostics
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: BingeMote-PC-e2e-diag
-          path: |
-            helper/e2e-diag/
-            shipping-install.log
-            shipping-upgrade.log
-          if-no-files-found: ignore
-
-      - name: VLC control tests (real VLC, app request shapes)
-        run: pwsh -File scripts/vlc-e2e.ps1
-
-
+      - run: echo trivial helper-e2e ok
   scanner-test:
-    if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
-    # Proves the one-off read-only PC scanner runs clean end-to-end on Windows
-    # (syntax, every section, summary) and uploads its report. The runner has no
-    # BingeMote, so a clean "nothing found" run is the expected result.
-    runs-on: windows-latest
+    if: inputs.force != 'skip-scanner' && (github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify'))
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Test the scanner (clean, fixture detection, mocked failure, launcher)
-        run: pwsh -File scripts/scanner-test.ps1
-      - name: Upload the scanner test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: BingeMote-PC-scanner-test
-          path: |
-            clean-report.txt
-            fixture-report.txt
-            mock-report.txt
-            launcher-report.txt
-          if-no-files-found: error
-
+      - run: echo trivial scanner-test ok
   focused-ui:
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
-      - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: true
-          script: bash scripts/focused-ui.sh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: BingeMote-focused-ui
-          path: focused-ui/*
-
+      - name: forced failure
+        if: inputs.force == 'focused-fail'
+        run: echo forced focused-ui failure; exit 1
+      - run: echo trivial focused-ui ok
   screenshots:
     if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
-      - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: true
-          script: bash scripts/screenshots.sh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: BingeMote-screenshots
-          path: screenshots/*
-
+      - run: echo trivial screenshots ok
   release-gate:
     # Fail-closed: every required job must be exactly "success". failure, cancelled,
     # skipped, missing and unknown all block publication. if: always() so a failed or
@@ -438,47 +97,10 @@ jobs:
         run: bash scripts/release-gate-test.sh
 
   release:
-    # Hard-gated to the real public-release dispatch (all + publish): never runs
-    # under limited modes, independent of needs/notes assumptions. Needs release-gate,
-    # which passes only when every required job is success.
     if: needs.release-gate.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
     needs: [release-gate]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      # Exactly the one artifact being published (not a broad pattern), from THIS run.
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ inputs.target == 'app' && 'BingeMote-Android-apk' || 'BingeMote-PC' }}
-          path: artifacts
-      - name: Artifact check (exactly one file, sha256 logged)
-        run: |
-          set -e
-          ls -l artifacts
-          [ "$(find artifacts -type f | wc -l)" = 1 ]
-          sha256sum artifacts/*
-      - name: Publish reviewed build
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -e
-          # Release pages show ONLY their own version's notes:
-          # extract the "## v$V" section from the running notes file.
-          if [ "$TARGET" = "app" ]; then
-            V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-            [[ "$V" != 0.* ]]
-            # Headings may carry a date suffix ("## v1.14.0 - November 24, 2026"),
-            # so match the heading by prefix, not exact equality.
-            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if(index($0,v" ")==1 || $0==v){f=1}else if(f){exit} } f' release-notes-app.md > /tmp/notes.md
-            [[ -s /tmp/notes.md ]]
-            gh release create "android-v$V" "artifacts/BingeMote-Android-$V.apk" --target "$(git rev-parse HEAD)" --title "BingeMote Android v$V" --notes-file /tmp/notes.md
-          else
-            V=$(grep -oP '<Version>\K[^<]+' helper/BingeMoteHelper/BingeMoteHelper.csproj | sed 's/\.0$//')
-            # Helper releases never take "latest" - the installed app's updater reads it.
-            awk -v v="## v$V" 'BEGIN{f=0} $0 ~ /^## / { if(index($0,v" ")==1 || $0==v){f=1}else if(f){exit} } f' release-notes-pc.md > /tmp/notes.md
-            [[ -s /tmp/notes.md ]]
-            gh release create "pc-v$V" "artifacts/BingeMote-PC-$V.exe" --target "$(git rev-parse HEAD)" --title "BingeMote PC v$V" --notes-file /tmp/notes.md --latest=false
-          fi
+      - run: echo "DRY RELEASE JOB RAN - gate passed. Nothing published."
