@@ -31,6 +31,10 @@ on:
         description: Expected sha256 of those shipping bytes (asserted by the e2e shipping leg)
         type: string
         default: ''
+      stage_tested_apk:
+        description: 'With only=all and publish=false: stage the signed APK built by THIS run (the exact tested bytes) to the PRIVATE TestLab draft. Never public. Default false.'
+        type: boolean
+        default: false
       restage:
         description: 'Explicitly authorized restage: replace staged draft assets (never replaces a visible release)'
         type: boolean
@@ -86,7 +90,7 @@ jobs:
       # repo's draft release (collaborator-only visibility), never to a public
       # artifact. Prints the sha256 of the staged bytes for the review brief.
       - name: Stage the signed APK to the private TestLab draft
-        if: github.event_name == 'workflow_dispatch' && inputs.only == 'stage'
+        if: github.event_name == 'workflow_dispatch' && (inputs.only == 'stage' || (inputs.only == 'all' && inputs.publish == false && inputs.stage_tested_apk == true))
         env:
           TESTLAB_PAT: ${{ secrets.TESTLAB_PAT }}
         run: |
@@ -424,7 +428,7 @@ jobs:
     # Fail-closed: every required job must be exactly "success". failure, cancelled,
     # skipped, missing and unknown all block publication. if: always() so a failed or
     # skipped need still produces a logged table here instead of silently skipping.
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.publish == true || inputs.stage_tested_apk == true) && inputs.only == 'all'
     needs: [android, helper, helper-e2e, scanner-test, focused-ui, screenshots]
     runs-on: ubuntu-latest
     steps:

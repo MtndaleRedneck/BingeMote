@@ -122,6 +122,7 @@ class DisconnectedHomeUiTest {
         ts("t0 desc Pause read2") { device.hasObject(By.desc("Pause")).toString() }
         ts("t0 desc Play read1") { device.hasObject(By.desc("Play")).toString() }
         ts("stub last req") { stub.reqLog.lastOrNull().toString() + " flags: " + stub.reqLog.takeLast(1).size }
+        ts("lifecycle") { device.executeShellCommand("dumpsys activity activities").lineSequence().filter { it.contains("com.bingemote") && (it.contains("state=") || it.contains("mResumedActivity") || it.contains("topResumedActivity")) }.take(12).joinToString(" | ") }
         probe("t0")
         ts("png1") { device.takeScreenshot(File(dir, "bm-obs-1.png")).toString() }
         ts("uix1") { device.dumpWindowHierarchy(File(dir, "bm-obs-1.uix")); "" }
