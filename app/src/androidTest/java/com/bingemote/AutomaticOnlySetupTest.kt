@@ -1,11 +1,11 @@
 package com.bingemote
 
 import android.content.Intent
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
 import org.junit.Rule
@@ -175,18 +175,35 @@ class AutomaticOnlySetupTest {
             device.hasObject(By.text(PAIR_CODE_LABEL)))
         assertTrue("pair card body missing - selection not standing before the clear",
             device.hasObject(By.textContains(PAIR_CARD_BODY)))
-        repeat(4) {
-            if (!device.hasObject(By.text("Or type the PC's address:"))) {
-                device.swipe(device.displayWidth / 2, device.displayHeight / 3,
-                    device.displayWidth / 2, device.displayHeight * 4 / 5, 20)
-                device.waitForIdle()
-            }
+        // Same-viewport precondition (test-proof strategy, no scrolling proof needed). ONE accessibility
+        // tree read (readSetup) must show the address label, the "Use this address" button (label AND its
+        // 48dp tile) and the pair-code label, all fully inside the scroll viewport V, where V is the
+        // nearest scrollable ancestor shared by the three (ambiguity fails). Small swipes may only be used
+        // to REACH that state; nothing after typing scrolls. If it cannot be established, fail closed.
+        val typed = "192.0.2.20"
+        var before: SetupView? = null
+        var nudges = 0
+        while (nudges <= 8) {
+            before = readSetup()
+            if (before != null && before.preconditionProblem() == null) break
+            if (before?.f == null)
+                device.swipe(device.displayWidth / 2, device.displayHeight * 45 / 100,
+                    device.displayWidth / 2, device.displayHeight * 70 / 100, 20)
+            else
+                device.swipe(device.displayWidth / 2, device.displayHeight * 70 / 100,
+                    device.displayWidth / 2, device.displayHeight * 55 / 100, 20)
+            device.waitForIdle()
+            nudges++
         }
-        assertTrue("address section lost after the pre-condition pin",
-            device.hasObject(By.text("Or type the PC's address:")))
+        val finalRead = readSetup()
+        val preWhy = if (finalRead == null) "no accessibility snapshot" else finalRead.preconditionProblem()
+        if (preWhy != null) {
+            fail("same-viewport precondition not established before typing (fail closed): $preWhy")
+        }
+        val pre = finalRead!!
         val fields = device.findObjects(By.clazz("android.widget.EditText"))
         val addressField = fields.minBy { it.visibleBounds.top }
-        addressField.text = "192.0.2.20"
+        addressField.text = typed
         // ACTION_SET_TEXT applies asynchronously through the IME/accessibility path, so a
         // read on the very next frame can race the state update (saw one CI run read back
         // empty while the identical tree passed in its sibling run). Poll briefly instead.
@@ -206,61 +223,50 @@ class AutomaticOnlySetupTest {
         // pins the same selector and gone poll from the presence side.
         // IME first: setText can raise the keyboard over the lower half of the screen
         // (where the pair card renders), distorting the tree the poll reads.
-        if (device.executeShellCommand("dumpsys input_method").contains("mInputShown=true")) device.pressBack()
         device.waitForIdle()
-        // Viewport-aware bounded poll (review-driven): UiAutomator sees only the
-        // current viewport, and the pin's scroll-back to the address field can leave
-        // the card below the fold, so a bare hasObject absence could skip the whole
-        // budget and a later sweep could catch a slow-but-real hide without it. Per
-        // the actual SetupScreen layout (one verticalScroll Column, L164-165; the
-        // address field L240-252 ABOVE the pair card L273-301), an absence slice
-        // concludes hidden only after revealing the card's region below; a presence
-        // slice gets a 700ms Until.gone window as before. Converges the moment the
-        // state lands; still fails hard when the card genuinely never hides.
-        val hideBy = System.currentTimeMillis() + 10000
-        var hidden = false
-        while (!hidden && System.currentTimeMillis() < hideBy) {
-            if (device.hasObject(By.text(PAIR_CODE_LABEL))) {
-                // Card in viewport: a gone window here is viewport-complete.
-                hidden = device.wait(Until.gone(By.text(PAIR_CODE_LABEL)), 700)
-            } else {
-                // Absence only counts where the card renders, so first get there
-                // POSITIVELY (review-driven: an unverified swipe cannot show the
-                // region was reached). Per the actual SetupScreen layout the pair
-                // card is the LAST element of the scroll column (L273-301; the VLC
-                // handoff below it needs successVisible, false here), so its region
-                // is the content bottom - UiScrollable.scrollToEnd stops only when
-                // no forward scroll remains. When the hide has landed, chosen == null
-                // leaves Card A alone (L213-268), which the run-45549797139
-                // before-selection capture shows occupying ~40% of the 1080x2310@480
-                // viewport: no scrollable extent, one complete tree, so the
-                // not-scrollable case is already fully inspected.
-                val scroller = UiScrollable(UiSelector().scrollable(true))
-                if (scroller.exists()) scroller.scrollToEnd(4)
-                device.waitForIdle()
-                hidden = !device.hasObject(By.text(PAIR_CODE_LABEL))
-            }
+        // Dismiss the keyboard only if it is shown (a blind back could leave the screen), and fail
+        // closed if its state cannot be read: a keyboard over the card region would make an absence
+        // read meaningless. (Window-list reads can lag a frame: one waitForIdle after the back.)
+        fun imeShown(): Boolean {
+            // Interactive window list (API 34 emulator, same source UiDevice reads its roots from): a
+            // readable list always contains the app's own window, so an empty list means "not
+            // readable" and fails closed instead of reading as "no keyboard".
+            val windows = InstrumentationRegistry.getInstrumentation().uiAutomation.windows
+            assertTrue("window list not readable - cannot rule out a keyboard over the card region",
+                windows.isNotEmpty())
+            return windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
         }
-        assertTrue("pair-code entry still shown after the address cleared the selection", hidden)
-        // Viewport guard, both directions, with POSITIVE extent proof (review-driven:
-        // blind repeat(3) swipes never established that the claimed region was
-        // reached). Top: scroll to the verified beginning and require the
-        // always-rendered Card A title as the upper anchor. Bottom: scroll to the
-        // verified end - the pair card renders last, so its region is the content
-        // bottom. A viewport-only disappearance resurrects the card at one extreme
-        // and fails here; a real removal passes both. Same not-scrollable reasoning
-        // as the poll: a fitted single viewport is already the whole tree.
-        val guardScroller = UiScrollable(UiSelector().scrollable(true))
-        if (guardScroller.exists()) guardScroller.scrollToBeginning(4)
-        device.waitForIdle()
-        assertTrue("top anchor missing - scroll extent not verified, guard proves nothing",
-            device.hasObject(By.text(SETUP_TITLE)))
-        assertFalse("pair-code entry reappeared above the viewport - hide was viewport-only",
-            device.hasObject(By.text(PAIR_CODE_LABEL)))
-        if (guardScroller.exists()) guardScroller.scrollToEnd(4)
-        device.waitForIdle()
-        assertFalse("pair-code entry reappeared below the viewport - hide was viewport-only",
-            device.hasObject(By.text(PAIR_CODE_LABEL)))
+        if (imeShown()) { device.pressBack(); device.waitForIdle() }
+        assertFalse("keyboard still shown - the card region may be covered", imeShown())
+        // Verdict, from fresh single-tree reads only, no scrolling. The bug (typing does not clear the
+        // selection) keeps chosen set, which (SetupScreen L267-269 and L273) shows a "Selected: host:port" row
+        // 8dp under the button tile AND the pair card. Both absent is required. Absence only counts when
+        // the region where the row would start is observably inside the viewport in the SAME tree:
+        // tile and address label fully inside V (top included), V and the window unchanged from before
+        // typing, the typed text present in the field, and the full first line of the row
+        // (address-label height as the same-13sp-style stand-in, +4 px for rounding) above V's bottom.
+        // Geometry is re-read on every tick; a missing node or violated condition is an invalid tick,
+        // never a pass, and a timeout fails. Two consecutive equal reads are required. This is a
+        // conservative visibility HEURISTIC: Compose/UiAutomator exposure of clipped nodes is unproven,
+        // so nothing here claims a false PASS is impossible; the clamp case may fail RED by design.
+        val verdictBy = System.currentTimeMillis() + 10000
+        var verdict: SetupView? = null
+        var lastWhy = "no accessibility snapshot"
+        var prevKey: String? = null
+        while (verdict == null && System.currentTimeMillis() < verdictBy) {
+            device.waitForIdle()
+            val now = readSetup()
+            if (now == null) { prevKey = null; Thread.sleep(250); continue }
+            val why = now.postProblem(typed, pre)
+            if (why != null) { lastWhy = why; prevKey = null; Thread.sleep(250); continue }
+            if (now.selected.isNotEmpty() || now.l.isNotEmpty()) {
+                lastWhy = "still shown after typing: Selected rows=${now.selected.size}, pair-code labels=${now.l.size}; ${now.describe()}"
+                prevKey = null; Thread.sleep(250); continue
+            }
+            val key = now.describe()
+            if (key == prevKey) verdict = now else { prevKey = key; Thread.sleep(250) }
+        }
+        assertNotNull("address typing did not clear the selection, or the absence was not observable: $lastWhy", verdict)
         repeat(3) {
             if (!device.hasObject(By.text("Use this address"))) {
                 device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
@@ -287,7 +293,20 @@ class AutomaticOnlySetupTest {
             device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-confirmed-address-fail.xml"))
         }
         assertTrue(device.hasObject(By.text(PAIR_CODE_LABEL)))
-        assertTrue(device.hasObject(By.text("Selected: 192.0.2.20:8488")))
+        // Positive control for the verdict above, through the SAME routine and the SAME containment
+        // rules (readSetup / SetupView): in the confirmed-address state exactly one non-empty
+        // "Selected:" row and the pair-code label are observed inside V with the typed text in the
+        // field. Without this, the absence read above would not show that it can see the row at all.
+        var control: SetupView? = null
+        var controlWhy = "no accessibility snapshot"
+        val controlBy = System.currentTimeMillis() + 6000
+        while (control == null && System.currentTimeMillis() < controlBy) {
+            device.waitForIdle()
+            val now = readSetup()
+            controlWhy = now?.controlProblem(typed, "Selected: $typed:${HelperClient.DEFAULT_PORT}") ?: "no accessibility snapshot"
+            if (now != null && controlWhy == "ok") control = now else Thread.sleep(300)
+        }
+        assertNotNull("positive control failed: $controlWhy", control)
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-selected-address.png"))
     }
 
@@ -312,4 +331,140 @@ class AutomaticOnlySetupTest {
         }
         assertTrue("Automatic deferred setup still needs a Done action", foundDone)
     }
+
+    // ---- single-tree reads (one getRootInActiveWindow walk per call; nothing is cached between calls) ----
+
+    private class N(val info: AccessibilityNodeInfo, val parent: N?) {
+        val rect = Rect().also { info.getBoundsInScreen(it) }
+        val text: String? = info.text?.toString()
+        val cls: String? = info.className?.toString()
+        val scrollable = info.isScrollable
+        fun ancestors(): List<N> { val out = ArrayList<N>(); var p = parent; while (p != null) { out.add(p); p = p.parent }; return out }
+        fun scrollAncestors(): List<N> = ancestors().filter { it.scrollable }
+    }
+
+    /** Walks the whole tree. Returns false if ANY node could not be read (a null child or the depth cap),
+     *  because an absence read from an incomplete walk proves nothing; callers must treat that tick as invalid. */
+    private fun walk(info: AccessibilityNodeInfo, parent: N?, out: MutableList<N>, depth: Int): Boolean {
+        val n = N(info, parent); out.add(n)
+        if (depth > 60) return info.childCount == 0
+        var complete = true
+        for (i in 0 until info.childCount) {
+            val c = info.getChild(i)
+            if (c == null) { complete = false; continue }
+            if (!walk(c, n, out, depth + 1)) complete = false
+        }
+        return complete
+    }
+
+    private class SetupView(
+        val window: Rect, val f: N?, val bt: N?, val l: List<N>, val selected: List<N>,
+        val fieldText: String?, val v: N?, val vProblem: String?, val tile: Rect?, val tileSource: String,
+        val density: Float, val complete: Boolean,
+    ) {
+        fun describe() = "complete=$complete window=${rs(window)} V=${rs(v?.rect)} F=${rs(f?.rect)} tile=${rs(tile)}($tileSource) " +
+            "L=${rs(l.firstOrNull()?.rect)} sel=${selected.size} field='${fieldText}'"
+        private fun inside(r: Rect, v: Rect) = r.left >= v.left && r.right <= v.right && r.top >= v.top && r.bottom <= v.bottom && r.height() > 0
+        // Text nodes sit inside layout padding, so a node that is only partly visible (its reported
+        // bounds, if the framework clips them to the viewport, then lie ON the viewport edge) must not
+        // count as fully inside: strict on every side. Used for the address label, the button label
+        // and the card label, whose heights or centres the clearance arithmetic is derived from.
+        private fun insideStrict(r: Rect, v: Rect) = r.left > v.left && r.right < v.right && r.top > v.top && r.bottom < v.bottom && r.height() > 0
+
+        /** Before typing: label, button tile and card label all fully inside one unambiguous viewport. */
+        fun preconditionProblem(): String? {
+            if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
+            if (window.isEmpty) return "window bounds empty"
+            if (f == null) return "address label not found: ${describe()}"
+            if (bt == null || tile == null) return "button label not found: ${describe()}"
+            if (l.isEmpty()) return "pair-code label not found: ${describe()}"
+            if (v == null) return "viewport not established ($vProblem): ${describe()}"
+            val vr = v.rect
+            if (!insideStrict(f.rect, vr)) return "address label not strictly inside V (clipped or on the edge): ${describe()}"
+            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside V (clipped or on the edge): ${describe()}"
+            if (!inside(tile, vr)) return "button tile not fully inside V: ${describe()}"
+            if (!insideStrict(l[0].rect, vr)) return "pair-code label not strictly inside V (clipped or on the edge): ${describe()}"
+            return null
+        }
+
+        /** After typing: the region where a still-present Selected row would start must be observable. */
+        fun postProblem(typed: String, pre: SetupView): String? {
+            if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
+            if (window != pre.window) return "window bounds changed: before=${rs(pre.window)} now=${rs(window)}"
+            if (f == null || bt == null || tile == null) return "address label or button missing: ${describe()}"
+            if (v == null) return "viewport not established ($vProblem): ${describe()}"
+            if (v.rect != pre.v!!.rect) return "viewport bounds changed: before=${rs(pre.v.rect)} now=${rs(v.rect)}"
+            if (fieldText != typed) return "typed text not in the field in this tree (field='$fieldText')"
+            val vr = v.rect
+            if (!insideStrict(f.rect, vr)) return "address label not strictly inside V (clipped or on the edge): ${describe()}"
+            if (!insideStrict(bt.rect, vr)) return "button label not strictly inside V (clipped or on the edge): ${describe()}"
+            if (!inside(tile, vr)) return "button tile not fully inside V (top included): ${describe()}"
+            // Row first-line height: the larger of the label heights read before and after typing, so a
+            // label that read short in one tree cannot understate the clearance.
+            val lineH = Math.max(f.rect.height(), pre.f!!.rect.height())
+            val rowTop = tile.bottom + Math.round(8 * density)
+            val need = rowTop + lineH + 4
+            if (need > vr.bottom) return "first line of a would-be Selected row not observable: rowTop=$rowTop need=$need Vbottom=${vr.bottom} (button moved down, clamp or scroll): ${describe()}"
+            return null
+        }
+
+        /** Confirmed-address state: exactly one non-empty Selected row and the card label, inside V. */
+        fun controlProblem(typed: String, expectedRow: String): String {
+            if (!complete) return "accessibility tree walk incomplete (unreadable child or depth cap): ${describe()}"
+            if (v == null) return "viewport not established ($vProblem): ${describe()}"
+            if (fieldText != typed) return "typed text not in the field (field='$fieldText')"
+            if (selected.size != 1) return "Selected rows=${selected.size}: ${describe()}"
+            val row = selected[0]
+            if (row.text != expectedRow) return "Selected text '${row.text}' != '$expectedRow'"
+            if (!inside(row.rect, v.rect)) return "Selected row not inside V: row=${rs(row.rect)} ${describe()}"
+            if (l.isEmpty() || !insideStrict(l[0].rect, v.rect)) return "pair-code label not strictly inside V: ${describe()}"
+            // Same containment the verdict relies on, so the control proves the routine can see the row
+            // under the same rules (not at the verdict's scroll position, which it does not claim).
+            if (f == null || bt == null || tile == null) return "address label or button missing: ${describe()}"
+            if (!insideStrict(f.rect, v.rect) || !insideStrict(bt.rect, v.rect) || !inside(tile, v.rect))
+                return "address label, button label or tile not inside V: ${describe()}"
+            if (!insideStrict(row.rect, v.rect)) return "Selected row not strictly inside V: row=${rs(row.rect)} ${describe()}"
+            return "ok"
+        }
+    }
+
+    private fun readSetup(): SetupView? {
+        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val root = ui.rootInActiveWindow ?: return null
+        val nodes = ArrayList<N>()
+        val complete = walk(root, null, nodes, 0)
+        val window = Rect().also { root.getBoundsInScreen(it) }
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        val f = nodes.filter { it.text == "Or type the PC's address:" }.singleOrNull()
+        val bt = nodes.filter { it.text == "Use this address" }.singleOrNull()
+        val l = nodes.filter { it.text == PAIR_CODE_LABEL }.sortedBy { it.rect.top }
+        val selected = nodes.filter { it.text?.startsWith("Selected:") == true }
+        val field = nodes.filter { it.cls == "android.widget.EditText" }.minByOrNull { it.rect.top }
+        var v: N? = null
+        var vProblem: String? = null
+        if (f == null || bt == null) vProblem = "address label or button not unique/present"
+        else {
+            val sf = f.scrollAncestors(); val sb = bt.scrollAncestors()
+            val sl = l.firstOrNull()?.scrollAncestors()
+            if (sf.isEmpty()) vProblem = "no scrollable ancestor of the address label"
+            else if (sb.isEmpty() || sf.first().info != sb.first().info && sf.first().rect != sb.first().rect) vProblem = "label and button have different nearest scrollable ancestors"
+            else if (sl != null && (sl.isEmpty() || sf.first().rect != sl.first().rect)) vProblem = "pair-code label has a different nearest scrollable ancestor"
+            else v = sf.first()
+        }
+        var tile: Rect? = null
+        var tileSource = "none"
+        if (bt != null) {
+            val half = Math.round(24 * density)
+            val parent = bt.parent
+            if (parent != null && parent.cls == "android.widget.Button" &&
+                Math.abs(parent.rect.height() - 2 * half) <= 3) { tile = parent.rect; tileSource = "button-parent" }
+            else {
+                tile = Rect(bt.rect.left, bt.rect.centerY() - half, bt.rect.right, bt.rect.centerY() + half)
+                tileSource = "label-center+24dp"
+            }
+        }
+        return SetupView(window, f, bt, l, selected, field?.text?.toString(), v, vProblem, tile, tileSource, density, complete)
+    }
 }
+
+private fun rs(r: Rect?) = if (r == null) "none" else "[${r.left},${r.top}][${r.right},${r.bottom}]"
