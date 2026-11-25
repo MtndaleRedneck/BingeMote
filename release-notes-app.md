@@ -1,4 +1,4 @@
-## v1.15.1 - November 25, 2026
+## v1.15.2 - November 25, 2026
 
 A small navigation fix.
 
