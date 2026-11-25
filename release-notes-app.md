@@ -1,3 +1,10 @@
+## v1.15.1 - November 25, 2026
+
+A small navigation fix.
+
+**Fixed**
+- Feedback, Your PC and pair again now start at the top each time you open them. Going Back to a page still keeps your place, in Settings, Feedback and folder browsing.
+
 ## v1.15.0 - November 25, 2026
 
 A handful of small fixes and visual touches.
