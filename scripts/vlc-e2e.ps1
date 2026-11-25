@@ -38,10 +38,12 @@ $bw.Close()
 Assert ((Get-Item $wav).Length -eq 44 + $dataSize) "test wav written"
 
 # --- launch VLC with its HTTP interface, loopback only, dummy audio ---
-Write-Host "== installing VLC =="
-choco install vlc --no-progress -y | Out-Null
+# VLC is installed by the workflow's pinned, sha256-verified step (scripts/install_pinned_tool.ps1).
+# No package feed here: a choco call would not see that install and could replace it with an unpinned one.
+Write-Host "== VLC (pinned install from the workflow step) =="
 $vlcExe = 'C:\Program Files\VideoLAN\VLC\vlc.exe'
-Assert (Test-Path $vlcExe) "vlc installed"
+Assert (Test-Path $vlcExe) "vlc present at the pinned install path (workflow step must have installed it)"
+Assert ((Get-Item $vlcExe).VersionInfo.ProductVersion -like '3.0.24*') "vlc is the pinned 3.0.24"
 & $vlcExe --version
 $proc = Start-Process $vlcExe -PassThru -ArgumentList '-I','dummy','--aout=afile','--audiofile-file=NUL','--audiofile-format=s16l','--extraintf','http','--http-host','127.0.0.1','--http-port','8080','--http-password',$pass
 try {
