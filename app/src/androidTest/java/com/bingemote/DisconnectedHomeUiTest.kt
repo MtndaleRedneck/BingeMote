@@ -63,50 +63,73 @@ class DisconnectedHomeUiTest {
             stub.state = "playing"
             stub.mark("launch")
             launch()
-            waitText("1:00:00 total")
-            stub.mark("connected-seen")
-            assertTrue(has("0:30"))
-            assertTrue(device.hasObject(By.desc("Pause")))
-            stub.mark("failStatus=true")
-            stub.failStatus = true
-            assertZero()
-            stub.mark("zero-seen")
-            shot("disconnected-zero")
-            stub.mark("failStatus=false")
-            stub.failStatus = false
             try {
                 waitText("1:00:00 total")
+                stub.mark("connected-seen")
+                assertTrue(has("0:30"))
+                assertTrue(device.hasObject(By.desc("Pause")))
+                stub.mark("failStatus=true")
+                stub.failStatus = true
+                assertZero()
+                stub.mark("zero-seen")
+                shot("disconnected-zero")
+                stub.mark("failStatus=false")
+                stub.failStatus = false
+                waitText("1:00:00 total")
+                stub.mark("reconnected-seen")
+                assertTrue(has("0:30"))
+                assertTrue(device.hasObject(By.desc("Pause")))
+                shot("disconnected-reconnected")
             } catch (e: AssertionError) {
-                stub.mark("RECONNECT-WAIT-TIMEOUT")
-                diagCapture("t0")
+                // OBSERVER ONLY: runs BEFORE the finally below, i.e. while the stub is still up.
+                stub.mark("ASSERT-FAILED ${e.stackTrace.firstOrNull { it.className.endsWith("DisconnectedHomeUiTest") }}")
+                observe(stub)
                 throw e
             }
-            stub.mark("reconnected-seen")
-            assertTrue(has("0:30"))
-            assertTrue(device.hasObject(By.desc("Pause")))
-            shot("disconnected-reconnected")
         } finally {
+            stub.mark("STOP")
             diagWriteLog(stub)
             stub.stop()
         }
     }
 
-    // DIAGNOSTIC ONLY (cause of run 45683275444 attempt-1 red is unexplained): wall-clock
-    // stub request log, plus an immediate screenshot/hierarchy pair and an unfiltered
-    // logcat at the reconnect timeout. Observes; changes no product or assertion logic.
-    private fun diagCapture(tag: String) {
+    // OBSERVER (diagnostic only, no assertion or product change). Every step is wall-clock
+    // stamped (start/end) so capture order and latency are known; queries and captures read
+    // the live UI before the stub is stopped.
+    private val obs = StringBuilder()
+    private fun ts(what: String, block: () -> String = { "" }) {
+        val a = System.currentTimeMillis()
+        val r = runCatching(block).getOrElse { "ERR " + it }
+        obs.append("$a-${System.currentTimeMillis()} $what $r\n")
+    }
+    private fun probe(tag: String) {
+        ts("$tag hasPause(desc)") { device.hasObject(By.desc("Pause")).toString() }
+        ts("$tag hasPlay(desc)") { device.hasObject(By.desc("Play")).toString() }
+        ts("$tag has(1:00:00 total)") { has("1:00:00 total").toString() }
+        ts("$tag has(0:00 total)") { has("0:00 total").toString() }
+        ts("$tag has(Connected)") { has("Connected").toString() }
+    }
+    private fun observe(stub: HapticTickTest.StatusStub) {
         val dir = ctx.getExternalFilesDir(null) ?: return
-        runCatching { device.takeScreenshot(File(dir, "bm-diag-$tag.png")) }
-        runCatching { device.dumpWindowHierarchy(File(dir, "bm-diag-$tag.uix")) }
-        runCatching {
-            Thread.sleep(2000)
-            device.takeScreenshot(File(dir, "bm-diag-$tag-plus2s.png"))
-            device.dumpWindowHierarchy(File(dir, "bm-diag-$tag-plus2s.uix"))
-        }
+        probe("t0")
+        ts("png1") { device.takeScreenshot(File(dir, "bm-obs-1.png")).toString() }
+        ts("uix1") { device.dumpWindowHierarchy(File(dir, "bm-obs-1.uix")); "" }
+        ts("uix2") { device.dumpWindowHierarchy(File(dir, "bm-obs-2.uix")); "" }
+        ts("png2") { device.takeScreenshot(File(dir, "bm-obs-2.png")).toString() }
+        Thread.sleep(1000)
+        probe("t+1s")
+        ts("png3") { device.takeScreenshot(File(dir, "bm-obs-3.png")).toString() }
+        ts("uix3") { device.dumpWindowHierarchy(File(dir, "bm-obs-3.uix")); "" }
+        Thread.sleep(2000)
+        probe("t+3s")
+        ts("png4") { device.takeScreenshot(File(dir, "bm-obs-4.png")).toString() }
+        ts("uix4") { device.dumpWindowHierarchy(File(dir, "bm-obs-4.uix")); "" }
+        stub.mark("observer-done")
     }
     private fun diagWriteLog(stub: HapticTickTest.StatusStub) {
         val dir = ctx.getExternalFilesDir(null) ?: return
         runCatching { File(dir, "bm-stublog-connectedDrop.txt").writeText(stub.reqLog.joinToString("\n") + "\n") }
+        runCatching { File(dir, "bm-obs-timeline.txt").writeText(obs.toString()) }
         runCatching {
             val out = device.executeShellCommand("logcat -d -v threadtime -t 4000")
             File(dir, "bm-logcat-connectedDrop.txt").writeText(out)

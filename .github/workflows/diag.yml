@@ -1,10 +1,10 @@
-name: Diag connected-drop
-# Bounded diagnostic (no publish, no release, no write permissions): runs ONLY
-# DisconnectedHomeUiTest#connectedThenDropReadsZeroThenReconnects, N=10 iterations in ONE
+name: Diag observer
+# Bounded observer diagnostic (no publish, read-only): ONE iteration of ONE test method.
+# DisconnectedHomeUiTest#connectedThenDropReadsZeroThenReconnects, ONE iteration in ONE
 # emulator session, and uploads stub request logs, logcat and diag pixels per iteration.
 on:
   push:
-    branches: [diag-1125]
+    branches: [diag2-1125]
 permissions:
   contents: read
 jobs:
@@ -30,7 +30,7 @@ jobs:
           target: google_apis
           profile: pixel_6
           disable-animations: true
-          script: bash scripts/diag-connected-drop.sh
+          script: bash scripts/diag-observer.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
