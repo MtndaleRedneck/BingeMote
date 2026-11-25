@@ -1,0 +1,42 @@
+name: Navigation fresh-entry evidence
+on:
+  push:
+    branches: [nav-1125]
+    paths: ['.github/workflows/nav-evidence.yml', 'scripts/nav-evidence.sh', 'app/**']
+permissions:
+  contents: read
+concurrency:
+  group: nav-evidence-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - name: Unit tests and debug build (no secrets)
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/nav-evidence.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BingeMote-nav-evidence
+          path: nav-evidence/
+          retention-days: 3

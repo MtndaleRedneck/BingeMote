@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -151,6 +152,10 @@ class MainActivity : ComponentActivity() {
             val feedbackScroll = rememberScrollState()
             val moviesListState = rememberLazyListState()
             val pickerListState = rememberLazyListState()
+            // Fresh entry to a page starts at the top; Back to a parent keeps its place.
+            fun enter(screen: String, scroll: ScrollState) {
+                navigationScope.launch { scroll.scrollTo(0); current.value = screen }
+            }
             BingeMoteTheme {
                 when (current.value) {
                     "setup" -> SetupScreen(
@@ -179,14 +184,14 @@ class MainActivity : ComponentActivity() {
                         settingsScroll,
                         pickerListState,
                         onBack = { current.value = "main" },
-                        onRepair = { current.value = "yourpc" },
-                        onFeedback = { current.value = "feedback" },
+                        onRepair = { enter("yourpc", yourpcScroll) },
+                        onFeedback = { enter("feedback", feedbackScroll) },
                     )
                     "yourpc" -> YourPCScreen(
                         remote,
                         yourpcScroll,
                         onBack = { openSettings() },
-                        onPairAgain = { current.value = "setup" },
+                        onPairAgain = { enter("setup", setupScroll) },
                     )
                     "feedback" -> FeedbackScreen(feedbackScroll) { openSettings() }
                     else -> MainScreen(
