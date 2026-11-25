@@ -231,9 +231,13 @@ jobs:
       - name: Publish helper exe (with the CI-only pairing hook)
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK" -o helper/out
 
-      # The movies test launches real VLC; install it as its own step so a mirror hiccup is visible.
-      - name: Install VLC (for the movies launch test)
-        run: choco install vlc --no-progress -y
+      # The movies test launches real VLC. Pinned official download, sha256-verified BEFORE it is run
+      # (replaces `choco install vlc`: the feed's 503 was swallowed here and only failed later as a
+      # test assertion). Fails closed as "TOOL NOT RUN" before any test; no unverified fallback.
+      # scripts/install_pinned_tool.ps1 is the qualified Zephyr helper (git blob 1d0e1aae1709); only the vlc leg is used.
+      - name: Install VLC (pinned 3.0.24, sha256-verified; for the movies launch test)
+        timeout-minutes: 12
+        run: pwsh -File scripts/install_pinned_tool.ps1 -Tool vlc
 
       - name: Build the installer from the test build (for the install/uninstall test)
         run: |
