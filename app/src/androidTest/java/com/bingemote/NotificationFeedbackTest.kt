@@ -180,6 +180,14 @@ class HapticTickTest {
                                         out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${vb.toByteArray().size}\r\nConnection: close\r\n\r\n$vb".toByteArray())
                                         out.flush(); sock.close(); return@thread
                                     }
+                                    // The PC helper stays alive while VLC is down: ping answers 200
+                                    // even under failStatus/failAuth, which break only VLC itself.
+                                    if (line.contains("/ping")) {
+                                        val pb = "{}"
+                                        val out = sock.getOutputStream()
+                                        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${pb.toByteArray().size}\r\nConnection: close\r\n\r\n$pb".toByteArray())
+                                        out.flush(); sock.close(); return@thread
+                                    }
                                     if (failAuth) {
                                         val out = sock.getOutputStream()
                                         out.write("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray())
