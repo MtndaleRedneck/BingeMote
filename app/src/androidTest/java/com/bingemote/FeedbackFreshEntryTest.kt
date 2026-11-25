@@ -32,9 +32,9 @@ class FeedbackFreshEntryTest {
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-$name.png"))
 
     @Test fun feedbackReopensAtTopButBackKeepsSettingsPlace() {
-        val stub = HapticTickTest.StatusStub(); stub.start()
+        val stub = NavStub(true); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            NavStub.seed(ctx, stub.port)
             ctx.startActivity(Intent(ctx, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
             val gear = device.wait(Until.findObject(By.desc("Settings")), 20000)
@@ -73,6 +73,6 @@ class FeedbackFreshEntryTest {
             assertTrue("fresh entry at top (field)", onScreen("Your message"))
             assertFalse("not left at the bottom", onScreen("Open private form"))
             shot("fb-reentry-top")
-        } finally { stub.stop() }
+        } finally { stub.close() }
     }
 }

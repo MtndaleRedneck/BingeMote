@@ -27,9 +27,18 @@ jobs:
           head=$(git rev-parse HEAD)
           diff=$(git diff --name-status "$EXPECTED_BASE" HEAD)
           printf 'checkout_head=%s\nexpected_base=%s\ndiff_vs_base:\n%s\n' "$head" "$EXPECTED_BASE" "$diff" | tee nav-evidence/source-binding.txt
-          want=$(printf 'M\t.github/workflows/exact-upgrade.yml\nA\tscripts/exact-nav.sh')
-          [ "$diff" = "$want" ] || fail_bind "checkout is not the reviewed base plus exactly the two harness changes (modified exact-upgrade.yml, added scripts/exact-nav.sh); test source/build inputs would differ from what produced the staged APK"
-          echo "source bound: every tracked file except the two harness changes equals $EXPECTED_BASE" | tee -a nav-evidence/source-binding.txt
+          want=$(printf 'M\t.github/workflows/exact-upgrade.yml\nM\tapp/src/androidTest/java/com/bingemote/FeedbackFreshEntryTest.kt\nM\tapp/src/androidTest/java/com/bingemote/MoviesNavTest.kt\nA\tapp/src/androidTest/java/com/bingemote/NavSupport.kt\nM\tapp/src/androidTest/java/com/bingemote/SettingsScrollNavTest.kt\nA\tscripts/exact-nav.sh')
+          [ "$diff" = "$want" ] || fail_bind "checkout is not the reviewed base plus exactly the harness changes and the four reviewed androidTest files; product, gradle and proguard inputs would differ from what produced the staged APK"
+          while read -r blob path; do
+            [ "$(git rev-parse "HEAD:$path")" = "$blob" ] || fail_bind "reviewed blob mismatch for $path"
+          done <<'BLOBS'
+          4c7894c77e14b6b0c85557c7d0818e25eb022505 app/src/androidTest/java/com/bingemote/NavSupport.kt
+          fec35a2d6ef8662d26c6ae4c2e8ebe5b1263827a app/src/androidTest/java/com/bingemote/MoviesNavTest.kt
+          db068663c303bf498203b13d0413c42551871071 app/src/androidTest/java/com/bingemote/FeedbackFreshEntryTest.kt
+          c51bd2b83bcf900e97e7a9e116eaaa193443b4e9 app/src/androidTest/java/com/bingemote/SettingsScrollNavTest.kt
+          b71f9c3270f1284aaf17b1887dad4ec900159577 scripts/exact-nav.sh
+          BLOBS
+          echo "source bound: every tracked file except the harness changes and the four reviewed androidTest files equals $EXPECTED_BASE" | tee -a nav-evidence/source-binding.txt
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4 tag head resolved 2026-11-25
         with:
           distribution: temurin

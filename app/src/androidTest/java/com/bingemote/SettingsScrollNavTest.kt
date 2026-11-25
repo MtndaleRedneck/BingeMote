@@ -42,9 +42,9 @@ class SettingsScrollNavTest {
     }
 
     @Test fun backFromSubpageKeepsPositionAndReentryResetsToTop() {
-        val stub = HapticTickTest.StatusStub(); stub.start()
+        val stub = NavStub(true); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            NavStub.seed(ctx, stub.port)
             ctx.startActivity(Intent(ctx, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
             openSettingsFromHome()
@@ -68,6 +68,6 @@ class SettingsScrollNavTest {
             device.waitForIdle()
             assertTrue("re-entry starts at top", onScreen("Your PC"))
             shot("settings-nav-top")
-        } finally { stub.stop() }
+        } finally { stub.close() }
     }
 }
