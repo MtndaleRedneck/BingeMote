@@ -10,8 +10,6 @@ on:
   schedule:
     - cron: '23 5 * * 2'   # weekly, Tuesday 05:23 UTC
   workflow_dispatch:
-  push:
-    branches: [instinct1/free-review-kit]   # TEMP branch-local validation trigger; removed before merge
 
 permissions:
   contents: read
