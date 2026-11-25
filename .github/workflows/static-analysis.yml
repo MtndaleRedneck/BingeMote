@@ -18,8 +18,6 @@
 name: Static Analysis (lint/detekt)
 
 on:
-  push:
-    branches: [instinct1/free-review-kit]   # TEMP branch-local validation trigger; removed before merge
   pull_request:
   workflow_dispatch:
   schedule:
