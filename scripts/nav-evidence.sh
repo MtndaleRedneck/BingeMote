@@ -12,3 +12,4 @@ for c in settings-nav-kept settings-nav-top fb-first-top fb-scrolled-bottom fb-b
 done
 adb logcat -d -s AndroidRuntime:E > nav-evidence/crashes.txt || true
 grep -q '^OK (3 tests)' nav-evidence/tests.txt
+# discrimination run: unchanged 35b334f production source

@@ -1,7 +1,7 @@
 name: Navigation fresh-entry evidence
 on:
   push:
-    branches: [nav-1125]
+    branches: [nav-1125-base]
     paths: ['.github/workflows/nav-evidence.yml', 'scripts/nav-evidence.sh', 'app/**']
 permissions:
   contents: read
