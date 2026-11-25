@@ -46,7 +46,7 @@ fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Un
                     Modifier
                         .size(10.dp)
                         .clip(CircleShape)
-                        .background(if (unreachable) ErrorRed else Color(0xFF4CAF50)),
+                        .background(if (unreachable) ErrorRed else OkGreen),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(

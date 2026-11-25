@@ -248,7 +248,7 @@ fun SettingsScreen(
                 Spacer(Modifier.width(8.dp))
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null, tint = Muted, modifier = Modifier.size(24.dp),
+                    contentDescription = null, tint = TextC, modifier = Modifier.size(28.dp),
                 )
             }
         }
@@ -318,9 +318,9 @@ fun SettingsScreen(
 }
 
 @Composable
-fun fieldColors() = OutlinedTextFieldDefaults.colors(
+fun fieldColors(outline: Color = TrackGray) = OutlinedTextFieldDefaults.colors(
     focusedTextColor = TextC, unfocusedTextColor = TextC,
-    focusedBorderColor = Orange, unfocusedBorderColor = TrackGray,
+    focusedBorderColor = Orange, unfocusedBorderColor = outline,
     cursorColor = Orange,
 )
 

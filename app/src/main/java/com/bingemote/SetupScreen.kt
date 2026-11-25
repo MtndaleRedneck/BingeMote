@@ -172,11 +172,6 @@ fun SetupScreen(
                 TextButton(onClick = onCancel) { Text("Cancel", color = Orange) }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Step $step of 2",
-            color = Orange, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-        )
         Spacer(Modifier.height(18.dp))
 
         when (step) {
@@ -298,7 +293,9 @@ fun SetupScreen(
                         // Number pad for the code (it opened the full keyboard).
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
                         visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
-                        colors = fieldColors(),
+                        // Orange outline at rest, not only when focused: the field is the
+                        // point of the screen once a PC is chosen.
+                        colors = fieldColors(outline = Orange),
                     )
                     Spacer(Modifier.height(10.dp))
                     OrangeButton(if (pairing) "Pairing\u2026" else "Pair", enabled = !pairing, onClick = { pair() })
