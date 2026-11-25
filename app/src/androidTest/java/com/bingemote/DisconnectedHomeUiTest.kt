@@ -72,7 +72,7 @@ class DisconnectedHomeUiTest {
             waitText("VLC isn't open", 30000)
             assertZero()
             shot("vlcclosed-zero")
-        } finally { stub.stop(); Store(ctx).helperToken = "" }
+        } finally { stub.stop(); Store(ctx).apply { helperToken = ""; helperPort = 8488 } }
     }
 
     @Test fun vlcRefusedReadsZero() {
