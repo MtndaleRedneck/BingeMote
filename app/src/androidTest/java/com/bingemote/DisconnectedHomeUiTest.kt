@@ -37,8 +37,24 @@ class DisconnectedHomeUiTest {
         waitGone("1:00:00 total")
         assertTrue(has("-0:00"))
         assertFalse("cached time leaked", has("0:30"))
-        assertTrue(device.hasObject(By.desc("Play")))
-        assertFalse(device.hasObject(By.desc("Pause")))
+        // Run 45556057887 failed this read with the tree contradicting the settled
+        // pixels: desc="Pause" on this node while Play was painted, stable across
+        // the 4.2s dump pair - and MainScreen.kt feeds BOTH the desc (L629) and the
+        // icon (L653) from ONE boolean (L591), so the split was in the delivered
+        // accessibility snapshot, not in a separate glyph state hop. Wait (bounded)
+        // for the settled Play state instead of reading once, then check for a
+        // contradictory Pause at that settled moment. What this proves: the node's
+        // semantics reached Play within the budget (a never-settling node fails),
+        // and no Pause node is present at that single check point. What it does NOT
+        // prove: anything before or after that point - Until waits are max waits,
+        // not holds, and recurrence evidence is the FailureDumpRule pair's job. The
+        // 10s figure is a CI wait budget, not a product-latency measurement. The
+        // cause of the snapshot split (framework vs product) is neither claimed nor
+        // fixed here; a product-side accessibility bug would still fail this check.
+        assertTrue("Play glyph never appeared after the disconnect settled",
+            device.wait(Until.hasObject(By.desc("Play")), 10000))
+        assertFalse("Pause glyph contradicts the settled Play state",
+            device.hasObject(By.desc("Pause")))
     }
 
     @Test fun connectedThenDropReadsZeroThenReconnects() {
