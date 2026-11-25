@@ -20,5 +20,8 @@ run fail "no numtests" < <(printf 'OK (38 tests)\r\n')
 run fail "OK (37 tests)" < <({ blocks 38 76; printf 'OK (37 tests)\r\n'; })
 run fail "FAILURES!!! present" < <({ blocks 38 76; printf 'FAILURES!!!\r\nTests run: 38,  Failures: 1\r\n'; })
 run fail "process crashed" < <({ blocks 38 76; printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\r\n'; })
+run fail "healthy OK(38) + FAILURES!!! marker" < <({ blocks 38 76; printf 'FAILURES!!!\r\nTests run: 38,  Failures: 1\r\n\r\nOK (38 tests)\r\n'; })
+run fail "healthy OK(38) + Process crashed marker" < <({ blocks 38 76; printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\r\nOK (38 tests)\r\n'; })
+run fail "healthy OK(38) + INSTRUMENTATION_FAILED marker" < <({ blocks 38 76; printf 'INSTRUMENTATION_FAILED: com.bingemote.test\r\nOK (38 tests)\r\n'; })
 run fail "empty file" < <(:)
 [ $fail -eq 0 ] && echo "FOCUSED-UI SUMMARY SELFTEST PASS" || { echo "FOCUSED-UI SUMMARY SELFTEST FAIL"; exit 1; }
