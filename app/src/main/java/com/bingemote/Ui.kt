@@ -263,7 +263,7 @@ fun ListMessage(
                 modifier = Modifier.width(180.dp).height(48.dp),
                 corner = 14.dp,
             ) {
-                Text(actionLabel, color = Color(0xFF1B1B1E), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(actionLabel, color = OnAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

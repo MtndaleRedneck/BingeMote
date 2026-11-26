@@ -190,7 +190,7 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
             ) {
                 Text(
                     if (saving) "Saving\u2026" else "Select this folder",
-                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    color = OnAccent,
                     fontSize = 15.sp, fontWeight = FontWeight.Bold,
                 )
             }

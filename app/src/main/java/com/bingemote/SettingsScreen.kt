@@ -53,7 +53,7 @@ import kotlinx.coroutines.launch
 // One orange everywhere: the settings components use the theme's own tokens.
 // Dark-on-orange, same as every other label on an orange surface (was 281300, a warm
 // brown variant from the Zephyr port that no other on-orange text uses).
-private val OnOrange = Color(0xFF1B1B1E)
+private val OnOrange: Color get() = OnAccent
 
 private val ThumbDark = Color(0xFF1B1B1E)
 private val PillGradient: Brush get() = OrangeGradient
@@ -178,7 +178,7 @@ fun SettingsScreen(
             ) {
                 Text(
                     "Browse PC folders",
-                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    color = OnAccent,
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }
@@ -202,7 +202,7 @@ fun SettingsScreen(
             ) {
                 Text(
                     "Browse phone folders",
-                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    color = OnAccent,
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }
@@ -355,7 +355,7 @@ fun SettingsScreen(
             ) {
                 Text(
                     if (checking) "Checking\u2026" else "Check for updates",
-                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    color = OnAccent,
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
             }

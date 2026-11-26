@@ -30,7 +30,7 @@ fun BingeMoteTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Orange,
-            onPrimary = Color(0xFF1B1B1E),
+            onPrimary = OnAccent,
             background = Bg,
             onBackground = TextC,
             surface = Card,

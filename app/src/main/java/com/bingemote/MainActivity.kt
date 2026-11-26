@@ -360,7 +360,7 @@ fun UpdateHost(store: Store) {
                         }
                     }
                 },
-                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = Orange, fontWeight = FontWeight.Bold) } },
+                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = AccentText, fontWeight = FontWeight.Bold) } },
                 // Skip sits with the other choices instead of floating, indented, inside the notes.
                 dismissButton = {
                     Row {
@@ -392,7 +392,7 @@ fun UpdateHost(store: Store) {
                 containerColor = Card2,
                 title = { Text("Update not installed", color = TextC) },
                 text = { Text(u.message, color = Muted) },
-                confirmButton = { TextButton({ updateUi = null }) { Text("OK", color = Orange) } },
+                confirmButton = { TextButton({ updateUi = null }) { Text("OK", color = AccentText) } },
             )
         }
     }

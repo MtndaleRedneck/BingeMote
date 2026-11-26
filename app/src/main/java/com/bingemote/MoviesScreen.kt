@@ -500,7 +500,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                     .padding(horizontal = 18.dp, vertical = 16.dp),
             ) {
                 Column {
-                    Text("Trying to reconnect", color = Color(0xFF1B1B1E), fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                    Text("Trying to reconnect", color = OnAccent, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
                     Text("Both devices need to be on the same network", color = Color(0xFF3D2A12), fontSize = 14.sp, letterSpacing = 0.sp)
                 }
             }
@@ -613,7 +613,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 androidx.compose.material3.TextButton(onClick = {
                     resumeAsk = null
                     startPlay(ask.path, true)
-                }) { Text("Resume", color = Orange, fontWeight = FontWeight.Bold) }
+                }) { Text("Resume", color = AccentText, fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = {
