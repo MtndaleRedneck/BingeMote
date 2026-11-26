@@ -38,6 +38,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -54,8 +56,8 @@ import kotlinx.coroutines.launch
 private val OnOrange = Color(0xFF1B1B1E)
 
 private val ThumbDark = Color(0xFF1B1B1E)
-private val PillGradient = OrangeGradient
-private val SegmentOnGradient = OrangeGradient
+private val PillGradient: Brush get() = OrangeGradient
+private val SegmentOnGradient: Brush get() = OrangeGradient
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -251,6 +253,29 @@ fun SettingsScreen(
                 haptics = haptics,
             ) { flash = it; store.buttonFlash = it }
 
+        }
+        Spacer(Modifier.height(14.dp))
+
+        SettingsSection("Accent color") {
+            val accentView = androidx.compose.ui.platform.LocalView.current
+            // Saved as a colour, so the order here is free to change. 5 on top, 4 below.
+            AccentSwatches.withIndex().chunked(5).forEach { row ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    row.forEach { (i, col) ->
+                        val on = AccentPrefs.accent == col
+                        Box(
+                            Modifier.size(48.dp).clip(CircleShape)
+                                .semantics { contentDescription = "Accent color, ${AccentNames[i]}"; selected = on }
+                                .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { tapHaptic(accentView, haptics); AccentPrefs.choose(col) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(Modifier.size(42.dp).clip(CircleShape).background(col).let { if (on) it.border(3.dp, TextC, CircleShape) else it })
+                        }
+                    }
+                    // The short row keeps the same column spacing as the full one.
+                    repeat(5 - row.size) { Spacer(Modifier.size(48.dp)) }
+                }
+            }
         }
         Spacer(Modifier.height(14.dp))
 

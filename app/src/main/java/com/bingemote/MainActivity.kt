@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity() {
         // Test isolation: never inherit the transition rig from an earlier preview
         // Activity in the same process (interrupted test, config change).
         if (BuildConfig.DEBUG) previewLostRigArmed = false
+        AccentPrefs.init(this)
         store = Store(this)
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
