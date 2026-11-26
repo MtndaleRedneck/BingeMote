@@ -6,7 +6,9 @@ adb shell wm size 1080x2310
 adb shell wm density 480
 adb shell settings put system font_scale 1.0
 adb shell settings put global hide_error_dialogs 1
-adb shell am instrument -w -r -e class com.bingemote.TopBarParityTest,com.bingemote.HeaderGeometryTest,com.bingemote.stream.StreamServerAndroidTest,com.bingemote.stream.StreamServiceLifecycleTest,com.bingemote.stream.StreamServiceNoWifiTest,com.bingemote.stream.PhonePickerStorageTest,com.bingemote.stream.PhonePickerGrantTest,com.bingemote.stream.PhoneMoviesAndroidTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests.txt || true
+adb shell am instrument -w -r -e class com.bingemote.TopBarParityTest,com.bingemote.HeaderGeometryTest,com.bingemote.stream.StreamServerAndroidTest,com.bingemote.stream.StreamServiceRefusalAndroidTest,com.bingemote.stream.StreamServiceLifecycleTest,com.bingemote.stream.StreamServiceNoWifiTest,com.bingemote.stream.PhonePickerStorageTest,com.bingemote.stream.PhonePickerGrantTest,com.bingemote.stream.PhoneMoviesAndroidTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests.txt || true
+# F3 call-site test: its own instrument session (UiAutomator), same fail-closed rule as the main session.
+adb shell am instrument -w -r -e class com.bingemote.MoviesStaleLoadTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests-stale-load.txt || true
 for s in main movies settings movies-phone; do
   adb shell am force-stop com.bingemote
   adb shell am start -n com.bingemote/.MainActivity --es screen "$s" >/dev/null
@@ -39,3 +41,4 @@ for req in com.bingemote.stream.PhonePickerGrantTest#pickerGrantListsMoviesAsApp
   if grep -qx "$req 0" parity-evidence/test-results.txt; then echo "REQUIRED PASSED: $req"; else echo "REQUIRED NOT PASSED: $req"; exit 1; fi
 done
 grep -q '^OK (' parity-evidence/tests.txt
+grep -q '^OK (' parity-evidence/tests-stale-load.txt
