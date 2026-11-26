@@ -66,6 +66,8 @@ class MainActivity : ComponentActivity() {
         // Activity in the same process (interrupted test, config change).
         if (BuildConfig.DEBUG) previewLostRigArmed = false
         AccentPrefs.init(this)
+        // Debug capture only: pick a swatch by index so a render can show it.
+        if (BuildConfig.DEBUG) intent.getIntExtra("accent", -1).let { if (it in AccentSwatches.indices) AccentPrefs.choose(AccentSwatches[it]) }
         store = Store(this)
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
