@@ -51,21 +51,26 @@ class MoviesStaleLoadTest {
     }
 
     @After fun restoreStateAndFinishActivity() {
-        scenario?.close(); scenario = null
-        val snap = savedPrefs
-        if (snap != null) {
-            val e = ctx.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).edit().clear()
-            for ((k, v) in snap) when (v) {
-                is Boolean -> e.putBoolean(k, v)
-                is Int -> e.putInt(k, v)
-                is Long -> e.putLong(k, v)
-                is Float -> e.putFloat(k, v)
-                is String -> e.putString(k, v)
-                is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+        try {
+            scenario?.close()
+        } finally {
+            scenario = null
+            // Restore even when closing the activity throws.
+            val snap = savedPrefs
+            if (snap != null) {
+                val e = ctx.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).edit().clear()
+                for ((k, v) in snap) when (v) {
+                    is Boolean -> e.putBoolean(k, v)
+                    is Int -> e.putInt(k, v)
+                    is Long -> e.putLong(k, v)
+                    is Float -> e.putFloat(k, v)
+                    is String -> e.putString(k, v)
+                    is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+                }
+                e.commit()
+                savedVlcPassword?.let { Store(ctx).vlcPassword = it }
+                savedHelperToken?.let { Store(ctx).helperToken = it }
             }
-            e.commit()
-            savedVlcPassword?.let { Store(ctx).vlcPassword = it }
-            savedHelperToken?.let { Store(ctx).helperToken = it }
         }
     }
 
