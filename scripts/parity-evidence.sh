@@ -6,7 +6,7 @@ adb shell wm size 1080x2310
 adb shell wm density 480
 adb shell settings put system font_scale 1.0
 adb shell settings put global hide_error_dialogs 1
-adb shell am instrument -w -r -e class com.bingemote.TopBarParityTest,com.bingemote.stream.StreamServerAndroidTest,com.bingemote.stream.StreamServiceLifecycleTest,com.bingemote.stream.StreamServiceNoWifiTest,com.bingemote.stream.PhonePickerStorageTest,com.bingemote.stream.PhonePickerGrantTest,com.bingemote.stream.PhoneMoviesAndroidTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests.txt || true
+adb shell am instrument -w -r -e class com.bingemote.TopBarParityTest,com.bingemote.HeaderGeometryTest,com.bingemote.stream.StreamServerAndroidTest,com.bingemote.stream.StreamServiceLifecycleTest,com.bingemote.stream.StreamServiceNoWifiTest,com.bingemote.stream.PhonePickerStorageTest,com.bingemote.stream.PhonePickerGrantTest,com.bingemote.stream.PhoneMoviesAndroidTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests.txt || true
 for s in main movies settings movies-phone; do
   adb shell am force-stop com.bingemote
   adb shell am start -n com.bingemote/.MainActivity --es screen "$s" >/dev/null
@@ -20,6 +20,8 @@ sleep 8
 adb exec-out screencap -p > "parity-evidence/fresh-install-first-launch.png"
 for f in $(adb shell ls /sdcard/ | grep -E "^parity-(storage-picker|saf-grant)-" | tr -d "\r"); do adb pull /sdcard/$f parity-evidence/$f >/dev/null; done
 adb logcat -d -s AndroidRuntime:E > parity-evidence/crashes.txt || true
+adb logcat -d -s HeaderGeom:I > parity-evidence/header-geometry.txt || true
+for f in $(adb shell ls /sdcard/ | grep -E "^hg-" | tr -d "\r"); do adb pull /sdcard/$f parity-evidence/$f >/dev/null; done
 # JUnit Assume skips are reported by the runner as status code -4 (-3 is never emitted for them).
 # Record each skipped test by name; the OK line alone does not mean they ran.
 awk '/INSTRUMENTATION_STATUS: class=/{c=$0; sub(/.*class=/,"",c)} /INSTRUMENTATION_STATUS: test=/{t=$0; sub(/.*test=/,"",t)} /INSTRUMENTATION_STATUS_CODE: -4/{print c "#" t}' parity-evidence/tests.txt | sort -u > parity-evidence/skipped-tests.txt
