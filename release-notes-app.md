@@ -3,7 +3,7 @@
 The Accent color card now has eight colors. Burnt orange and teal are gone, and if you had picked one, the app goes back to orange.
 
 **Fixed**
-- The Home play and pause buttons use your accent color again.
+- The Home play and pause buttons are back to your accent color and the original triangle shape.
 
 ## v1.17.0 - November 26, 2026
 

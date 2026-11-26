@@ -650,7 +650,7 @@ private fun PlayPauseButton(remote: RemoteState, playing: Boolean, flashAll: Boo
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
                     drawCircle(if (pressed && flashAll) TextC else Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
                 }
-                if (playing) PauseIcon(Orange, 40.dp) else PlayIcon(Orange, 40.dp, equilateral = true) // Home button only; accent tint as before
+                if (playing) PauseIcon(Orange, 40.dp) else PlayIcon(Orange, 40.dp)
             }
         }
     }

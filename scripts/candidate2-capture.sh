@@ -27,5 +27,11 @@ for A in 0 2 4 7; do
   adb shell input swipe 540 1900 540 500 400; sleep 1; adb shell input swipe 540 1900 540 500 400; sleep 1; adb shell input swipe 540 1900 540 500 400; sleep 2
   adb exec-out screencap -p > "$OUT/accent$A-settings-picker.png"
 done
+# High-density frames for edge inspection: 1440x3120 at 560 dpi, and the 1080x2340 at 480 reference.
+adb shell wm size 1440x3120; adb shell wm density 560; sleep 3
+shoot hi560-home main --ei accent 0
+shoot hi560-icondemo icondemo --ei accent 0
+adb shell wm size 1080x2310; adb shell wm density 480; sleep 3
+shoot ref480-home main --ei accent 0
 adb shell wm size reset; adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > $OUT/crashes.txt || true

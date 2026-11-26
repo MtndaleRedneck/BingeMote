@@ -79,7 +79,7 @@ fun DebugIconDemo() {
                     Canvas(Modifier.size(80.dp)) { drawCircle(Orange, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())) }
                     when (mode) {
                         0 -> PlayIcon(Orange, 40.dp)               // old
-                        1 -> PlayIcon(Orange, 40.dp, equilateral = true)
+                        1 -> PlayIcon(Orange, 40.dp)
                         else -> PauseIcon(Orange, 40.dp)
                     }
                 }
