@@ -42,7 +42,7 @@ class PhoneMoviesAndroidTest {
         assertEquals(1234, movieA.sizeBytes)
         assertEquals(1, movieA.subtitles.size)
         assertTrue(movieA.subtitles[0].toString().contains("The_Movie_A_2024.srt"))
-        val other = listing.movies.first { it.name == "Other Film.mp4" }
+        val other = listing.movies.first { it.name == "Other_Film.mp4" }
         assertEquals(0, other.subtitles.size) // Unrelated.srt must NOT pair
     }
 
