@@ -41,7 +41,7 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
 
     private val random = SecureRandom()
     private val token: String = ByteArray(18).also(random::nextBytes).joinToString("") { "%02x".format(it) }
-    private val entries = LinkedHashMap<String, Entry>()
+    private val entries = java.util.concurrent.ConcurrentHashMap<String, Entry>() // written on the IO thread, read on the pool threads
     private var socket: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool()
     private val permits = java.util.concurrent.Semaphore(24)

@@ -97,7 +97,7 @@ class StreamService : Service() {
         wifiLock?.acquire()
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bingemote:stream")
-            .also { it.acquire() }
+            .also { it.acquire(6 * 60 * 60 * 1000L) } // safety net; stop paths release it sooner
         startWatchdog(srv)
         return START_NOT_STICKY
     }

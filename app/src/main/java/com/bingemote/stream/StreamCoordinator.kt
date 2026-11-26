@@ -46,14 +46,20 @@ object StreamCoordinator {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 val b = binder as? StreamService.Binder
                     ?: return cont.resumeWithException(IllegalStateException("bad binder"))
-                val server = b.server()
-                if (server == null) {
-                    // Service started, server not up yet (Wi-Fi lookup in flight):
-                    // the Movies wiring retries on the main thread; fail fast here.
-                    cont.resumeWithException(IllegalStateException("server not ready"))
-                } else {
-                    cont.resume(Bound(server, this))
+                // The bind can complete before onStartCommand has created the server (cold
+                // start): wait briefly on the main thread, then give up with "server not ready"
+                // (also what no Wi-Fi looks like, since the service stops itself then).
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                val conn = this
+                var tries = 0
+                fun check() {
+                    if (!cont.isActive) return
+                    val server = b.server()
+                    if (server != null) cont.resume(Bound(server, conn))
+                    else if (++tries >= 40) cont.resumeWithException(IllegalStateException("server not ready"))
+                    else handler.postDelayed({ check() }, 100)
                 }
+                check()
             }
             override fun onServiceDisconnected(name: ComponentName?) {}
         }
