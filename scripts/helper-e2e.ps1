@@ -643,6 +643,10 @@ $initialInstaller = $ship.FullName
 $priorLabel = '1.9.0 (the exact live public release)'
 $prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.9.0.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $prior) { $priorLabel = '1.7.15'; $prior = Get-ChildItem 'helper/Prior/BingeMote-PC-1.7.15.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 }
+if ($env:BINGEMOTE_REQUIRE_PRIOR_VERSION) {
+    # Fail closed: the shipping upgrade leg must start from the exact required live version, never a fallback.
+    Assert ($prior -and $prior.Name -eq ('BingeMote-PC-' + $env:BINGEMOTE_REQUIRE_PRIOR_VERSION + '.exe')) "required prior installer BingeMote-PC-$($env:BINGEMOTE_REQUIRE_PRIOR_VERSION).exe is missing"
+}
 if ($prior) { $initialInstaller = $prior.FullName; Write-Host "Initial install: exact prior $priorLabel for paired upgrade retention ($($prior.Name))" }
 $shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -PassThru
 if (-not $shipInstall.WaitForExit(90000)) { Stop-Process -Id $shipInstall.Id -Force; Get-Content shipping-install.log -Tail 40; throw 'Initial installer exceeded90seconds' }
@@ -812,6 +816,9 @@ $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping bytes: the window-paired token authenticates"
 
 # Install the pinned shipping build over the genuinely paired prior1.7.15 state.
+$installedBefore = (Get-Item (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe')).VersionInfo.FileVersion
+Write-Host "installed baseline file version before upgrade: $installedBefore (prior $priorLabel)"
+if ($env:BINGEMOTE_REQUIRE_PRIOR_VERSION) { Assert ($installedBefore -like ($env:BINGEMOTE_REQUIRE_PRIOR_VERSION + '*')) "installed baseline is $installedBefore, required $($env:BINGEMOTE_REQUIRE_PRIOR_VERSION)" }
 Write-Host "Exact prior $priorLabel -> pinned shipping upgrade begins"
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2

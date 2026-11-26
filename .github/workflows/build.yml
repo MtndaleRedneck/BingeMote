@@ -305,6 +305,7 @@ jobs:
         env:
           BINGEMOTE_SHIP_SHA256: ${{ inputs.shipping_sha256 }}
           BINGEMOTE_SHIPPING_ONLY: ${{ inputs.shipping_testlab_asset_id != '' && '1' || '0' }}
+          BINGEMOTE_REQUIRE_PRIOR_VERSION: ${{ inputs.shipping_testlab_asset_id != '' && '1.9.0' || '' }}
         run: pwsh -File scripts/helper-e2e.ps1
 
       - name: Render the window for layout review (CI only)
