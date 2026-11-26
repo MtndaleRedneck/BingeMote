@@ -106,7 +106,9 @@ class HeaderGeometryTest {
         }
         // First-content gaps are LOGGED for every screen (different content sits under the identical header: Movies'
         // PC|Phone toggle, Settings/Your PC section cards). Only screens with the same card layout are asserted equal.
-        val subs = hs.filter { (it.screen == "settings" || it.screen == "yourpc") && it.content != null }
+        // Settings now sits flush under the header like Home (asserted by settingsFirstCardTopEqualsHeaderBottom);
+        // Your PC is out of scope and keeps its 6dp gap, so the old Settings == Your PC equality no longer applies (logged only).
+        val subs = hs.filter { it.screen == "settings" && it.content != null }
         val ref = subs.firstOrNull()
         for (h in subs) if (h.content!!.top - h.btn.bottom != ref!!.content!!.top - ref.btn.bottom)
             sb.append("${h.screen}: first-content gap below header button ${h.content.top - h.btn.bottom}px vs ${ref.screen} ${ref.content!!.top - ref.btn.bottom}px\n")
