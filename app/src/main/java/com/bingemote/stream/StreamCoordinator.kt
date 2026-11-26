@@ -43,9 +43,14 @@ object StreamCoordinator {
     suspend fun bind(context: Context): Bound = suspendCancellableCoroutine { cont ->
         val app = context.applicationContext
         val conn = object : ServiceConnection {
+            // Every failure path drops the connection, so a failed bind never keeps the service alive.
+            fun failAndUnbind(e: Exception) {
+                runCatching { app.unbindService(this) }
+                if (cont.isActive) cont.resumeWithException(e)
+            }
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 val b = binder as? StreamService.Binder
-                    ?: return cont.resumeWithException(IllegalStateException("bad binder"))
+                    ?: return failAndUnbind(IllegalStateException("bad binder"))
                 // The bind can complete before onStartCommand has created the server (cold
                 // start): wait briefly on the main thread, then give up with "server not ready"
                 // (also what no Wi-Fi looks like, since the service stops itself then).
@@ -56,7 +61,7 @@ object StreamCoordinator {
                     if (!cont.isActive) return
                     val server = b.server()
                     if (server != null) cont.resume(Bound(server, conn))
-                    else if (++tries >= 40) cont.resumeWithException(IllegalStateException("server not ready"))
+                    else if (++tries >= 40) failAndUnbind(IllegalStateException("server not ready"))
                     else handler.postDelayed({ check() }, 100)
                 }
                 check()
@@ -66,6 +71,8 @@ object StreamCoordinator {
         val intent = Intent(app, StreamService::class.java)
         app.startForegroundService(intent)
         if (!app.bindService(intent, conn, Context.BIND_AUTO_CREATE)) {
+            runCatching { app.unbindService(conn) }
+            app.stopService(intent)
             cont.resumeWithException(IllegalStateException("stream service bind failed"))
         }
         cont.invokeOnCancellation { runCatching { app.unbindService(conn) } }

@@ -85,7 +85,7 @@ class StreamService : Service() {
         // (hooked up when the Movies screen wiring lands); subtitles get /sub/<n> URLs.
         StreamCoordinator.servedReceivers.clear()
         StreamCoordinator.servedTarget = null
-        srv.start()
+        try { srv.start() } catch (e: Exception) { runCatching { srv.stop() }; stopSelf(); return START_NOT_STICKY }
         server = srv
 
         val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
