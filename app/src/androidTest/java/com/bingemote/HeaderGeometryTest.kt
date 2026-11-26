@@ -106,12 +106,36 @@ class HeaderGeometryTest {
         }
         // First-content gaps are LOGGED for every screen (different content sits under the identical header: Movies'
         // PC|Phone toggle, Settings/Your PC section cards). Only screens with the same card layout are asserted equal.
-        val subs = hs.filter { (it.screen == "settings" || it.screen == "yourpc") && it.content != null }
+        // Settings now sits flush under the header like Home (asserted by settingsFirstCardTopEqualsHeaderBottom);
+        // Your PC is out of scope and keeps its 6dp gap, so the old Settings == Your PC equality no longer applies (logged only).
+        val subs = hs.filter { it.screen == "settings" && it.content != null }
         val ref = subs.firstOrNull()
+        // Retained coverage: Your PC's gap below the header button is logged every run (a change in it shows in the log).
+        hs.firstOrNull { it.screen == "yourpc" && it.content != null }?.let { Log.i("HeaderGeom", "yourpc retained gap below button: ${it.content!!.top - it.btn.bottom}px (6dp spacer kept, out of scope)") }
         for (h in subs) if (h.content!!.top - h.btn.bottom != ref!!.content!!.top - ref.btn.bottom)
             sb.append("${h.screen}: first-content gap below header button ${h.content.top - h.btn.bottom}px vs ${ref.screen} ${ref.content!!.top - ref.btn.bottom}px\n")
         Log.i("HeaderGeom", "mismatches: ${if (sb.isEmpty()) "none" else sb.toString().replace("\n", " | ")}")
         assertTrue("Header geometry differs between screens:\n$sb", sb.isEmpty())
+    }
+
+    /** Settings header must equal Home's (top, bottom, height) at whatever font scale/density the run uses. Zero tolerance. */
+    @Test fun settingsHeaderEqualsHomeHeaderZeroTolerance() {
+        launch("main"); val home = measure("main")
+        launch("settings"); val settings = measure("settings")
+        Log.i("HeaderGeom", "home hdr=${home.hdr} settings hdr=${settings.hdr} density=$dens")
+        assertEquals("Settings header bottom vs Home (px)", home.hdr.bottom, settings.hdr.bottom)
+        assertEquals("Settings header top vs Home (px)", home.hdr.top, settings.hdr.top)
+    }
+
+    /** The first Settings card must start exactly at the header bottom (zero tolerance), like Home's first row. */
+    @Test fun settingsFirstCardTopEqualsHeaderBottom() {
+        launch("settings")
+        val h = measure("settings")
+        val card = device.wait(Until.findObject(By.res("first_card")), 10000)
+        assertNotNull("first_card not found on settings", card)
+        val top = card!!.visibleBounds.top
+        Log.i("HeaderGeom", "settings first card top=$top headerBottom=${h.hdr.bottom} density=$dens")
+        assertEquals("Settings first card top vs header bottom (px, zero tolerance)", h.hdr.bottom, top)
     }
 
     @Test fun homeToSettingsAndBackKeepsTheSameHeader() {

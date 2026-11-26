@@ -140,6 +140,6 @@ private fun FeedbackButton(label: String, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().height(48.dp),
         corner = 14.dp,
     ) {
-        Text(label, color = androidx.compose.ui.graphics.Color(0xFF1B1B1E), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = OnAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
 }

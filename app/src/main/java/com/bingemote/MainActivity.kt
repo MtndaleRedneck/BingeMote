@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
         // Test isolation: never inherit the transition rig from an earlier preview
         // Activity in the same process (interrupted test, config change).
         if (BuildConfig.DEBUG) previewLostRigArmed = false
+        AccentPrefs.init(this)
+        // Debug capture only: pick a swatch by index so a render can show it.
+        if (BuildConfig.DEBUG) intent.getIntExtra("accent", -1).let { if (it in AccentSwatches.indices) AccentPrefs.choose(AccentSwatches[it]) }
         store = Store(this)
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
@@ -359,7 +362,7 @@ fun UpdateHost(store: Store) {
                         }
                     }
                 },
-                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = Orange, fontWeight = FontWeight.Bold) } },
+                confirmButton = { TextButton({ startUpdate(u.info) }) { Text("Update", color = AccentText, fontWeight = FontWeight.Bold) } },
                 // Skip sits with the other choices instead of floating, indented, inside the notes.
                 dismissButton = {
                     Row {
@@ -391,7 +394,7 @@ fun UpdateHost(store: Store) {
                 containerColor = Card2,
                 title = { Text("Update not installed", color = TextC) },
                 text = { Text(u.message, color = Muted) },
-                confirmButton = { TextButton({ updateUi = null }) { Text("OK", color = Orange) } },
+                confirmButton = { TextButton({ updateUi = null }) { Text("OK", color = AccentText) } },
             )
         }
     }

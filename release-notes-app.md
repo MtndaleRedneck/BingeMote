@@ -1,3 +1,13 @@
+## v1.17.0 - November 26, 2026
+
+Pick your accent color. Settings has a new Accent color card with orange as the default and eight more to choose from.
+
+**Improved**
+- Settings now lines up with the Home top bar.
+- The Home play button is a clean white triangle.
+- The app icon follows your phone's icon shape.
+- Pairing error messages are easier to read.
+
 ## v1.16.0 - November 26, 2026
 
 Movies can now play a movie stored on your phone: pick a Phone folder in Settings and it streams to VLC on your PC over Wi-Fi. The top bar now matches on Home, Movies and Settings, and switching to PC no longer leaves the phone's list on screen while the PC loads.

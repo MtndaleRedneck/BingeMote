@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -140,11 +141,7 @@ fun PressTile(
 fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
     Box(Modifier.fillMaxWidth().headerContainer().padding(horizontal = 16.dp, vertical = 12.dp)) {
         androidx.compose.ui.layout.Layout(content = {
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
-                contentDescription = null,
-                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
-            )
+            AppIcon(34.dp)
             Text(
                 "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -161,6 +158,7 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
             val pillP = measurables[2].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - minTitle).coerceAtLeast(0)))
             val titleP = measurables[1].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - pillP.width).coerceAtLeast(0)))
             val h = maxOf(logoP.height, titleP.height, pillP.height, setP.height, 44.dp.roundToPx())
+            if (BuildConfig.DEBUG) android.util.Log.i("TopBarRow", "px logo=${logoP.height} title=${titleP.height} pill=${pillP.height} settings=${setP.height} min44=${44.dp.roundToPx()} h=$h fontScale=${fontScale} density=${density}")
             layout(constraints.maxWidth, h) {
                 logoP.placeRelative(0, (h - logoP.height) / 2)
                 val titleX = logoP.width + gap
@@ -183,7 +181,7 @@ fun Modifier.headerContainer(): Modifier = this
 
 /** The one header every sub-screen uses: 12dp / 44dp / 12dp, back tile at the 16dp edge, title centred on it. */
 @Composable
-fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20.sp, hapticsOn: Boolean? = null, edge: androidx.compose.ui.unit.Dp = 16.dp, onBack: () -> Unit) {
+fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20.sp, hapticsOn: Boolean? = null, edge: androidx.compose.ui.unit.Dp = 16.dp, matchHomeRow: Boolean = false, onBack: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().headerContainer().padding(horizontal = edge, vertical = 12.dp).heightIn(min = 44.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -191,6 +189,12 @@ fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20
         HeaderIconButton(onBack, hapticsOn) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
         Spacer(Modifier.width(12.dp))
         Text(title, color = TextC, fontSize = fontSize, fontWeight = FontWeight.Bold)
+        // Settings only: Home's row is max(44dp, the status pill) and the pill grows with font scale. A zero-width,
+        // unplaced, semantics-free copy of the REAL pill gives this row the same height rule, measured not estimated.
+        if (matchHomeRow) androidx.compose.ui.layout.Layout(
+            content = { StatusPill(connected = true) },
+            modifier = Modifier.clearAndSetSemantics {},
+        ) { ms, _ -> val p = ms[0].measure(androidx.compose.ui.unit.Constraints()); layout(0, p.height) {} }
     }
 }
 
@@ -259,7 +263,7 @@ fun ListMessage(
                 modifier = Modifier.width(180.dp).height(48.dp),
                 corner = 14.dp,
             ) {
-                Text(actionLabel, color = Color(0xFF1B1B1E), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(actionLabel, color = OnAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
