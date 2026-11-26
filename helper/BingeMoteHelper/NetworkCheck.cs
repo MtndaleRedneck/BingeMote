@@ -27,7 +27,7 @@ internal static class NetworkCheck
         try
         {
             var psi = new ProcessStartInfo("powershell",
-                "-NoProfile -NonInteractive -Command \"$i=(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).InterfaceIndex; $p=Get-NetConnectionProfile -InterfaceIndex $i -ErrorAction SilentlyContinue; if ($p) { \"$($p.Name)|$($p.NetworkCategory)|$($p.InterfaceIndex)\" }\"")
+                "-NoProfile -NonInteractive -Command \"$i=(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).InterfaceIndex; $p=Get-NetConnectionProfile -InterfaceIndex $i -ErrorAction SilentlyContinue; if ($p) { '{0}|{1}|{2}' -f $p.Name,$p.NetworkCategory,$p.InterfaceIndex }\"")
             {
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
