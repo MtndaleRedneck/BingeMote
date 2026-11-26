@@ -35,6 +35,15 @@ class StreamServiceRefusalAndroidTest {
         val took = android.os.SystemClock.elapsedRealtime() - t0
         assertTrue("fails fast (< 3 s), not after the 10 s server wait: $took ms", took < 3000)
 
+        // The refused instance stops itself (stopSelf). Wait until it is really gone before the normal start, so the
+        // second bind cannot attach to the dying instance (no product change: this only orders the test).
+        val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val until = android.os.SystemClock.elapsedRealtime() + 10_000
+        @Suppress("DEPRECATION")
+        while (am.getRunningServices(50).any { it.service.className == StreamService::class.java.name } && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(100)
+        @Suppress("DEPRECATION")
+        assertTrue("the refused service instance is gone", am.getRunningServices(50).none { it.service.className == StreamService::class.java.name })
+
         StreamService.testForegroundRefusal = false
         val bound = runBlocking { StreamCoordinator.bind(ctx) }
         try {

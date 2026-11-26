@@ -480,7 +480,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
     val insideFolder = origin == Origin.PC && root.isNotEmpty() && !atRoot(path)
     BackHandler(enabled = insideFolder) { upOne() }
-    BackHandler(enabled = !insideFolder) { onBack() }
+    BackHandler(enabled = !insideFolder && !insidePhoneFolder) { onBack() }
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         ScreenHeader("Movies", hapticsOn = remote.store.haptics, onBack = onBack)
