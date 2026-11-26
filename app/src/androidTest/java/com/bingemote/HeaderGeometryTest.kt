@@ -102,7 +102,9 @@ class HeaderGeometryTest {
             val t = h.title ?: continue
             if (Math.abs(t.centerY() - h.btn.centerY()) > 1) sb.append("${h.screen}: title centre ${t.centerY()} vs button centre ${h.btn.centerY()}\n")
         }
-        val subs = hs.drop(1).filter { it.content != null && it.screen != "mouse" }
+        // First-content gaps are LOGGED for every screen (different content sits under the identical header: Movies'
+        // PC|Phone toggle, Settings/Your PC section cards). Only screens with the same card layout are asserted equal.
+        val subs = hs.filter { (it.screen == "settings" || it.screen == "yourpc") && it.content != null }
         val ref = subs.firstOrNull()
         for (h in subs) if (h.content!!.top - h.btn.bottom != ref!!.content!!.top - ref.btn.bottom)
             sb.append("${h.screen}: first-content gap below header button ${h.content.top - h.btn.bottom}px vs ${ref.screen} ${ref.content!!.top - ref.btn.bottom}px\n")
