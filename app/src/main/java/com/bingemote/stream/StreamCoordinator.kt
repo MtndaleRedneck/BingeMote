@@ -61,6 +61,7 @@ object StreamCoordinator {
                     if (!cont.isActive) return
                     val server = b.server()
                     if (server != null) cont.resume(Bound(server, conn))
+                    else if (b.refused()) failAndUnbind(IllegalStateException("foreground start refused")) // this instance is stopping: fail now, not after the 10 s wait
                     else if (++tries >= 100) failAndUnbind(IllegalStateException("server not ready"))
                     else handler.postDelayed({ check() }, 100)
                 }

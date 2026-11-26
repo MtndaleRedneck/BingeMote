@@ -323,6 +323,15 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
      *  teardown race), just unregister - stop()'s own close pass and the
      *  worker's exit close are the owners then; a provider whose read never
      *  returns stays parked, budget-bounded (declared residual). */
+    /** Close FIRST (the guard stays registered, so the watchdog still sees a close that blocks and
+     *  abandons the request logically), then disarm the deadline so a close that merely ran long
+     *  cannot abandon a request that goes on, then unregister. Logical abandonment only: a parked
+     *  provider read/close is not physically finished by this, and its budget permit returns only
+     *  when the close completes. The disarm narrows, but does not remove, the watchdog check/act window. */
+    private fun closeThenRemove(res: Guarded<*>) {
+        try { res.close() } finally { res.deadlineAt = Long.MAX_VALUE; providers.remove(res) }
+    }
+
     private fun queueClose(res: Guarded<*>) {
         if (!res.closeQueued.compareAndSet(false, true)) return
         try { pool.execute { providers.remove(res); res.close() } }
@@ -503,7 +512,9 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
                 // This descriptor is only the seekability probe: close it BEFORE the
                 // copy and the cached serve. Holding a pipe provider open while nobody
                 // reads it can stall the provider's writer. The copy owns its own descriptor.
-                providers.remove(guarded); guarded.close()
+                closeThenRemove(guarded)
+                // A deadline that fired during a long probe close abandoned the request; do not start the copy.
+                if (!req.isActive) return
                 // Non-seekable provider: copy once into cache, then serve the copy.
                 // Teardown C12: the copy lands under a temp name and is renamed only when
                 // COMPLETE, so a cut-off copy is never reused; oversized copies are capped.
@@ -567,7 +578,7 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
                                                 }
                                                 throw java.io.InterruptedIOException()
                                             }
-                                            override fun close() { providers.remove(ginput); ginput.close() }
+                                            override fun close() { closeThenRemove(ginput) }
                                         }
                                     },
                                     tmp = tmp, final = cached,
@@ -606,7 +617,7 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
             servedAny = true
             serveChannel(client, guarded, size, range, guessMime(uri), req)
         }
-        } finally { providers.remove(guarded); guarded.close() }
+        } finally { closeThenRemove(guarded) }
     }
 
     private fun serveChannel(client: Socket, guarded: Guarded<ParcelFileDescriptor>, size: Long, range: LongRange?, mime: String, req: RequestState) {

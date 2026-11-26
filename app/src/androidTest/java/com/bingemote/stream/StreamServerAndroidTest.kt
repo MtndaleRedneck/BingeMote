@@ -692,4 +692,53 @@ class StreamServerAndroidTest {
             server.stop(); writers.forEach { runCatching { it.close() } }; stalled.join(5000)
         }
     }
+
+    /** P1: the probe's provider close BLOCKS (a parked SAF/FUSE close). The deadline must still abandon the REQUEST
+     *  (socket closed, openStreams 0) while the close is parked, the copy must never start, and the budget permit
+     *  stays held until the close returns, then returns exactly once (baseline-relative, never baseline+1).
+     *  Logical abandonment only: the blocked close thread is NOT physically finished by the server. */
+    @Test fun blockedProbeClose_requestAbandonedLogically_copyNeverStarts_permitReturnsOnceAfterClose() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val writers = java.util.concurrent.CopyOnWriteArrayList<android.os.ParcelFileDescriptor>()
+        val opened = java.util.concurrent.atomic.AtomicInteger()
+        val closeEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseClose = java.util.concurrent.CountDownLatch(1)
+        server.stop()
+        val baseline = StreamServer.providerBudget.availablePermits()
+        server = StreamServer(context, InetAddress.getByName("127.0.0.1"), 0, openDescriptor = { _, _ ->
+            opened.incrementAndGet()
+            val p = android.os.ParcelFileDescriptor.createPipe().also { writers.add(it[1]) }[0]
+            object : android.os.ParcelFileDescriptor(p) {
+                override fun close() {
+                    closeEntered.countDown()
+                    releaseClose.await(30, java.util.concurrent.TimeUnit.SECONDS)
+                    super.close()
+                }
+            }
+        })
+        server.providerDeadlineMs = 1000
+        server.start()
+        val url = server.addMovie(Uri.parse("content://synthetic-pipe/blockedclose"), "blocked.mkv")
+        val sock = java.net.Socket()
+        try {
+            val u = URL(url)
+            sock.connect(java.net.InetSocketAddress(u.host, u.port))
+            sock.soTimeout = 30_000
+            sock.getOutputStream().write("GET ${u.path} HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+            assertTrue("probe close entered", closeEntered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            val until = android.os.SystemClock.elapsedRealtime() + 15_000
+            while (server.openStreams.get() > 0 && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(50)
+            assertEquals("request abandoned while the close is still parked", 0, server.openStreams.get())
+            assertEquals("server closed the client socket", -1, sock.getInputStream().read())
+            assertEquals("the copy never started", 1, opened.get())
+            assertEquals("permit held while the close is parked", baseline - 1, StreamServer.providerBudget.availablePermits())
+            releaseClose.countDown()
+            val settle = android.os.SystemClock.elapsedRealtime() + 10_000
+            while (StreamServer.providerBudget.availablePermits() < baseline && android.os.SystemClock.elapsedRealtime() < settle) Thread.sleep(50)
+            Thread.sleep(500) // a double release would show here
+            assertEquals("permit returned exactly once after the close returned", baseline, StreamServer.providerBudget.availablePermits())
+        } finally {
+            releaseClose.countDown(); server.stop(); writers.forEach { runCatching { it.close() } }; runCatching { sock.close() }
+        }
+    }
 }

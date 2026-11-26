@@ -36,10 +36,14 @@ class StreamService : Service() {
 
     inner class Binder : android.os.Binder() {
         fun server(): StreamServer? = this@StreamService.server
+        /** True when THIS instance's foreground start was refused; the instance is stopping and must not serve. */
+        fun refused(): Boolean = this@StreamService.fgRefused
     }
     private val binder = Binder()
 
     private var server: StreamServer? = null
+    /** Instance-local (no static state to reset): the foreground start was refused in onCreate. */
+    @Volatile private var fgRefused = false
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var watchdogStop = false
@@ -66,8 +70,9 @@ class StreamService : Service() {
             .setOngoing(true)
             .build()
         try {
+            if (com.bingemote.BuildConfig.DEBUG && testForegroundRefusal) throw IllegalStateException("test: foreground start refused")
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) // type under verification
-        } catch (e: Exception) { stopSelf() } // foreground start refused: end the service instead of crashing
+        } catch (e: Exception) { fgRefused = true; stopSelf() } // foreground start refused: end the service instead of crashing
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -77,6 +82,8 @@ class StreamService : Service() {
         // NOT_STICKY keeps every stop rule for REAL streams exactly as settled; it
         // only ends the zero-state zombie.
         if (intent == null) { stopSelf(); return START_NOT_STICKY }
+        // Refused foreground start: never build the server, locks or watchdog for this instance.
+        if (fgRefused) { stopSelf(); return START_NOT_STICKY }
         if (intent.action == ACTION_STOP || server != null) {
             if (intent.action == ACTION_STOP) stopSelf()
             return START_NOT_STICKY
@@ -163,5 +170,7 @@ class StreamService : Service() {
         const val CHANNEL = "stream"
         const val NOTIF_ID = 4101
         const val ACTION_STOP = "com.bingemote.stream.STOP_STREAM"
+        /** Debug-build test seam ONLY (BuildConfig.DEBUG gate at the use): the instrumented test sets and resets it. Not production state. */
+        @Volatile internal var testForegroundRefusal = false
     }
 }

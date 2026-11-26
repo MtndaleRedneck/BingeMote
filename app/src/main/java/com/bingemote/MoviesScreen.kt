@@ -58,6 +58,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     var items by remember { mutableStateOf<List<BrowseItem>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
+    // Orders loader results: a superseded load must not write items/path/loading/error (see LoadGate).
+    val gate = remember { LoadGate() }
     // Where each folder was scrolled to before we walked into a child, so ".." lands
     // you back on the folder you came from instead of the top of the list.
     val scrollStack = remember { mutableStateListOf<Triple<String, Int, Int>>() }
@@ -171,6 +173,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun loadPhone(restore: Pair<Int, Int>? = null) {
+        val g = gate.bump()
         if (demoPhone && BuildConfig.DEBUG) {
             // CI screenshot state only: fake phone listing, no SAF access.
             items = listOf(
@@ -197,6 +200,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 val folder = phoneStack.lastOrNull()?.first
                     ?: PhoneMovies.childUri(tree, android.provider.DocumentsContract.getTreeDocumentId(tree))
                 val listing = withContext(Dispatchers.IO) { PhoneMovies.list(context, tree, folder) }
+                if (!gate.isCurrent(g)) return@launch
                 val rows = mutableListOf<BrowseItem>()
                 if (!listing.atRoot) rows.add(BrowseItem(name = "..", isDir = true, path = "", uri = "", sizeBytes = 0L))
                 listing.folders.forEach { f -> rows.add(BrowseItem(name = f.name, isDir = true, path = f.uri.toString(), uri = f.uri.toString(), sizeBytes = 0L)) }
@@ -206,6 +210,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 loading = false
                 scope.launch { if (restore != null) listState.scrollToItem(restore.first, restore.second) else listState.scrollToItem(0) }
             } catch (e: Exception) {
+                if (!gate.isCurrent(g)) return@launch
                 loading = false
                 error = plainPlayerError(e, "Couldn't open that folder on the phone.")
             }
@@ -237,6 +242,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun loadVlc(dir: String, restore: Pair<Int, Int>?) {
+        val g = gate.bump()
         loading = true
         error = null
         scope.launch {
@@ -244,8 +250,10 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
+                if (!gate.isCurrent(g)) return@launch
                 show(raw, dir, false, restore)
             } catch (e: Exception) {
+                if (!gate.isCurrent(g)) return@launch
                 loading = false
                 // Only a dead VLC/PC shows the connection message; a VLC error (bad folder,
                 // VLC itself upset) is shown where he is - no mode flip, no jump to the top.
@@ -257,6 +265,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun loadHelper(rel: String, restore: Pair<Int, Int>? = null, healed: Boolean = false) {
+        val g = gate.bump()
         loading = true
         error = null
         scope.launch {
@@ -264,11 +273,13 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 val raw = withContext(Dispatchers.IO) {
                     HelperClient.listMovies(remote.store.host, remote.store.helperPort, remote.store.helperToken, rel)
                 }
+                if (!gate.isCurrent(g)) return@launch
                 val rows = raw.map { (name, dir) ->
                     BrowseItem(name = name, isDir = dir, path = if (rel.isEmpty()) name else "$rel\\$name", uri = "", sizeBytes = 0L)
                 }
                 show(rows, rel, rel.isEmpty(), restore)
             } catch (e: Exception) {
+                if (!gate.isCurrent(g)) return@launch
                 // Self-heal once: the PC may have lost or never received the folder. If the
                 // PC's copy is empty or different, re-save the phone's copy and retry.
                 if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
@@ -291,6 +302,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                             } else null
                         } catch (e2: Exception) { null }
                     }
+                    if (!gate.isCurrent(g)) return@launch
                     if (heal == "pull") {
                         // The folder changed under us: the relative path we were
                         // loading belongs to the old folder and may not exist under
@@ -315,7 +327,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun load(dir: String, restore: Pair<Int, Int>? = null) {
-        if (!remote.pcReachable) { loading = false; return }
+        if (!remote.pcReachable) { gate.bump(); loading = false; return }
         if (viaHelper) { loadHelper(dir, restore); return }
         // The PC app first (it answers instantly whether VLC is open or closed - the same
         // order as the Settings folder picker); VLC is only the fallback. This skips the
@@ -428,10 +440,13 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             // Same rule as screen entry: the PC's folder wins when the helper answers.
             // Without this, a folder changed on the PC during the outage kept the
             // phone's stale copy (and could push it back over the PC's choice).
+            val g0 = gate.current()
             val fromPc = withContext(Dispatchers.IO) {
                 if (remote.store.helperToken.isBlank()) null
                 else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
             }
+            // Superseded by a newer load, or the user is on the phone list now: do not write the PC folder or reload over it.
+            if (!gate.isCurrent(g0) || origin == Origin.PHONE) return@LaunchedEffect
             if (!fromPc.isNullOrBlank() && !fromPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
                 // New root: the old relative path and saved scroll spots no longer
                 // exist, so viewport preservation only applies within the same folder.
@@ -446,11 +461,13 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     // The PC's setting wins when the helper has one; the phone's copy is the fallback.
     LaunchedEffect(Unit) {
-        if (!remote.pcReachable) { loading = false; return@LaunchedEffect }
+        if (!remote.pcReachable) { gate.bump(); loading = false; return@LaunchedEffect }
+        val g0 = gate.current()
         val fromPc = withContext(Dispatchers.IO) {
             if (remote.store.helperToken.isBlank()) null
             else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
         }
+        if (!gate.isCurrent(g0)) return@LaunchedEffect // a load started while the PC answered: it owns the screen now
         if (!fromPc.isNullOrBlank()) remote.store.moviesPath = fromPc
         if (demoPhone && BuildConfig.DEBUG) loadPhone() else load(remote.store.moviesPath.trim().ifBlank { path })
     }
@@ -541,8 +558,8 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             when {
                 // While the banner says the PC is gone, the list area stays quiet: no spinner,
                 // no error card, no wrong "No videos" - just the last list if there is one.
-                lost && items.isEmpty() -> item { Spacer(Modifier.height(1.dp)) }
-                loading && !lost -> item { ListMessage("Loading\u2026", loading = true) }
+                origin == Origin.PC && lost && items.isEmpty() && !loading -> item { Spacer(Modifier.height(1.dp)) }
+                loading && (!lost || origin == Origin.PHONE) -> item { ListMessage("Loading\u2026", loading = true) }
                 error != null && (!lost || origin == Origin.PHONE) -> item {
                     if (origin == Origin.PHONE && phoneTree() == null)
                         ListMessage(error!!, isError = true, actionLabel = "Pick folder", onAction = { pickTree.launch(DebugRig.pickerInitialUri) })
