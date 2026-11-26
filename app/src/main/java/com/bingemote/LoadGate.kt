@@ -30,10 +30,10 @@ class LoadGate {
      * the loader kind, its generation, whether that generation was still current, and the first row name (max 40 chars)
      * so a test can see that a specific request's success was consumed and accepted or rejected. Returns [isCurrent].
      */
-    fun successCurrent(kind: String, g: Int, raw: String): Boolean {
+    fun successCurrent(kind: String, g: Int, rows: List<BrowseItem>): Boolean {
         val ok = isCurrent(g)
         if (BuildConfig.DEBUG) {
-            val first = Regex("\"name\"\\s*:\\s*\"([^\"]{0,40})").find(raw)?.groupValues?.get(1) ?: ""
+            val first = rows.firstOrNull()?.name?.take(40) ?: ""
             successes.add(Success(kind, g, ok, first))
         }
         return ok
