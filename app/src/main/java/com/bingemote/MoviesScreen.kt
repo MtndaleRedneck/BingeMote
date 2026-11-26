@@ -467,7 +467,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(
-            // One 64dp top bar (12 / 44 / 12) on Home, Movies and Settings.
+            // One 68dp top bar (12 / 44 / 12) on Home, Movies and Settings.
             Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
