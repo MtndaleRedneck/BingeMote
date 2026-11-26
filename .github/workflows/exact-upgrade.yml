@@ -30,10 +30,10 @@ jobs:
           set -euo pipefail
           [[ "$NEW_ASSET_ID" =~ ^[0-9]+$ ]]
           [[ "$NEW_HASH" =~ ^[a-f0-9]{64}$ ]]
-          # Prior = the LIVE public 1.15.0 release asset (hash-pinned below), not a private legacy asset.
-          GH_TOKEN=${{ github.token }} gh release download android-v1.15.0 -R MtndaleRedneck/BingeMote -p 'BingeMote-Android-1.15.0.apk' -O prior.apk
+          # Prior = the LIVE public 1.15.2 release asset (hash-pinned below), not a private legacy asset.
+          GH_TOKEN=${{ github.token }} gh release download android-v1.15.2 -R MtndaleRedneck/BingeMote -p 'BingeMote-Android-1.15.2.apk' -O prior.apk
           gh api -H 'Accept: application/octet-stream' "repos/MtndaleRedneck/TestLab/releases/assets/$NEW_ASSET_ID" > staged.apk
-          echo '283eb18cfae1fe94856a960b41c14a86450de890b7e86ee362463fabc1bdbbc7  prior.apk' | sha256sum -c
+          echo '3fb303e66dbaed92eb88b5720f24e53b5455c2c3820e50fe28590a9a870c8e13  prior.apk' | sha256sum -c
           printf '%s  staged.apk\n' "$NEW_HASH" | sha256sum -c
       - name: Build same-signer instrumentation only
         env:
