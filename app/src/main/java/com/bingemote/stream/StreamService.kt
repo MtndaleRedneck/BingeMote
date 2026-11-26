@@ -72,7 +72,7 @@ class StreamService : Service() {
         try {
             if (com.bingemote.BuildConfig.DEBUG && testForegroundRefusal) throw IllegalStateException("test: foreground start refused")
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) // type under verification
-        } catch (e: Exception) { fgRefused = true; stopSelf() } // foreground start refused: end the service instead of crashing
+        } catch (e: Exception) { fgRefused = true; ev("created-refused"); stopSelf() } // foreground start refused: end the service instead of crashing
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,9 +81,10 @@ class StreamService : Service() {
         // with servedAny false and no target, so the watchdog could never arm (N1).
         // NOT_STICKY keeps every stop rule for REAL streams exactly as settled; it
         // only ends the zero-state zombie.
+        ev("start-command")
         if (intent == null) { stopSelf(); return START_NOT_STICKY }
         // Refused foreground start: never build the server, locks or watchdog for this instance.
-        if (fgRefused) { stopSelf(); return START_NOT_STICKY }
+        if (fgRefused) { ev("start-guard-refused"); stopSelf(); return START_NOT_STICKY }
         if (intent.action == ACTION_STOP || server != null) {
             if (intent.action == ACTION_STOP) stopSelf()
             return START_NOT_STICKY
@@ -96,6 +97,7 @@ class StreamService : Service() {
         StreamCoordinator.servedTarget = null
         try { srv.start() } catch (e: Exception) { runCatching { srv.stop() }; stopSelf(); return START_NOT_STICKY }
         server = srv
+        ev("server-built")
 
         val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         wifiLock = if (Build.VERSION.SDK_INT >= 29)
@@ -107,7 +109,9 @@ class StreamService : Service() {
         wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bingemote:stream")
             .also { it.acquire(6 * 60 * 60 * 1000L) } // safety net; stop paths release it sooner
+        ev("locks-acquired")
         startWatchdog(srv)
+        ev("watchdog-started")
         return START_NOT_STICKY
     }
 
@@ -153,6 +157,7 @@ class StreamService : Service() {
         runCatching { wifiLock?.release() }
         runCatching { wakeLock?.release() }
         // StreamServer drains owned provider/copy workers before deleting its cache.
+        ev("destroyed")
         super.onDestroy()
     }
 
@@ -172,5 +177,8 @@ class StreamService : Service() {
         const val ACTION_STOP = "com.bingemote.stream.STOP_STREAM"
         /** Debug-build test seam ONLY (BuildConfig.DEBUG gate at the use): the instrumented test sets and resets it. Not production state. */
         @Volatile internal var testForegroundRefusal = false
+        /** Debug-build test seam ONLY: lifecycle events so a test can prove what a refused instance did NOT build. */
+        internal val testEvents = java.util.concurrent.CopyOnWriteArrayList<String>()
+        internal fun ev(s: String) { if (com.bingemote.BuildConfig.DEBUG) testEvents.add(s) }
     }
 }

@@ -38,9 +38,17 @@ class MoviesStaleLoadTest {
         val port = server.localPort
         val browseRequests = AtomicInteger()
         val aHeld = CountDownLatch(1)
+        val aServed = CountDownLatch(1)
         private fun dirJson(prefix: String): String {
             val e = (1..5).joinToString(",") { """{"type":"dir","name":"Folder $prefix$it","path":"C:\\Movies\\$prefix$it","uri":"file:///x","size":0}""" }
             return """{"element":[$e]}"""
+        }
+        /** Send the headers, then one whitespace byte per second until released: the app's 4 s READ timeout (Vlc.get default)
+         *  is per read, so the held request stays alive and ends as a real late SUCCESS, not as a timeout. Leading whitespace is valid JSON. */
+        private fun dripUntilReleased(s: java.net.Socket) {
+            val o = s.getOutputStream()
+            o.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n".toByteArray()); o.flush()
+            while (!releaseA.await(1, TimeUnit.SECONDS)) { o.write(" ".toByteArray()); o.flush() }
         }
         fun start() = thread {
             while (running.get()) {
@@ -51,14 +59,17 @@ class MoviesStaleLoadTest {
                             val r = BufferedReader(InputStreamReader(s.getInputStream()))
                             val line = r.readLine() ?: ""
                             while (true) { val h = r.readLine() ?: break; if (h.isEmpty()) break }
+                            var heldA = false
                             val body = if (line.contains("browse.json")) {
                                 val n = browseRequests.incrementAndGet()
-                                if (n == 1) { aHeld.countDown(); releaseA.await(60, TimeUnit.SECONDS); dirJson("A") } // A: held, then the late reply
-                                else dirJson("B")                                                                       // B: immediate
+                                if (n == 1) { heldA = true; aHeld.countDown(); dripUntilReleased(s); dirJson("A") } // A: held, then the late reply
+                                else dirJson("B")                                                        // B: immediate
                             } else """{"time":0,"length":0,"volume":256,"state":"stopped","information":{"category":{"meta":{}}}}"""
                             val o = s.getOutputStream()
-                            o.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body".toByteArray())
+                            if (heldA) { o.write(body.toByteArray()) } // headers were sent by the drip (no Content-Length, ends on close)
+                            else o.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body".toByteArray())
                             o.flush(); s.close()
+                            if (heldA) aServed.countDown() // the full late reply was written and the socket closed without error
                         } catch (_: Exception) {}
                     }
                 } catch (_: Exception) {}
@@ -92,10 +103,19 @@ class MoviesStaleLoadTest {
             assertEquals("exactly A and B were requested", 2, stub.browseRequests.get())
             assertNull("A has not answered yet", device.findObject(By.text("Folder A1")))
 
+            val dropsBefore = LoadGate.staleDrops.get()
             releaseA.countDown() // the late, older reply is delivered now
-            Thread.sleep(2500)   // long enough for it to arrive and (wrongly) render, if it were going to
+            assertTrue("A's reply was written to the app", stub.aServed.await(10, TimeUnit.SECONDS)) // signal, not a sleep
+            // The only remaining wait is the app consuming that reply on its IO thread then rendering: bounded poll that
+            // watches for the WRONG outcome for up to 3 s (no sleep-then-check); it returns early if A's rows ever show.
+            // Observed completion: the app consumed A's late SUCCESS and the gate told the loader it was superseded.
+            // (A timeout would also drop, but the drip keeps the request alive past the 4 s read timeout, and the stub only
+            // counts A served after writing the full reply and closing without error.)
+            val until = android.os.SystemClock.elapsedRealtime() + 10_000
+            while (LoadGate.staleDrops.get() <= dropsBefore && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(50)
+            assertTrue("the app consumed A's late reply and dropped it as stale", LoadGate.staleDrops.get() > dropsBefore)
             device.waitForIdle()
-            assertNull("the late older listing must not replace the newer one", device.findObject(By.text("Folder A1")))
+            assertFalse("the late older listing must not replace the newer one", device.hasObject(By.text("Folder A1")))
             assertNotNull("the newer listing is still shown", device.findObject(By.text("Folder B1")))
         }
     }

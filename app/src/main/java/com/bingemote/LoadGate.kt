@@ -18,5 +18,14 @@ class LoadGate {
     /** The generation now in force, without superseding anything (captured before an await). */
     fun current(): Int = gen.get()
 
-    fun isCurrent(g: Int): Boolean = gen.get() == g
+    fun isCurrent(g: Int): Boolean {
+        val ok = gen.get() == g
+        if (!ok && BuildConfig.DEBUG) staleDrops.incrementAndGet()
+        return ok
+    }
+
+    companion object {
+        /** Debug-build test seam ONLY: how many times a loader asked and was told it was superseded (so a test can observe that a late result was consumed and dropped). */
+        internal val staleDrops = AtomicInteger(0)
+    }
 }

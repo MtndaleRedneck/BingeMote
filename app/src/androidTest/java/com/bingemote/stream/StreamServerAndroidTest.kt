@@ -737,6 +737,8 @@ class StreamServerAndroidTest {
             while (StreamServer.providerBudget.availablePermits() < baseline && android.os.SystemClock.elapsedRealtime() < settle) Thread.sleep(50)
             Thread.sleep(500) // a double release would show here
             assertEquals("permit returned exactly once after the close returned", baseline, StreamServer.providerBudget.availablePermits())
+            assertEquals("the copy never started (checked AFTER the close returned, so the isActive check after the probe close is what stops it)", 1, opened.get())
+            assertEquals("still no open request", 0, server.openStreams.get())
         } finally {
             releaseClose.countDown(); server.stop(); writers.forEach { runCatching { it.close() } }; runCatching { sock.close() }
         }

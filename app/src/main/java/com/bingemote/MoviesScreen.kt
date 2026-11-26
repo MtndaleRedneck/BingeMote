@@ -292,11 +292,14 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                             // like "PC has none" and trigger a push over its folder.
                             val onPc = HelperClient.getMoviesFolderStrict(remote.store.host, remote.store.helperPort, remote.store.helperToken)
                             if (onPc.isBlank()) {
+                                // Superseded while this IO ran: no PC write. (Check-then-act: narrows, does not remove, the window.)
+                                if (!gate.isCurrent(g)) return@withContext null
                                 HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
                                 "push"
                             } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
                                 // The PC's setting wins: pull its folder instead of
                                 // pushing the phone's stale copy over it.
+                                if (!gate.isCurrent(g)) return@withContext null // superseded: no Store write (narrow check-then-act)
                                 remote.store.moviesPath = onPc
                                 "pull"
                             } else null
@@ -558,7 +561,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             when {
                 // While the banner says the PC is gone, the list area stays quiet: no spinner,
                 // no error card, no wrong "No videos" - just the last list if there is one.
-                origin == Origin.PC && lost && items.isEmpty() && !loading -> item { Spacer(Modifier.height(1.dp)) }
+                origin == Origin.PC && lost && items.isEmpty() -> item { Spacer(Modifier.height(1.dp)) }
                 loading && (!lost || origin == Origin.PHONE) -> item { ListMessage("Loading\u2026", loading = true) }
                 error != null && (!lost || origin == Origin.PHONE) -> item {
                     if (origin == Origin.PHONE && phoneTree() == null)
