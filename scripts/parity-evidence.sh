@@ -13,6 +13,11 @@ for s in main movies settings movies-phone; do
   sleep 8
   adb exec-out screencap -p > "parity-evidence/$s.png"
 done
+# Reference for the unpaired-first-launch question: a fresh install (data cleared), no rig extras.
+adb shell pm clear com.bingemote >/dev/null
+adb shell am start -n com.bingemote/.MainActivity >/dev/null
+sleep 8
+adb exec-out screencap -p > "parity-evidence/fresh-install-first-launch.png"
 for f in $(adb shell ls /sdcard/ | grep "^parity-storage-picker-" | tr -d "\r"); do adb pull /sdcard/$f parity-evidence/$f >/dev/null; done
 adb logcat -d -s AndroidRuntime:E > parity-evidence/crashes.txt || true
 grep -c 'INSTRUMENTATION_STATUS_CODE: -3' parity-evidence/tests.txt > parity-evidence/skipped-count.txt || true
