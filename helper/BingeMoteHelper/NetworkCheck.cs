@@ -18,14 +18,14 @@ internal sealed class NetProfile
 /// </summary>
 internal static class NetworkCheck
 {
-    /// <summary>
-    /// The profile of the adapter that owns the default IPv4 route, so a VPN or second
-    /// adapter doesn't trip the warning. Null when it can't be determined. Never throws.
-    /// </summary>
     /// <summary>The exact PowerShell command line of the probe (no nested double quotes: they broke parsing in 1.9.0).</summary>
     internal const string ProbeArguments =
         "-NoProfile -NonInteractive -Command \"$i=(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).InterfaceIndex; $p=Get-NetConnectionProfile -InterfaceIndex $i -ErrorAction SilentlyContinue; if ($p) { '{0}|{1}|{2}' -f $p.Name,$p.NetworkCategory,$p.InterfaceIndex }\"";
 
+    /// <summary>
+    /// The profile of the adapter that owns the default IPv4 route, so a VPN or second
+    /// adapter doesn't trip the warning. Null when it can't be determined. Never throws.
+    /// </summary>
     public static NetProfile? DefaultRouteProfile()
     {
         try
