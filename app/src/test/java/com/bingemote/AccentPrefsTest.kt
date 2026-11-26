@@ -7,8 +7,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AccentPrefsTest {
-    @Test fun nineSwatchesOrangeFirst() {
-        assertEquals(9, AccentSwatches.size)
+    @Test fun tenSwatchesOrangeFirst() {
+        assertEquals(10, AccentSwatches.size)
+        assertEquals(0xFF349E96.toInt(), AccentSwatches[9].toArgb())
         assertEquals(AccentNames.size, AccentSwatches.size)
         assertEquals(0xFFF97C02.toInt(), AccentSwatches[0].toArgb())
         assertEquals(AccentSwatches.size, AccentSwatches.map { it.toArgb() }.toSet().size)

@@ -258,7 +258,7 @@ fun SettingsScreen(
 
         SettingsSection("Accent color") {
             val accentView = androidx.compose.ui.platform.LocalView.current
-            // Saved as a colour, so the order here is free to change. 5 on top, 4 below.
+            // Saved as a colour, so the order here is free to change. Two rows of five.
             AccentSwatches.withIndex().chunked(5).forEach { row ->
                 // Equal-width cells: the 4 below sit centered between the 5 above, half a cell in from each side.
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
