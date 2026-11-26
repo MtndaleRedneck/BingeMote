@@ -118,13 +118,13 @@ fun SettingsScreen(
     Column(
         Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
     ) {
-        // One 64dp top bar (12 / 40 / 12), the same on Home, Movies and Settings.
-        Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        // One 64dp top bar (12 / 44 / 12), the same on Home, Movies and Settings.
+        Row(Modifier.heightIn(min = 44.dp).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             HeaderIconButton(onBack, haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Settings", color = TextC, fontSize = 21.sp, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(6.dp))
         BackHandler { onBack() }
 
         // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry

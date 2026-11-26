@@ -46,12 +46,12 @@ class TopBarParityTest {
 
     @Test fun switchingBackToAnUnreachablePcClearsThePhoneRows() {
         launch("movies-phone")
-        assertNotNull("demo phone rows absent", device.wait(Until.findObject(By.text("Another Sample Film.mp4")), 15000))
+        assertNotNull("demo phone rows absent", device.wait(Until.findObject(By.text("Another Sample Film")), 15000))
         device.findObject(By.text("PC")).click()
         assertTrue("phone rows still on screen after switching to PC",
-            device.wait(Until.gone(By.text("Another Sample Film.mp4")), 8000))
+            device.wait(Until.gone(By.text("Another Sample Film")), 8000))
         device.findObject(By.text("Phone")).click()
-        assertNotNull("phone rows did not come back", device.wait(Until.findObject(By.text("Another Sample Film.mp4")), 8000))
+        assertNotNull("phone rows did not come back", device.wait(Until.findObject(By.text("Another Sample Film")), 8000))
         device.pressHome()
     }
 }
