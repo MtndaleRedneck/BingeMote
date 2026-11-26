@@ -5,7 +5,6 @@ Pick your accent color. Settings has a new Accent color card with orange as the 
 **Improved**
 - Settings now lines up with the Home top bar.
 - The Home play button is a clean white triangle.
-- The app icon follows your phone's icon shape.
 - Pairing error messages are easier to read.
 
 ## v1.16.0 - November 26, 2026
