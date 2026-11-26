@@ -17,6 +17,16 @@ if dump_listing=$(adb shell "ls $EVDIR/ 2>/dev/null"); then :; else echo "PULL D
 dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|dump2|andialog|dismissed-dialogs)' || true)
 if [ -z "$dumps" ]; then echo "PULL DIAG: no FailureDumpRule evidence files listed"; fi
 for d in $dumps; do adb exec-out cat "$EVDIR/$d" > "parity-evidence/failure-dumps/$d" 2>/dev/null || echo "PULL DIAG: could not pull $d"; done
+# Standalone-provider probe (evidence only, never changes the verdict): with no instrumentation running, stop the test
+# package, then query its SAF provider through the content shell so the system starts a normal com.bingemote.test process
+# that hosts TestDocumentsProvider. Records the query output, whether that process exists afterwards, and its AndroidRuntime
+# lines. If the shell is refused (permission) the file says so and the provider launch is NOT proven by this run.
+adb shell am force-stop com.bingemote.test || true
+echo "pid before: $(adb shell pidof com.bingemote.test | tr -d '\r\n')" > parity-evidence/provider-probe.txt
+adb shell content query --uri content://com.bingemote.test.documents/root >> parity-evidence/provider-probe.txt 2>&1 || echo "probe query rc=$?" >> parity-evidence/provider-probe.txt
+sleep 3
+echo "pid after: $(adb shell pidof com.bingemote.test | tr -d '\r\n')" >> parity-evidence/provider-probe.txt
+adb logcat -d -s AndroidRuntime:E | grep -E "bingemote.test|TestDocumentsProvider|kotlin" | tail -5 >> parity-evidence/provider-probe.txt || true
 for s in main movies settings movies-phone; do
   adb shell am force-stop com.bingemote
   adb shell am start -n com.bingemote/.MainActivity --es screen "$s" >/dev/null
