@@ -260,23 +260,26 @@ fun SettingsScreen(
             val accentView = androidx.compose.ui.platform.LocalView.current
             // Saved as a colour, so the order here is free to change. 5 on top, 4 below.
             AccentSwatches.withIndex().chunked(5).forEach { row ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                // Equal-width cells: the 4 below sit centered between the 5 above, half a cell in from each side.
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (row.size < 5) Spacer(Modifier.weight((5 - row.size) / 2f))
                     row.forEach { (i, col) ->
                         val on = AccentPrefs.accent == col
-                        Box(
-                            Modifier.size(48.dp).clip(CircleShape)
-                                .semantics { contentDescription = "Accent color, ${AccentNames[i]}"; selected = on }
-                                .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { tapHaptic(accentView, haptics); AccentPrefs.choose(col) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            // Selected: a white ring on the card with a gap, then a smaller swatch, so the ring never sits on the swatch edge.
-                            if (on) Box(Modifier.size(46.dp).border(2.dp, TextC, CircleShape), contentAlignment = Alignment.Center) {
-                                Box(Modifier.size(36.dp).clip(CircleShape).background(col))
-                            } else Box(Modifier.size(42.dp).clip(CircleShape).background(col))
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            Box(
+                                Modifier.size(48.dp).clip(CircleShape)
+                                    .semantics { contentDescription = "Accent color, ${AccentNames[i]}"; selected = on }
+                                    .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { tapHaptic(accentView, haptics); AccentPrefs.choose(col) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                // Selected: a white ring on the card with a gap, then a smaller swatch, so the ring never sits on the swatch edge.
+                                if (on) Box(Modifier.size(46.dp).border(2.dp, TextC, CircleShape), contentAlignment = Alignment.Center) {
+                                    Box(Modifier.size(36.dp).clip(CircleShape).background(col))
+                                } else Box(Modifier.size(42.dp).clip(CircleShape).background(col))
+                            }
                         }
                     }
-                    // The short row keeps the same column spacing as the full one.
-                    repeat(5 - row.size) { Spacer(Modifier.size(48.dp)) }
+                    if (row.size < 5) Spacer(Modifier.weight((5 - row.size) / 2f))
                 }
             }
         }
