@@ -1,0 +1,20 @@
+name: Network category action proof
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Adapter state before
+        run: Get-NetConnectionProfile | Format-List Name,InterfaceAlias,NetworkCategory
+      - name: MarkPrivate proof (disposable runner only)
+        env:
+          BM_NET_PROOF: "1"
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter "FullyQualifiedName~NetProofTests" --logger "console;verbosity=detailed"
