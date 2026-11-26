@@ -120,8 +120,15 @@ object Vlc {
         command(host, port, pw, "command=subtitle_track&val=$trackId")
 
     /** Play a file on the PC by its VLC uri (from browse). */
-    fun playUri(host: String, port: Int, pw: String, uri: String) =
-        command(host, port, pw, "command=in_play&input=${encode(uri)}")
+    fun playUri(host: String, port: Int, pw: String, uri: String) = playUri(host, port, pw, uri, emptyList())
+
+    /** Play with sidecar subtitles riding as item options (in_play passes each option= to
+     *  playlist.add). Network subtitles use input-slave. */
+    fun playUri(host: String, port: Int, pw: String, uri: String, subUrls: List<String>) {
+        var cmd = "command=in_play&input=${encode(uri)}"
+        for (sub in subUrls) cmd += "&option=${encode(":input-slave=$sub")}"
+        command(host, port, pw, cmd)
+    }
 
     /** List one folder on the PC. Throws Unreachable when VLC can't read it. */
     fun browse(host: String, port: Int, password: String, dir: String): List<BrowseItem> {

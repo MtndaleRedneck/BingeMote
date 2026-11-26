@@ -1,5 +1,14 @@
 package com.bingemote
 
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.compose.animation.core.animateFloatAsState
@@ -129,7 +138,7 @@ fun PressTile(
  * ellipsizes - Settings is always fully on screen. */
 @Composable
 fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
-    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Box(Modifier.fillMaxWidth().headerContainer().padding(horizontal = 16.dp, vertical = 12.dp)) {
         androidx.compose.ui.layout.Layout(content = {
             androidx.compose.foundation.Image(
                 painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
@@ -151,7 +160,7 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
             val minTitle = 56.dp.roundToPx()
             val pillP = measurables[2].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - minTitle).coerceAtLeast(0)))
             val titleP = measurables[1].measure(androidx.compose.ui.unit.Constraints(maxWidth = (middle - pillP.width).coerceAtLeast(0)))
-            val h = maxOf(logoP.height, titleP.height, pillP.height, setP.height)
+            val h = maxOf(logoP.height, titleP.height, pillP.height, setP.height, 44.dp.roundToPx())
             layout(constraints.maxWidth, h) {
                 logoP.placeRelative(0, (h - logoP.height) / 2)
                 val titleX = logoP.width + gap
@@ -163,6 +172,25 @@ fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
                 setP.placeRelative(constraints.maxWidth - setP.width, (h - setP.height) / 2)
             }
         }
+    }
+}
+
+/** Tags the whole header container (outer 12dp padding included) so tests measure it, not the icon. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+fun Modifier.headerContainer(): Modifier = this
+    .semantics { testTagsAsResourceId = true }
+    .testTag("screen_header")
+
+/** The one header every sub-screen uses: 12dp / 44dp / 12dp, back tile at the 16dp edge, title centred on it. */
+@Composable
+fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20.sp, hapticsOn: Boolean? = null, edge: androidx.compose.ui.unit.Dp = 16.dp, onBack: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().headerContainer().padding(horizontal = edge, vertical = 12.dp).heightIn(min = 44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HeaderIconButton(onBack, hapticsOn) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
+        Spacer(Modifier.width(12.dp))
+        Text(title, color = TextC, fontSize = fontSize, fontWeight = FontWeight.Bold)
     }
 }
 

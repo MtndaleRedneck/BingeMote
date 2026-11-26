@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         store = Store(this)
         // Screenshot rig: a stand-in PC name so the Your PC card renders paired.
         if (BuildConfig.DEBUG && intent.hasExtra("pcdemo")) store.pcName = "MY-PC"
+        if (BuildConfig.DEBUG) intent.getStringExtra("pickeruri")?.let { DebugRig.pickerInitialUri = android.net.Uri.parse(it) }
         remote = RemoteState(this, store, lifecycleScope)
         if (BuildConfig.DEBUG && intent.getBooleanExtra("demostatus", false)) remote.debugSeedStatus()
         // Screenshot-rig only: render one status-notice review scenario per capture.
@@ -178,6 +179,8 @@ class MainActivity : ComponentActivity() {
                     )
                     "movies" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG && intent.hasExtra("resumeask"))
                     // CI screenshot state (debug builds only): the resume dialog over the list.
+                    // CI screenshot state (debug builds only): Phone origin with a demo listing.
+                    "movies-phone" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoPhone = BuildConfig.DEBUG)
                     "movies-resume" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG)
                     "settings" -> SettingsScreen(
                         remote,

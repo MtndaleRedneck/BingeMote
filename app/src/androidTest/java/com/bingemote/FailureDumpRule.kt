@@ -27,6 +27,17 @@ class FailureDumpRule : TestWatcher() {
     private var testStartedAt = 0L
 
     override fun starting(description: Description) {
+        try {
+            startingInner(description)
+        } catch (t: Throwable) {
+            // TestWatcher collects an exception thrown here and still runs the test body, so capture the
+            // ground truth now (suffix -start) instead of relying on failed() being reached.
+            captureGroundTruth(t, description, "-start")
+            throw t
+        }
+    }
+
+    private fun startingInner(description: Description) {
         testStartedAt = System.currentTimeMillis() // rule/test start, not app launch
         val inst = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(inst)
@@ -66,40 +77,41 @@ class FailureDumpRule : TestWatcher() {
     }
 
     override fun failed(e: Throwable?, description: Description) {
+        captureGroundTruth(e, description, "")
+    }
+
+    /** UiDevice.executeShellCommand does not run a shell: no pipes, no quoting. Run the plain command and filter here. */
+    private fun shellLines(device: UiDevice, cmd: String, keep: (String) -> Boolean): String =
+        device.executeShellCommand(cmd).lineSequence().filter(keep).joinToString("\n", postfix = "\n")
+
+    private fun captureGroundTruth(e: Throwable?, description: Description, suffix: String) {
         try {
             val inst = InstrumentationRegistry.getInstrumentation()
             val device = UiDevice.getInstance(inst)
             val dir = inst.targetContext.getExternalFilesDir(null) ?: return
-            val tag = description.methodName ?: "unknown"
+            val tag = (description.methodName ?: "unknown") + suffix
             val sb = StringBuilder()
             sb.append("failure: ").append(e?.toString() ?: "?").append('\n')
             runCatching {
                 sb.append("== resumed activity ==\n")
-                sb.append(device.executeShellCommand("dumpsys activity activities | grep -E 'ResumedActivity|topResumedActivity'"))
+                sb.append(shellLines(device, "dumpsys activity activities") { it.contains("ResumedActivity") || it.contains("topResumedActivity") })
             }
             runCatching {
                 sb.append("== current focus ==\n")
-                sb.append(device.executeShellCommand("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"))
+                sb.append(shellLines(device, "dumpsys window") { it.contains("mCurrentFocus") || it.contains("mFocusedApp") })
             }
             runCatching {
-                // Anchored at test start, polling spam filtered: the tail used to
-                // cover ~3-22s of mostly UiDevice noise, missing the failure period.
-                sb.append("== app logcat since test start (UiDevice filtered) ==\n")
-                if (testStartedAt > 0) {
-                    val anchor = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US)
-                        .format(java.util.Date(testStartedAt))
-                    sb.append(device.executeShellCommand("logcat -d -T '$anchor' | grep -v UiDevice"))
-                } else {
-                    sb.append(device.executeShellCommand("logcat -d -t 250"))
-                }
+                // Last 400 log lines (a time anchor needs shell quoting, which executeShellCommand does not do);
+                // UiDevice polling spam filtered out in Kotlin.
+                sb.append("== logcat tail 400 (UiDevice filtered) ==\n")
+                sb.append(shellLines(device, "logcat -d -t 400") { !it.contains("UiDevice") })
             }
             File(dir, "bm-dump-$tag.txt").writeText(sb.toString())
             val firstAt = System.currentTimeMillis()
             runCatching { device.takeScreenshot(File(dir, "bm-dump-$tag.png")) }
             runCatching { device.dumpWindowHierarchy(File(dir, "bm-dump-$tag.uix")) }
-            // Paired second capture a few seconds later (recurrence discriminator,
-            // I2 Nov 23): a persistent stale tree stays mismatched across the pair;
-            // a transient one converges. The test's assertion stays red either way.
+            // Paired second capture a few seconds later (recurrence discriminator): a persistent stale tree stays
+            // mismatched across the pair; a transient one converges. The test's assertion stays red either way.
             Thread.sleep(4000)
             val secondAt = System.currentTimeMillis()
             runCatching { device.takeScreenshot(File(dir, "bm-dump2-$tag.png")) }
