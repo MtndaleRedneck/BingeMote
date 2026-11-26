@@ -14,6 +14,15 @@ class AccentPrefsTest {
         assertEquals(0xFFF97C02.toInt(), AccentSwatches[0].toArgb())
         assertEquals(AccentSwatches.size, AccentSwatches.map { it.toArgb() }.toSet().size)
     }
+    @Test fun exactEightArgbValuesInOrder() {
+        val expected = listOf(0xFFF97C02, 0xFF6F9C7E, 0xFF7BAFDB, 0xFF83A2A4, 0xFFB8735C, 0xFFB3838F, 0xFF8C8FC0, 0xFFA89A8C).map { it.toInt() }
+        assertEquals(expected, AccentSwatches.map { it.toArgb() })
+    }
+    @Test fun savedRemovedColorsResolveToExactOrangeArgb() {
+        assertEquals(0xFFF97C02.toInt(), AccentPrefs.resolve(0xFFCC5500.toInt()).toArgb())
+        assertEquals(0xFFF97C02.toInt(), AccentPrefs.resolve(0xFF349E96.toInt()).toArgb())
+        assertEquals(false, AccentSwatches.any { it.toArgb() == 0xFFCC5500.toInt() || it.toArgb() == 0xFF349E96.toInt() })
+    }
     @Test fun unknownOrMissingFallsBackToOrange() {
         assertEquals(Color(ORANGE_ARGB), AccentPrefs.resolve(null))
         assertEquals(Color(ORANGE_ARGB), AccentPrefs.resolve(0x12345678))
