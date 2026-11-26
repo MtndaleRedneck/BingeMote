@@ -1,6 +1,9 @@
 package com.bingemote
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
@@ -113,14 +116,15 @@ fun SettingsScreen(
         return
     }
     Column(
-        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp),
+        Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // One 64dp top bar (12 / 40 / 12), the same on Home, Movies and Settings.
+        Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             HeaderIconButton(onBack, haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.width(12.dp))
             Text("Settings", color = TextC, fontSize = 21.sp, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(10.dp))
         BackHandler { onBack() }
 
         // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry
@@ -144,6 +148,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("Assigned Movies folder") {
+            // Phone folder picker (SAF): the Movies screen's Phone origin reads this.
+            val pickPhoneTree = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+                if (uri != null) {
+                    runCatching {
+                        context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    store.moviesPhoneTreeUri = uri.toString()
+                }
+            }
             // Read-only: Browse PC folders is the only way to change it, so a typo can't break the Movies tab.
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card2).padding(horizontal = 16.dp, vertical = 15.dp),
@@ -164,6 +177,30 @@ fun SettingsScreen(
             ) {
                 Text(
                     "Browse PC folders",
+                    color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Card2).padding(horizontal = 16.dp, vertical = 15.dp),
+            ) {
+                Text(
+                    phoneFolderDisplay(store.moviesPhoneTreeUri),
+                    color = if (store.moviesPhoneTreeUri.isBlank()) Muted else TextC,
+                    fontSize = 14.sp,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            PressTile(
+                onTap = { pickPhoneTree.launch(null) },
+                background = OrangeGradient,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                corner = 14.dp,
+                hapticsOn = haptics,
+            ) {
+                Text(
+                    "Browse phone folders",
                     color = androidx.compose.ui.graphics.Color(0xFF1B1B1E),
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
@@ -444,5 +481,17 @@ fun ChoiceRow(options: List<Pair<Int, String>>, selected: Int, haptics: Boolean,
                 )
             }
         }
+    }
+}
+
+/** SAF tree URI -> the friendly path the user recognizes (shows
+ * /storage/emulated/0/Movies). Unknown roots show their decoded document id. */
+fun phoneFolderDisplay(treeUri: String): String {
+    if (treeUri.isBlank()) return "Not set yet. Tap Browse phone folders."
+    val decoded = java.net.URLDecoder.decode(treeUri.substringAfterLast("/tree/"), "UTF-8")
+    return when {
+        decoded.startsWith("primary:") -> "/storage/emulated/0/" + decoded.removePrefix("primary:")
+        decoded.isBlank() -> treeUri
+        else -> decoded
     }
 }

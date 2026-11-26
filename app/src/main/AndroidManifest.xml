@@ -9,6 +9,9 @@
          Android 13 notification permission, so these never prompt. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- The remote talks to VLC and the helper on the home network over plain HTTP. -->
@@ -45,5 +48,11 @@
             android:name=".MediaControlsService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- Serves a phone movie to VLC on the PC over Wi-Fi (foreground service, dataSync). -->
+        <service
+            android:name=".stream.StreamService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

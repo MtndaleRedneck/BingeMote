@@ -178,6 +178,8 @@ class MainActivity : ComponentActivity() {
                     )
                     "movies" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG && intent.hasExtra("resumeask"))
                     // CI screenshot state (debug builds only): the resume dialog over the list.
+                    // CI screenshot state (debug builds only): Phone origin with a demo listing.
+                    "movies-phone" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoPhone = BuildConfig.DEBUG)
                     "movies-resume" -> MoviesScreen(remote, moviesListState, onBack = { current.value = "main" }, demoResumeAsk = BuildConfig.DEBUG)
                     "settings" -> SettingsScreen(
                         remote,

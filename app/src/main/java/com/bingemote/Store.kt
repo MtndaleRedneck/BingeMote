@@ -115,6 +115,17 @@ class Store(context: Context) {
         get() = secrets.getString("helperToken", "") ?: ""
         set(v) = secrets.edit().putString("helperToken", v).apply()
 
+    /** Notification permission was already requested once (teardown C1: asked once at
+     *  the first phone stream on Android 13+, never nagged again). */
+    var notifPermissionAsked: Boolean
+        get() = prefs.getBoolean("notifPermissionAsked", false)
+        set(v) = prefs.edit().putBoolean("notifPermissionAsked", v).apply()
+
+    /** Assigned Android movies folder (persisted SAF tree URI) for the Movies screen's Phone origin. */
+    var moviesPhoneTreeUri: String
+        get() = prefs.getString("moviesPhoneTreeUri", "") ?: ""
+        set(v) = prefs.edit().putString("moviesPhoneTreeUri", v).apply()
+
     val isConfigured: Boolean
         get() = setupDone && host.isNotBlank() && vlcPassword.isNotBlank()
 }
