@@ -50,3 +50,35 @@ class StreamServiceLifecycleTest {
         assertTrue("service still running after Stop", waitUntil(10000) { !serviceRunning() })
     }
 }
+
+/** No Wi-Fi: the stream service must refuse to serve (it binds Wi-Fi only) and stop itself; the phone then
+ *  gets "server not ready" instead of a half-started server. Wi-Fi is switched back on afterwards. */
+class StreamServiceNoWifiTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val context: Context = instrumentation.targetContext
+
+    private fun sh(c: String) = androidx.test.uiautomator.UiDevice.getInstance(instrumentation).executeShellCommand(c)
+
+    @Test fun withWifiOffTheServiceStopsAndBindFailsCleanly() {
+        context.startService(Intent(context, StreamService::class.java).setAction(StreamService.ACTION_STOP))
+        sh("svc wifi disable")
+        try {
+            Thread.sleep(4000)
+            val failure = try { runBlocking { StreamCoordinator.bind(context) }; null } catch (e: Exception) { e }
+            assertNotNull("bind must fail with no Wi-Fi", failure)
+            assertTrue("unexpected failure: ${failure?.message}",
+                failure!!.message.orEmpty().contains("server not ready") || failure.message.orEmpty().contains("bind failed"))
+            @Suppress("DEPRECATION")
+            val running = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+                .getRunningServices(100).any { it.service.className == StreamService::class.java.name }
+            val end = System.currentTimeMillis() + 10000
+            var still = running
+            while (still && System.currentTimeMillis() < end) {
+                Thread.sleep(250)
+                still = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+                    .getRunningServices(100).any { it.service.className == StreamService::class.java.name }
+            }
+            assertFalse("service kept running with no Wi-Fi", still)
+        } finally { sh("svc wifi enable"); Thread.sleep(5000) }
+    }
+}
