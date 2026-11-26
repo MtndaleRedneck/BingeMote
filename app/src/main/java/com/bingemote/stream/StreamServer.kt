@@ -156,8 +156,10 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
 
     val baseUrl: String get() = "http://${wifiAddr.hostAddress}:${socket?.localPort ?: port}/s/$token"
 
+    private val nextId = java.util.concurrent.atomic.AtomicInteger(0)
+
     fun addMovie(uri: Uri, name: String, subtitles: List<Uri> = emptyList()): String {
-        val id = (entries.size + 1).toString()
+        val id = nextId.incrementAndGet().toString()
         entries[id] = Entry(uri, name, subtitles)
         return "$baseUrl/$id"
     }
@@ -634,5 +636,5 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
     }
 
     private fun guessMime(uri: Uri): String =
-        context.contentResolver.getType(uri) ?: "video/*"
+        (context.contentResolver.getType(uri) ?: "video/*").let { m -> if (Regex("[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+*-]+").matches(m)) m else "video/*" } // no CR/LF can reach the header
 }
