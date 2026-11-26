@@ -31,4 +31,9 @@ cat parity-evidence/skipped-tests.txt
 if comm -23 parity-evidence/skipped-tests.txt parity-evidence/expected-skips.txt | grep -q .; then
   echo "UNEXPECTED skipped tests:"; comm -23 parity-evidence/skipped-tests.txt parity-evidence/expected-skips.txt; exit 1
 fi
+# Named results: every required test must have a final status code 0 (passed) in the stream; a dropped class or a skip fails.
+awk '/INSTRUMENTATION_STATUS: class=/{c=$0; sub(/.*class=/,"",c)} /INSTRUMENTATION_STATUS: test=/{t=$0; sub(/.*test=/,"",t)} /INSTRUMENTATION_STATUS_CODE: /{k=$0; sub(/.*CODE: /,"",k); print c "#" t " " k}' parity-evidence/tests.txt > parity-evidence/test-results.txt
+for req in com.bingemote.stream.PhonePickerGrantTest#pickerGrantListsMoviesAsApp com.bingemote.stream.PhoneMoviesAndroidTest#listsFoldersThenMoviesWithSidecars com.bingemote.stream.PhoneMoviesAndroidTest#subfolderIsNotRoot com.bingemote.stream.PhonePickerStorageTest#realPickerGrantsSharedStorageFolderAndListsIt; do
+  if grep -qx "$req 0" parity-evidence/test-results.txt; then echo "REQUIRED PASSED: $req"; else echo "REQUIRED NOT PASSED: $req"; exit 1; fi
+done
 grep -q '^OK (' parity-evidence/tests.txt

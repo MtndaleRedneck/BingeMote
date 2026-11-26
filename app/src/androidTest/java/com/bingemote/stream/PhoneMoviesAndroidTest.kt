@@ -38,10 +38,10 @@ class PhoneMoviesAndroidTest {
         assertEquals(listOf("Documentaries"), listing.folders.map { it.name })
 
         assertEquals(2, listing.movies.size)
-        val movieA = listing.movies.first { it.name == "The Movie A (2024).mkv" }
+        val movieA = listing.movies.first { it.name == "The_Movie_A_2024.mkv" }
         assertEquals(1234, movieA.sizeBytes)
         assertEquals(1, movieA.subtitles.size)
-        assertTrue(movieA.subtitles[0].toString().contains("The%20Movie%20A%20(2024).srt") || movieA.subtitles[0].toString().contains("The Movie A (2024).srt"))
+        assertTrue(movieA.subtitles[0].toString().contains("The_Movie_A_2024.srt"))
         val other = listing.movies.first { it.name == "Other Film.mp4" }
         assertEquals(0, other.subtitles.size) // Unrelated.srt must NOT pair
     }

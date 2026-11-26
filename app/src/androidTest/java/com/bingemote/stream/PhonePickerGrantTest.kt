@@ -43,10 +43,13 @@ class PhonePickerGrantTest {
         fun shot(tag: String) { device.executeShellCommand("screencap -p /sdcard/parity-saf-grant-$tag.png") }
         device.executeShellCommand("rm -rf $DIR")
         device.executeShellCommand("mkdir -p $DIR/Documentaries")
-        device.executeShellCommand("sh -c 'head -c 1234 /dev/zero > \"$DIR/The Movie A (2024).mkv\"'")
-        device.executeShellCommand("sh -c 'head -c 100 /dev/zero > \"$DIR/The Movie A (2024).srt\"'")
-        device.executeShellCommand("sh -c 'head -c 5678 /dev/zero > \"$DIR/Other Film.mp4\"'")
-        device.executeShellCommand("sh -c 'head -c 100 /dev/zero > \"$DIR/Unrelated.srt\"'")
+        // No spaces or quotes in fixture names: executeShellCommand does not quote (the first CI attempt created nothing).
+        device.executeShellCommand("dd if=/dev/zero of=$DIR/The_Movie_A_2024.mkv bs=1234 count=1")
+        device.executeShellCommand("dd if=/dev/zero of=$DIR/The_Movie_A_2024.srt bs=100 count=1")
+        device.executeShellCommand("dd if=/dev/zero of=$DIR/Other_Film.mp4 bs=5678 count=1")
+        device.executeShellCommand("dd if=/dev/zero of=$DIR/Unrelated.srt bs=100 count=1")
+        val made = device.executeShellCommand("ls -l $DIR")
+        assertTrue("fixture files were not created: $made", made.contains("The_Movie_A_2024.mkv") && made.contains("Other_Film.mp4") && made.contains("Unrelated.srt"))
         try {
             device.wakeUp()
             device.executeShellCommand("wm dismiss-keyguard")
@@ -66,7 +69,7 @@ class PhonePickerGrantTest {
             device.wait(Until.findObject(By.text(Pattern.compile("(?i)^allow$"))), 5000)?.click()
             // The listing must render as the app uid: the folder and the movie rows.
             if (device.wait(Until.findObject(By.text("Documentaries")), 15000) == null) { shot("after"); fail("phone listing did not render after the picker grant") }
-            if (device.wait(Until.findObject(By.textContains("The Movie A")), 8000) == null) { shot("no-movie"); fail("movie row not listed after the picker grant") }
+            if (device.wait(Until.findObject(By.textContains("The_Movie_A_2024")), 8000) == null) { shot("no-movie"); fail("movie row not listed after the picker grant") }
             shot("listed")
             val persisted = resolver.persistedUriPermissions.any {
                 it.uri.toString().contains("externalstorage") && it.uri.toString().contains("ParityMoviesSaf") && it.isReadPermission }
