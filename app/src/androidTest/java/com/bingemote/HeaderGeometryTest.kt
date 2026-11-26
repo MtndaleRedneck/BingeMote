@@ -110,6 +110,8 @@ class HeaderGeometryTest {
         // Your PC is out of scope and keeps its 6dp gap, so the old Settings == Your PC equality no longer applies (logged only).
         val subs = hs.filter { it.screen == "settings" && it.content != null }
         val ref = subs.firstOrNull()
+        // Retained coverage: Your PC's gap below the header button is logged every run (a change in it shows in the log).
+        hs.firstOrNull { it.screen == "yourpc" && it.content != null }?.let { Log.i("HeaderGeom", "yourpc retained gap below button: ${it.content!!.top - it.btn.bottom}px (6dp spacer kept, out of scope)") }
         for (h in subs) if (h.content!!.top - h.btn.bottom != ref!!.content!!.top - ref.btn.bottom)
             sb.append("${h.screen}: first-content gap below header button ${h.content.top - h.btn.bottom}px vs ${ref.screen} ${ref.content!!.top - ref.btn.bottom}px\n")
         Log.i("HeaderGeom", "mismatches: ${if (sb.isEmpty()) "none" else sb.toString().replace("\n", " | ")}")
