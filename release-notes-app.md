@@ -1,3 +1,7 @@
+## v1.16.0 - November 26, 2026
+
+Movies can now play a movie stored on your phone: pick a Phone folder in Settings and it streams to VLC on your PC over Wi-Fi. The top bar now matches on Home, Movies and Settings, and switching to PC no longer leaves the phone's list on screen while the PC loads.
+
 ## v1.15.2 - November 25, 2026
 
 A small navigation fix.
