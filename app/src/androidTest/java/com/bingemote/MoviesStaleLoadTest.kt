@@ -1,11 +1,14 @@
 package com.bingemote
 
 import android.content.Intent
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.io.BufferedReader
@@ -31,6 +34,40 @@ class MoviesStaleLoadTest {
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ctx get() = inst.targetContext
     private val device = UiDevice.getInstance(inst)
+
+    private var savedPrefs: Map<String, Any?>? = null
+    private var savedVlcPassword: String? = null
+    private var savedHelperToken: String? = null
+    private var scenario: ActivityScenario<MainActivity>? = null
+
+    // Leave no trace for the next class. This test seeds the shared "settings" prefs and the two secrets the VLC stub
+    // needs (isConfigured requires a non-blank vlcPassword), and it opens MainActivity on the Movies screen. Snapshot
+    // the prefs and the two secrets through the app's own Store accessors (kept in memory, never logged), restore them
+    // afterwards, and finish the activity through its own ActivityScenario.
+    @Before fun snapshotState() {
+        savedPrefs = ctx.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).all.toMap()
+        savedVlcPassword = Store(ctx).vlcPassword
+        savedHelperToken = Store(ctx).helperToken
+    }
+
+    @After fun restoreStateAndFinishActivity() {
+        scenario?.close(); scenario = null
+        val snap = savedPrefs
+        if (snap != null) {
+            val e = ctx.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).edit().clear()
+            for ((k, v) in snap) when (v) {
+                is Boolean -> e.putBoolean(k, v)
+                is Int -> e.putInt(k, v)
+                is Long -> e.putLong(k, v)
+                is Float -> e.putFloat(k, v)
+                is String -> e.putString(k, v)
+                is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+            }
+            e.commit()
+            savedVlcPassword?.let { Store(ctx).vlcPassword = it }
+            savedHelperToken?.let { Store(ctx).helperToken = it }
+        }
+    }
 
     private class TwoRequestVlc(val releaseA: CountDownLatch) : AutoCloseable {
         private val running = AtomicBoolean(true)
@@ -85,7 +122,7 @@ class MoviesStaleLoadTest {
             HapticTickTest.seedPrefs(ctx, false, stub.port)
             Store(ctx).moviesPath = "C:\\Movies"
             Store(ctx).moviesPhoneTreeUri = ""
-            ctx.startActivity(Intent(ctx, MainActivity::class.java)
+            scenario = ActivityScenario.launch(Intent(ctx, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
             val btn = device.wait(Until.findObject(By.desc("Movies")), 20000)
             assertNotNull("Home Movies button", btn)

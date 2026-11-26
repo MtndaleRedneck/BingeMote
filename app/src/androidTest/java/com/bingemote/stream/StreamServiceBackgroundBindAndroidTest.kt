@@ -27,6 +27,10 @@ class StreamServiceBackgroundBindAndroidTest {
     private val ctx get() = inst.targetContext
     private val device = UiDevice.getInstance(inst)
 
+    private var scenario: androidx.test.core.app.ActivityScenario<com.bingemote.MainActivity>? = null
+    // Finish the activity this test opened so no Activity state outlives the class.
+    @org.junit.After fun finishActivity() { scenario?.close(); scenario = null }
+
     private fun importance(): Int { val i = ActivityManager.RunningAppProcessInfo(); ActivityManager.getMyMemoryState(i); return i.importance }
     private fun serviceRunning(): Boolean {
         @Suppress("DEPRECATION")
@@ -34,7 +38,7 @@ class StreamServiceBackgroundBindAndroidTest {
     }
 
     @Test fun bindWhileBackgrounded_failsPlainlyOrSucceeds_processSurvives_noServiceLeft() {
-        ctx.startActivity(Intent(ctx, com.bingemote.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+        scenario = androidx.test.core.app.ActivityScenario.launch<com.bingemote.MainActivity>(Intent(ctx, com.bingemote.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         assertTrue("app is on screen first", device.wait(Until.hasObject(By.pkg(ctx.packageName).depth(0)), 20000))
         device.pressHome()
         val until = android.os.SystemClock.elapsedRealtime() + 15_000
