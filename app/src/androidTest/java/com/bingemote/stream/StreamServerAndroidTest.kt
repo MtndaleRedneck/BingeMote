@@ -173,6 +173,101 @@ class StreamServerAndroidTest {
         } finally { sub.delete() }
     }
 
+    /** Waits until open streams and BOTH per-peer maps are empty; then no slot leaked or went negative. */
+    private fun awaitAdmissionDrained() {
+        val until = android.os.SystemClock.elapsedRealtime() + 15_000
+        while ((server.openStreams.get() > 0 || server.peerCountsForTest() > 0) && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(20)
+        assertEquals("open streams", 0, server.openStreams.get())
+        assertEquals("both per-peer maps empty", 0, server.peerCountsForTest())
+        assertEquals("no double or missing release", 0, server.peerUnderflow.get())
+    }
+
+    /** One raw request on a fresh socket (optionally bound to a source IP); returns the whole reply. */
+    private fun raw(host: String, port: Int, path: String, from: String? = null): String =
+        java.net.Socket().use { s ->
+            if (from != null) s.bind(java.net.InetSocketAddress(InetAddress.getByName(from), 0))
+            s.connect(java.net.InetSocketAddress(host, port))
+            s.soTimeout = 10_000
+            s.getOutputStream().write("GET $path HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+            s.getInputStream().readBytes().toString(Charsets.ISO_8859_1)
+        }
+
+    @Test
+    fun workersHeldAtExit_ninthRefused503_otherIpServed_countersDrain() {
+        // Deterministic: the exit gate holds 127.0.0.1 workers AFTER logical release (client socket
+        // closed, open slot freed) and BEFORE the real-exit release, which is the exact state the
+        // worker cap exists for. Requests are complete, real, served requests.
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.testExitGate = { peer -> if (peer == "127.0.0.1") while (!gate.await(50, java.util.concurrent.TimeUnit.MILLISECONDS)) { } }
+        val u = URL(movieUrl)
+        try {
+            repeat(8) { i -> assertEquals("request $i", 200, get(movieUrl).first) }
+            val until = android.os.SystemClock.elapsedRealtime() + 10_000
+            while (server.peerOpenForTest("127.0.0.1") > 0 && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(10)
+            assertEquals("open slots freed at socket close", 0, server.peerOpenForTest("127.0.0.1"))
+            assertEquals("8 workers held", 8, server.peerWorkersForTest("127.0.0.1"))
+            repeat(4) { i ->
+                // The client sends its full request before reading: it must see the 503, not a reset.
+                val head = raw(u.host, u.port, u.path)
+                assertTrue("refusal $i must be 503: $head", head.startsWith("HTTP/1.1 503") && head.contains("Retry-After: 1"))
+            }
+            assertEquals("worker-cap refusals", 4, server.rejectedWorkerCap.get())
+            assertEquals(0, server.rejectedPeerCap.get())
+            assertEquals(0, server.rejectedNoPermit.get())
+            assertEquals("refusals took no slot", 8, server.peerWorkersForTest("127.0.0.1"))
+            val other = raw(u.host, u.port, u.path, from = "127.0.0.2")
+            assertTrue("other IP gets a real 200: ${other.take(40)}", other.startsWith("HTTP/1.1 200"))
+            assertEquals("other IP took no refusal", 4, server.rejectedWorkerCap.get())
+        } finally { gate.countDown() }
+        awaitAdmissionDrained()
+    }
+
+    @Test
+    fun stopWithQueuedRefusals_closesEveryQueuedSocketPromptly() {
+        val gate = java.util.concurrent.CountDownLatch(1)
+        server.testExitGate = { peer -> if (peer == "127.0.0.1") while (!gate.await(50, java.util.concurrent.TimeUnit.MILLISECONDS)) { } }
+        val rejectGate = java.util.concurrent.CountDownLatch(1)
+        server.testRejectGate = rejectGate // the refusal thread is busy, so refusals really queue
+        val u = URL(movieUrl)
+        val socks = ArrayList<java.net.Socket>()
+        try {
+            repeat(8) { assertEquals(200, get(movieUrl).first) } // 8 workers held: every further connection is refused
+            repeat(6) { socks.add(java.net.Socket(u.host, u.port).also { it.soTimeout = 5_000 }) }
+            val until = android.os.SystemClock.elapsedRealtime() + 5_000
+            while (server.pendingRejectsForTest() < 6 && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(10)
+            assertEquals("six refusals queued behind the busy rejecter", 6, server.pendingRejectsForTest())
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            server.stop()
+            assertEquals("stop closed every pending refusal socket", 0, server.pendingRejectsForTest())
+            socks.forEach { s ->
+                try { assertEquals("closed without a body", -1, s.getInputStream().read()) }
+                catch (e: java.net.SocketTimeoutException) { org.junit.Assert.fail("socket still open after stop: queued refusal leaked") }
+                catch (e: java.io.IOException) { /* reset by close: closed */ }
+            }
+            assertTrue("stop and all sockets closed within 2 s", android.os.SystemClock.elapsedRealtime() - t0 < 2_000)
+        } finally { rejectGate.countDown(); gate.countDown(); socks.forEach { runCatching { it.close() } } }
+    }
+
+    @Test
+    fun peerCapRefusal_is503_malformedRecovers_countersBalance() {
+        val u = URL(movieUrl)
+        val open = (1..4).map { java.net.Socket(u.host, u.port) }
+        try {
+            Thread.sleep(250)
+            val fifth = java.net.Socket(u.host, u.port)
+            fifth.soTimeout = 3_000
+            fifth.getOutputStream().write("GET ${u.path} HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray())
+            val head = fifth.getInputStream().readBytes().toString(Charsets.ISO_8859_1)
+            fifth.close()
+            assertTrue("503 expected: $head", head.startsWith("HTTP/1.1 503") && head.contains("Retry-After: 1"))
+            assertEquals(1, server.rejectedPeerCap.get())
+        } finally { open.forEach { it.close() } }
+        // Malformed request on a fresh connection, then a good one: slots must have been returned.
+        java.net.Socket(u.host, u.port).use { s -> s.soTimeout = 5_000; s.getOutputStream().write("\u0000garbage\r\n\r\n".toByteArray()); runCatching { s.getInputStream().readBytes() } }
+        repeat(10) { assertEquals(200, get(movieUrl).first) }
+        awaitAdmissionDrained()
+    }
+
     @Test
     fun oversizedHeader_refusedWithoutServing() {
         val u = URL(movieUrl)
