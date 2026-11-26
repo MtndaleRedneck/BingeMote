@@ -293,6 +293,11 @@ jobs:
           $priorHash = (Get-FileHash helper/Prior/BingeMote-PC-1.7.15.exe -Algorithm SHA256).Hash.ToLower()
           if ($priorHash -ne 'd84a15f519d5f860bb9daef2d2aeba49b99defaee3e44372dc3d61dcca8e4efd') { throw 'Exact prior1.7.15 hash mismatch' }
           Write-Host "Exact prior1.7.15 installer sha256: $priorHash"
+          # The exact LIVE public PC 1.9.0 installer (asset 788249812), the real baseline an installed user has.
+          Invoke-WebRequest "https://github.com/MtndaleRedneck/BingeMote/releases/download/pc-v1.9.0/BingeMote-PC-1.9.0.exe" -OutFile helper/Prior/BingeMote-PC-1.9.0.exe
+          $live = (Get-FileHash helper/Prior/BingeMote-PC-1.9.0.exe -Algorithm SHA256).Hash.ToLower()
+          if ($live -ne '0adf12e4000fc32a1781ea7d0bb48bf37993368ff416c29a91adf1b9771a7f0e') { throw 'Exact live 1.9.0 hash mismatch' }
+          Write-Host "Exact live public PC 1.9.0 installer sha256: $live"
 
 
       - name: Helper runtime tests (pairing, endpoints, discovery, firewall setup)
