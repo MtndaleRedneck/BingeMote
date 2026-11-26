@@ -35,6 +35,10 @@ class PhonePickerGrantTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(instrumentation)
         val pkg = instrumentation.targetContext.packageName
+        // Start from a fresh install state: a grant left by the real-picker class would hide the prompt.
+        instrumentation.targetContext.contentResolver.persistedUriPermissions.forEach {
+            instrumentation.targetContext.contentResolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
         fun shot(tag: String) {
             device.executeShellCommand("screencap -p /sdcard/zephyr-picker-$tag.png")
             // No in-session uiautomator dump: the shell-side dump can't connect a

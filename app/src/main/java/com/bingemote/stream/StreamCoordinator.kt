@@ -61,7 +61,7 @@ object StreamCoordinator {
                     if (!cont.isActive) return
                     val server = b.server()
                     if (server != null) cont.resume(Bound(server, conn))
-                    else if (++tries >= 40) failAndUnbind(IllegalStateException("server not ready"))
+                    else if (++tries >= 100) failAndUnbind(IllegalStateException("server not ready"))
                     else handler.postDelayed({ check() }, 100)
                 }
                 check()

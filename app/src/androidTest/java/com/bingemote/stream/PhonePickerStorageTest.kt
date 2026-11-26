@@ -59,6 +59,9 @@ class PhonePickerStorageTest {
         } finally {
             device.executeShellCommand("am force-stop com.android.documentsui")
             device.executeShellCommand("rm -rf $dir")
+            instrumentation.targetContext.contentResolver.persistedUriPermissions.forEach {
+                instrumentation.targetContext.contentResolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
             device.pressHome()
         }
     }
