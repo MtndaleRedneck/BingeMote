@@ -9,6 +9,8 @@ import java.util.regex.Pattern
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import com.bingemote.FailureDumpRule
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -21,6 +23,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class PhonePickerStorageTest {
+    @get:Rule val failureDump = FailureDumpRule()
     @Test
     fun realPickerGrantsSharedStorageFolderAndListsIt() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

@@ -9,6 +9,7 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import java.io.FileOutputStream
@@ -22,6 +23,7 @@ import java.io.FileOutputStream
  * first content edge at the same distance below the button. Numbers are logged with tag HeaderGeom.
  */
 class HeaderGeometryTest {
+    @get:Rule val failureDump = FailureDumpRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val device = UiDevice.getInstance(instrumentation)

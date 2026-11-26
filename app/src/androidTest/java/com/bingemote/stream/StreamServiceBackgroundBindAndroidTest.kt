@@ -11,6 +11,8 @@ import androidx.test.uiautomator.Until
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.bingemote.FailureDumpRule
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -23,6 +25,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class StreamServiceBackgroundBindAndroidTest {
+    @get:Rule val failureDump = FailureDumpRule()
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ctx get() = inst.targetContext
     private val device = UiDevice.getInstance(inst)

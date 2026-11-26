@@ -9,6 +9,14 @@ adb shell settings put global hide_error_dialogs 1
 adb shell am instrument -w -r -e class com.bingemote.TopBarParityTest,com.bingemote.HeaderGeometryTest,com.bingemote.stream.StreamServerAndroidTest,com.bingemote.stream.StreamServiceRefusalAndroidTest,com.bingemote.stream.StreamServiceBackgroundBindAndroidTest,com.bingemote.stream.StreamServiceLifecycleTest,com.bingemote.stream.StreamServiceNoWifiTest,com.bingemote.stream.PhonePickerStorageTest,com.bingemote.stream.PhonePickerGrantTest,com.bingemote.stream.PhoneMoviesAndroidTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests.txt || true
 # F3 call-site test: its own instrument session (UiAutomator), same fail-closed rule as the main session.
 adb shell am instrument -w -r -e class com.bingemote.MoviesStaleLoadTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee parity-evidence/tests-stale-load.txt || true
+# FailureDumpRule evidence (failure screenshot, hierarchy, logcat, paired capture; launcher-ANR before/after captures),
+# pulled right after the instrumentation sessions so a red run always carries the pixels. Evidence only, never changes the verdict.
+EVDIR=/sdcard/Android/data/com.bingemote/files
+mkdir -p parity-evidence/failure-dumps
+if dump_listing=$(adb shell "ls $EVDIR/ 2>/dev/null"); then :; else echo "PULL DIAG: evidence dir listing failed (rc=$?)"; dump_listing=""; fi
+dumps=$(printf '%s\n' "$dump_listing" | tr -d '\r' | grep -E '^bm-(dump|dump2|andialog|dismissed-dialogs)' || true)
+if [ -z "$dumps" ]; then echo "PULL DIAG: no FailureDumpRule evidence files listed"; fi
+for d in $dumps; do adb exec-out cat "$EVDIR/$d" > "parity-evidence/failure-dumps/$d" 2>/dev/null || echo "PULL DIAG: could not pull $d"; done
 for s in main movies settings movies-phone; do
   adb shell am force-stop com.bingemote
   adb shell am start -n com.bingemote/.MainActivity --es screen "$s" >/dev/null

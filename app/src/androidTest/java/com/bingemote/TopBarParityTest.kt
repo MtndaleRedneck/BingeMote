@@ -6,12 +6,14 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.*
+import org.junit.Rule
 import org.junit.Test
 
 /** The top bar of Home, Movies and Settings has the same height: the header button sits at the same
  *  y on all three screens. Also: with the PC unreachable, switching the Movies origin from Phone back
  *  to PC must not leave the phone rows on screen. */
 class TopBarParityTest {
+    @get:Rule val failureDump = FailureDumpRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val device = UiDevice.getInstance(instrumentation)
