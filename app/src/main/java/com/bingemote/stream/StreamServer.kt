@@ -45,6 +45,9 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
     private var socket: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool()
     private val permits = java.util.concurrent.Semaphore(24)
+    /** Connections closed without a response by admission (diagnostics: tests print these on a failed read). */
+    val rejectedPeerCap = java.util.concurrent.atomic.AtomicInteger(0)
+    val rejectedNoPermit = java.util.concurrent.atomic.AtomicInteger(0)
     private val mediaPermits = java.util.concurrent.Semaphore(8)
     private val perPeer = java.util.concurrent.ConcurrentHashMap<String,java.util.concurrent.atomic.AtomicInteger>()
     private val cancellations = java.util.concurrent.ConcurrentHashMap.newKeySet<android.os.CancellationSignal>()
@@ -195,8 +198,8 @@ class StreamServer(private val context: Context, private val wifiAddr: InetAddre
                 val peer = client.inetAddress.hostAddress.orEmpty()
                 var count = 0
                 perPeer.compute(peer) { _, current -> (current ?: java.util.concurrent.atomic.AtomicInteger(0)).also { count = it.incrementAndGet() } }
-                if (count > 4) { releasePeer(peer); runCatching { client.close() }; continue }
-                if (!permits.tryAcquire()) { releasePeer(peer); runCatching { client.close() }; continue }
+                if (count > 4) { rejectedPeerCap.incrementAndGet(); releasePeer(peer); runCatching { client.close() }; continue }
+                if (!permits.tryAcquire()) { rejectedNoPermit.incrementAndGet(); releasePeer(peer); runCatching { client.close() }; continue }
                 // A stalled client must not hold a worker forever (teardown C12).
                 runCatching { client.soTimeout = 60_000 }
                 clients.add(client)

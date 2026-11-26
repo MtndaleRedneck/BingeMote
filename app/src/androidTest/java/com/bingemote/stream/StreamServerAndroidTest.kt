@@ -49,7 +49,9 @@ class StreamServerAndroidTest {
     private fun get(url: String, range: String? = null): Triple<Int, Map<String, List<String>>, ByteArray> {
         val c = URL(url).openConnection() as HttpURLConnection
         if (range != null) c.setRequestProperty("Range", range)
-        val code = c.responseCode
+        val code = try { c.responseCode } catch (e: java.io.IOException) {
+            throw java.io.IOException("${e.message} [admission rejects: peerCap=${server.rejectedPeerCap.get()} noPermit=${server.rejectedNoPermit.get()} openStreams=${server.openStreams.get()}]", e)
+        }
         val body = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes() } ?: ByteArray(0)
         c.disconnect()
         return Triple(code, c.headerFields, body)
