@@ -852,6 +852,10 @@ Assert ($r.code -eq 403) "shipping upgrade: no live pair code after install-over
 # phone just paired above. Cancel must have initial native focus, and physical
 # Enter/Esc must both leave the fixture's token valid.
 Add-Type -AssemblyName System.Windows.Forms
+# The runner's network is Public, and the (fixed) Wi-Fi probe now correctly raises the Public-network popup over the window.
+# That popup is modal and would block the Remove button. Dismiss it with "Not now" exactly as a user would, and say so in the log.
+$notNow = [WinScan]::FindChild('BingeMote', 'Not now')
+if ($notNow -ne [IntPtr]::Zero) { Write-Host 'Public-network popup present on the runner (probe works); dismissing it with Not now'; [WinScan]::Click($notNow); Start-Sleep -Milliseconds 800 } else { Write-Host 'No Public-network popup present' }
 foreach ($key in @('{ENTER}', '{ESC}')) {
     & (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe')
     Start-Sleep -Milliseconds 800
