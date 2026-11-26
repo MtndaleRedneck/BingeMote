@@ -547,6 +547,84 @@ internal sealed class HelperWindow : Form
         });
     }
 
+#if WINDOW_SHOT_HOOK
+    /// <summary>CI only, disposable runner only (never in shipped builds). Drives the REAL window: sets the runner's own adapter
+    /// to Public (test setup), then (A) opens the production popup and clicks its "This is my home Wi-Fi" button, and (B) clicks
+    /// the in-window strip button; each runs the production MarkPrivate. The category is read back independently with
+    /// Get-NetConnectionProfile and the strip's visibility is read from the real control. The original category is restored.
+    /// Not Wi-Fi, not a real PC, not a real UAC prompt (the runner is admin).</summary>
+    internal static int ProofClickThrough(string logPath)
+    {
+        var log = new List<string>();
+        void L(string m) { log.Add(DateTime.UtcNow.ToString("HH:mm:ss.fff") + " " + m); File.WriteAllLines(logPath, log); }
+        string Ps(string script)
+        {
+            var psi = new ProcessStartInfo("powershell", "-NoProfile -NonInteractive -Command \"" + script + "\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+            using var pr = Process.Start(psi)!; pr.WaitForExit(30000);
+            return (pr.StandardOutput.ReadToEnd() + pr.StandardError.ReadToEnd()).Trim();
+        }
+        string Category(int idx) => Ps("(Get-NetConnectionProfile -InterfaceIndex " + idx + ").NetworkCategory");
+        var start = NetworkCheck.DefaultRouteProfile();
+        if (start == null) { L("FAIL no default-route profile"); return 2; }
+        L($"START production probe: name='{start.Name}' category={start.Category} ifIndex={start.InterfaceIndex}");
+        var original = start.Category;
+        var okAll = true;
+        try
+        {
+            ApplicationConfiguration.Initialize();
+            using var win = new HelperWindow(windowShot: true);
+            win.StartPosition = FormStartPosition.Manual; win.Location = new Point(0, 0); win.ShowInTaskbar = false;
+            win.Show(); Application.DoEvents();
+            var seen = new List<string>();
+            var timer = new WinForms.Timer { Interval = 150 };
+            timer.Tick += (_, _) =>
+            {
+                foreach (Form f in Application.OpenForms.Cast<Form>().ToArray())
+                {
+                    if (f == win) continue;
+                    if (f is WifiDialog)
+                    {
+                        var home = f.Controls.OfType<Button>().FirstOrDefault(b => b.Text == "This is my home Wi-Fi");
+                        if (home != null) { seen.Add("popup button clicked: '" + home.Text + "'"); home.PerformClick(); }
+                    }
+                    else if (f.Modal)
+                    {
+                        seen.Add("note dialog: " + string.Join(" / ", f.Controls.OfType<Label>().Select(l => l.Text.Replace('\n', ' '))));
+                        f.DialogResult = DialogResult.OK; f.Close();
+                    }
+                }
+            };
+            timer.Start();
+            void Pump(Func<bool> done, int seconds)
+            {
+                var sw = Stopwatch.StartNew();
+                while (!done() && sw.Elapsed.TotalSeconds < seconds) { Application.DoEvents(); Thread.Sleep(50); }
+            }
+            foreach (var path in new[] { "A: production popup button", "B: in-window strip button" })
+            {
+                Ps("Set-NetConnectionProfile -InterfaceIndex " + start.InterfaceIndex + " -NetworkCategory Public");
+                var pub = NetworkCheck.DefaultRouteProfile();
+                L($"{path}: setup category (independent read) = {Category(start.InterfaceIndex)}; probe = {pub?.Category}");
+                if (pub == null) { okAll = false; continue; }
+                win._wifiProfile = pub; win._wifiStripVisible = false; win.SetWifiStripVisible(true);
+                L($"{path}: strip visible before = {win._wifiBorder.Visible}; strip button text = '{win._wifiBtn.Text}'");
+                seen.Clear();
+                if (path.StartsWith("A")) { win.ShowPublicWifiDialog(pub); }   // modal: the timer clicks its home button
+                else win._wifiBtn.PerformClick();
+                Pump(() => !win._wifiBorder.Visible, 60);
+                var cat = Category(start.InterfaceIndex);
+                L($"{path}: strip visible after = {win._wifiBorder.Visible}; independent Get-NetConnectionProfile category = {cat}");
+                foreach (var m in seen) L($"{path}: {m}");
+                if (win._wifiBorder.Visible || !cat.Equals("Private", StringComparison.OrdinalIgnoreCase)) okAll = false;
+            }
+            timer.Stop();
+        }
+        finally { L("RESTORE " + original + ": " + Ps("Set-NetConnectionProfile -InterfaceIndex " + start.InterfaceIndex + " -NetworkCategory " + original)); }
+        L(okAll ? "RESULT PASS" : "RESULT FAIL");
+        return okAll ? 0 : 1;
+    }
+#endif
+
     /// <summary>The strip's one-click fix: mark this Wi-Fi Private (one elevated Windows prompt).</summary>
     private void FixHomeWifi()
     {

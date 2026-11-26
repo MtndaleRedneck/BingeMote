@@ -139,6 +139,14 @@ internal static class Program
             return 0;
         }
 
+        // CI-only, disposable runner only: click the real popup and strip buttons and read the real category back.
+        if (args.Contains("--wifi-click-proof"))
+        {
+            Directory.CreateDirectory(DataDir);
+            LoadConfig();
+            return HelperWindow.ProofClickThrough(Environment.GetEnvironmentVariable("BINGEMOTE_CLICK_PROOF") ?? "wifi-click-proof.log");
+        }
+
         // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
         if (args.Contains("--window-shot"))
         {

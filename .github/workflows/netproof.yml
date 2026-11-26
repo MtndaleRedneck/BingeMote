@@ -20,3 +20,19 @@ jobs:
         env:
           BM_NET_PROOF: "1"
         run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter "FullyQualifiedName~NetProofTests" --logger "console;verbosity=detailed"
+      - name: Real popup and strip button click-through (disposable runner only)
+        if: always()
+        run: |
+          dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BWINDOW_SHOT_HOOK" -o helper/shot
+          $env:BINGEMOTE_CLICK_PROOF = "$PWD\wifi-click-proof.log"
+          $r = Start-Process helper/shot/BingeMote.exe -ArgumentList '--wifi-click-proof' -PassThru
+          if (-not $r.WaitForExit(150000)) { Stop-Process -Id $r.Id -Force; Write-Host 'click proof exceeded 150s' }
+          Get-Content wifi-click-proof.log
+          Write-Host "exit code: $($r.ExitCode)"
+          Get-NetConnectionProfile | Format-List Name,InterfaceAlias,NetworkCategory
+          if ($r.ExitCode -ne 0) { throw "click-through proof failed" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wifi-click-proof
+          path: wifi-click-proof.log
