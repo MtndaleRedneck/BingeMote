@@ -287,7 +287,7 @@ fun SettingsScreen(
 
         SettingsSection("Phone can't connect?") {
             Text(
-                "Open BingeMote on the PC and tap \u201CThis is my home Wi-Fi\u201D.",
+                "Check that your phone and PC are on the same Wi-Fi and that the app is open on the PC.",
                 color = TextC, fontSize = 14.sp,
             )
         }

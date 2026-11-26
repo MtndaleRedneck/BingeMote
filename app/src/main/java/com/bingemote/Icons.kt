@@ -279,7 +279,11 @@ fun PlayIcon(color: Color, size: Dp = 40.dp) {
             Offset(w * 0.34f, h * 0.80f),
             Offset(w * 0.82f, h * 0.50f),
         )
-        drawPath(roundedPoly(pts, w * 0.025f), color)
+        val tri = roundedPoly(pts, w * 0.025f)
+        drawPath(tri, color)
+        // Edge smoothing: the emulator frame showed this filled path with no antialiased edge pixels
+        // (pause bars and rings next to it do have them). A 1px same-colour round-join stroke softens it.
+        drawPath(tri, color, style = Stroke(width = 1f, join = StrokeJoin.Round))
     }
 }
 

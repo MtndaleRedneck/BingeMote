@@ -33,5 +33,17 @@ shoot hi560-home main --ei accent 0
 shoot hi560-icondemo icondemo --ei accent 0
 adb shell wm size 1080x2310; adb shell wm density 480; sleep 3
 shoot ref480-home main --ei accent 0
-adb shell wm size reset; adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > $OUT/crashes.txt || true
+
+# --- Pairing screens and the help card (debug demo states; no network). ---
+adb shell wm size 1080x2340; adb shell wm density 440; sleep 3
+shoot help-settings-bottom settings --ei accent 0
+adb shell input swipe 540 1900 540 300 300; sleep 1; adb shell input swipe 540 1900 540 300 300; sleep 1; adb shell input swipe 540 1900 540 300 300; sleep 1; adb shell input swipe 540 1900 540 300 300; sleep 2
+adb exec-out screencap -p > "$OUT/help-settings-bottom.png"
+shoot pair1-install setup
+shoot pair2-find setup --ez pairdemo true
+shoot pair3-chosen setup --ez pairdemo true --ez pairdemoselect true
+shoot pair4-result setup --ez vlcpending true
+adb shell input swipe 540 1900 540 400 300; sleep 2; adb exec-out screencap -p > "$OUT/pair4-result-scrolled.png"
+adb shell wm size reset; adb shell wm density reset
+adb logcat -d -s AndroidRuntime:E > $OUT/crashes2.txt || true
