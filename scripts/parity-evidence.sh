@@ -20,6 +20,15 @@ sleep 8
 adb exec-out screencap -p > "parity-evidence/fresh-install-first-launch.png"
 for f in $(adb shell ls /sdcard/ | grep "^parity-storage-picker-" | tr -d "\r"); do adb pull /sdcard/$f parity-evidence/$f >/dev/null; done
 adb logcat -d -s AndroidRuntime:E > parity-evidence/crashes.txt || true
-grep -c 'INSTRUMENTATION_STATUS_CODE: -3' parity-evidence/tests.txt > parity-evidence/skipped-count.txt || true
+# JUnit Assume skips are reported by the runner as status code -4 (-3 is never emitted for them).
+# Record each skipped test by name; the OK line alone does not mean they ran.
+awk '/INSTRUMENTATION_STATUS: class=/{c=$0; sub(/.*class=/,"",c)} /INSTRUMENTATION_STATUS: test=/{t=$0; sub(/.*test=/,"",t)} /INSTRUMENTATION_STATUS_CODE: -4/{print c "#" t}' parity-evidence/tests.txt | sort -u > parity-evidence/skipped-tests.txt
+wc -l < parity-evidence/skipped-tests.txt | tr -d ' ' > parity-evidence/skipped-count.txt
 echo "skipped (Assume) tests: $(cat parity-evidence/skipped-count.txt)"
+cat parity-evidence/skipped-tests.txt
+# Known, documented skips (SAF picker flow not automatable on this emulator, and the two tests that depend on it).
+printf '%s\n' 'com.bingemote.stream.PhonePickerGrantTest#pickerGrantListsMoviesAsApp' 'com.bingemote.stream.PhoneMoviesAndroidTest#listsFoldersThenMoviesWithSidecars' 'com.bingemote.stream.PhoneMoviesAndroidTest#subfolderIsNotRoot' | sort -u > parity-evidence/expected-skips.txt
+if comm -23 parity-evidence/skipped-tests.txt parity-evidence/expected-skips.txt | grep -q .; then
+  echo "UNEXPECTED skipped tests:"; comm -23 parity-evidence/skipped-tests.txt parity-evidence/expected-skips.txt; exit 1
+fi
 grep -q '^OK (' parity-evidence/tests.txt
