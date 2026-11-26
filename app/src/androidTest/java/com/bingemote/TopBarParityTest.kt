@@ -25,9 +25,13 @@ class TopBarParityTest {
     }
 
     private fun buttonBounds(desc: String): android.graphics.Rect {
-        val node = device.wait(Until.findObject(By.desc(desc)), 15000)
-        assertNotNull("'$desc' button not found", node)
-        return node!!.visibleBounds
+        var last: Exception? = null
+        repeat(5) {
+            val node = device.wait(Until.findObject(By.desc(desc)), 15000)
+            assertNotNull("'$desc' button not found", node)
+            try { return node!!.visibleBounds } catch (e: androidx.test.uiautomator.StaleObjectException) { last = e; Thread.sleep(500) }
+        }
+        throw last!!
     }
 
     @Test fun headerButtonSitsAtTheSameHeightOnHomeMoviesAndSettings() {

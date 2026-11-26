@@ -468,7 +468,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     Column(Modifier.fillMaxSize().background(Bg)) {
         Row(
             // One 68dp top bar (12 / 44 / 12) on Home, Movies and Settings.
-            Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp).heightIn(min = 44.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             HeaderIconButton(onBack, remote.store.haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }

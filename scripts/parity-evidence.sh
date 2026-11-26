@@ -14,4 +14,6 @@ for s in main movies settings movies-phone; do
   adb exec-out screencap -p > "parity-evidence/$s.png"
 done
 adb logcat -d -s AndroidRuntime:E > parity-evidence/crashes.txt || true
+grep -c 'INSTRUMENTATION_STATUS_CODE: -3' parity-evidence/tests.txt > parity-evidence/skipped-count.txt || true
+echo "skipped (Assume) tests: $(cat parity-evidence/skipped-count.txt)"
 grep -q '^OK (' parity-evidence/tests.txt

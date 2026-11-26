@@ -65,7 +65,9 @@ class StreamService : Service() {
             .addAction(0, "Stop", stopIntent)
             .setOngoing(true)
             .build()
-        startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) // type under verification
+        try {
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) // type under verification
+        } catch (e: Exception) { stopSelf() } // foreground start refused: end the service instead of crashing
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
