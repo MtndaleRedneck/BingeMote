@@ -1,0 +1,51 @@
+name: Staged APK launch check
+# Workflow-only. Installs the exact staged private APK on an API 34 emulator, launches it, waits for a resumed
+# activity, and records window focus, process, crash lines and frames. No signing key, no upload of the APK.
+on:
+  workflow_dispatch:
+    inputs:
+      asset_id:
+        required: true
+        type: string
+      sha256:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Fetch the exact staged APK
+        env:
+          GH_TOKEN: ${{ secrets.TESTLAB_PAT }}
+          NEW_ASSET_ID: ${{ inputs.asset_id }}
+          NEW_HASH: ${{ inputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$NEW_ASSET_ID" =~ ^[0-9]+$ ]]
+          [[ "$NEW_HASH" =~ ^[a-f0-9]{64}$ ]]
+          gh api -H 'Accept: application/octet-stream' "repos/MtndaleRedneck/TestLab/releases/assets/$NEW_ASSET_ID" > staged.apk
+          printf '%s  staged.apk\n' "$NEW_HASH" | sha256sum -c
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging staged.apk | grep '^package:'
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs staged.apk | grep 'Signer #1 certificate SHA-256'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          script: bash -c 'mkdir -p launch-evidence; adb install staged.apk; adb logcat -c; adb shell am start -W -n com.bingemote/.MainActivity | tee launch-evidence/am-start.txt; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do adb shell dumpsys activity activities | grep -E "topResumedActivity|ResumedActivity" > launch-evidence/resumed.txt; grep -q com.bingemote launch-evidence/resumed.txt && break; sleep 2; done; sleep 3; adb exec-out screencap -p > launch-evidence/frame-a.png; sleep 8; adb exec-out screencap -p > launch-evidence/frame-b.png; adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedApp" > launch-evidence/focus.txt; adb shell pidof com.bingemote > launch-evidence/pid.txt || true; adb logcat -d > launch-evidence/logcat.txt; grep -E "FATAL EXCEPTION|ANR in|Fatal signal" launch-evidence/logcat.txt > launch-evidence/crash-lines.txt || true; grep -q com.bingemote launch-evidence/resumed.txt'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Staged-launch-evidence
+          path: launch-evidence/
+          retention-days: 3
