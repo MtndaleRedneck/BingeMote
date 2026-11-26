@@ -17,8 +17,10 @@ import org.junit.runner.RunWith
  * which the instance writes only when it reaches those steps), and (3) leave nothing behind for the NEXT, normal start in
  * the same process. The old instance's onDestroy ("destroyed" event) is awaited before the normal bind, so the second bind
  * cannot attach to the dying instance.
- * UNVERIFIED until this runs: whether the platform tolerates stopSelf() before startForeground() after
- * startForegroundService() without a did-not-start-in-time crash. A crash here is a real finding, not noise.
+ * The coordinator starts the service with a plain startService (it promotes itself in onCreate), so this refused instance
+ * owes the platform no startForeground when it stops; the earlier startForegroundService version crashed the process here
+ * (ForegroundServiceDidNotStartInTimeException, run 45768611736). This test passing means the process survives the
+ * ARTIFICIAL pre-startForeground refusal; a real system refusal (app backgrounded before promotion) is not induced here.
  * Honest limit: if the platform never delivers onStartCommand to the refused instance, "start-guard-refused" cannot
  * appear and the onStartCommand guard line is then not exercised; the test says so instead of asserting it.
  */

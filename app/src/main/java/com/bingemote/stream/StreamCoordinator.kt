@@ -70,7 +70,11 @@ object StreamCoordinator {
             override fun onServiceDisconnected(name: ComponentName?) {}
         }
         val intent = Intent(app, StreamService::class.java)
-        app.startForegroundService(intent)
+        // A plain start, not startForegroundService: the service promotes itself in onCreate, and if that is refused it
+        // stops WITHOUT having owed the platform a startForeground (a stop while still owing one crashes the process;
+        // seen on API 34 in run 45768611736). A start the platform rejects fails here, before anything is bound.
+        try { app.startService(intent) }
+        catch (e: IllegalStateException) { if (cont.isActive) cont.resumeWithException(IllegalStateException("stream service could not start")); return@suspendCancellableCoroutine }
         if (!app.bindService(intent, conn, Context.BIND_AUTO_CREATE)) {
             runCatching { app.unbindService(conn) }
             app.stopService(intent)
