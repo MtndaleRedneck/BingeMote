@@ -29,13 +29,9 @@ import androidx.compose.ui.unit.sp
 fun YourPCScreen(remote: RemoteState, scrollState: ScrollState, onBack: () -> Unit, onPairAgain: () -> Unit) {
     val store = remote.store
     val unreachable = !remote.pcReachable
-    Column(Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            HeaderIconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
-            Spacer(Modifier.width(12.dp))
-            Text("Your PC", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.height(18.dp))
+    Column(Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+        ScreenHeader("Your PC", edge = 0.dp, onBack = onBack)
+        Spacer(Modifier.height(6.dp))
         BackHandler { onBack() }
 
         SettingsSection("") {

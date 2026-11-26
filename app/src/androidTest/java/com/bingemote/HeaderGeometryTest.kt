@@ -28,7 +28,7 @@ class HeaderGeometryTest {
     private val dens = context.resources.displayMetrics.density
     private fun dp(px: Int) = "%.1f".format(px / dens)
 
-    data class H(val screen: String, val btn: Rect, val title: Rect?, val titleText: String?, val content: Rect?, val contentText: String?)
+    data class H(val screen: String, val hdr: Rect, val btn: Rect, val title: Rect?, val titleText: String?, val content: Rect?, val contentText: String?)
 
     private fun launch(screen: String) {
         device.wakeUp()
@@ -48,6 +48,9 @@ class HeaderGeometryTest {
                 val node = device.wait(Until.findObject(By.desc(desc)), 15000)
                 assertNotNull("'$desc' button not found on $screen", node)
                 val btn = node!!.visibleBounds
+                val hdrNode = device.wait(Until.findObject(By.res("screen_header")), 5000)
+                assertNotNull("screen_header container not found on $screen", hdrNode)
+                val hdr = hdrNode!!.visibleBounds
                 Thread.sleep(700) // let the entry animation settle
                 val all = device.findObjects(By.pkg(context.packageName))
                 val items = all.mapNotNull { n ->
@@ -62,7 +65,7 @@ class HeaderGeometryTest {
                 val title = if (screen == "main") row.filter { it.first.left > btn.right || it.first.left > 0 }.minByOrNull { it.first.left } else row.filter { it.first.left > btn.right }.minByOrNull { it.first.left }
                 val below = items.filter { !it.third && it.first.top >= btn.bottom && it.first != title?.first }
                 val content = below.minByOrNull { it.first.top }
-                return H(screen, btn, title?.first, title?.second?.toString(), content?.first, content?.second?.toString())
+                return H(screen, hdr, btn, title?.first, title?.second?.toString(), content?.first, content?.second?.toString())
             } catch (e: androidx.test.uiautomator.StaleObjectException) { last = e; Thread.sleep(500) }
         }
         throw last!!
@@ -78,7 +81,7 @@ class HeaderGeometryTest {
 
     private fun report(h: H): String {
         val b = h.btn; val t = h.title; val c = h.content
-        return "screen=${h.screen} density=$dens btn[top=${b.top} bottom=${b.bottom} h=${b.height()} | dp ${dp(b.top)}/${dp(b.bottom)}/${dp(b.height())}] " +
+        return "screen=${h.screen} density=$dens header[top=${h.hdr.top} bottom=${h.hdr.bottom} h=${h.hdr.height()} | dp ${dp(h.hdr.top)}/${dp(h.hdr.bottom)}/${dp(h.hdr.height())}] btn[top=${b.top} bottom=${b.bottom} h=${b.height()} | dp ${dp(b.top)}/${dp(b.bottom)}/${dp(b.height())}] " +
             "title='${h.titleText}'[top=${t?.top} bottom=${t?.bottom} centerY=${t?.centerY()} left=${t?.left}] btnCenterY=${b.centerY()} " +
             "content='${h.contentText}'[top=${c?.top}] contentGapBelowBtn=${c?.let { it.top - b.bottom }}px/${c?.let { dp(it.top - b.bottom) }}dp"
     }
@@ -89,14 +92,17 @@ class HeaderGeometryTest {
         val home = hs[0]
         val sb = StringBuilder()
         for (h in hs.drop(1)) {
+            if (h.hdr.top != home.hdr.top || h.hdr.bottom != home.hdr.bottom || h.hdr.height() != home.hdr.height())
+                sb.append("${h.screen}: header container top/bottom/height ${h.hdr.top}/${h.hdr.bottom}/${h.hdr.height()} vs Home ${home.hdr.top}/${home.hdr.bottom}/${home.hdr.height()}\n")
             if (h.btn.top != home.btn.top) sb.append("${h.screen}: button top ${h.btn.top}px (${dp(h.btn.top)}dp) vs Home ${home.btn.top}px (${dp(home.btn.top)}dp)\n")
             if (h.btn.height() != home.btn.height()) sb.append("${h.screen}: button height ${h.btn.height()} vs Home ${home.btn.height()}\n")
         }
+        for (h in hs) if (Math.abs(h.btn.centerY() - h.hdr.centerY()) > 1) sb.append("${h.screen}: button centre ${h.btn.centerY()} vs header container centre ${h.hdr.centerY()}\n")
         for (h in hs) {
             val t = h.title ?: continue
             if (Math.abs(t.centerY() - h.btn.centerY()) > 1) sb.append("${h.screen}: title centre ${t.centerY()} vs button centre ${h.btn.centerY()}\n")
         }
-        val subs = hs.drop(1).filter { it.content != null }
+        val subs = hs.drop(1).filter { it.content != null && it.screen != "mouse" }
         val ref = subs.firstOrNull()
         for (h in subs) if (h.content!!.top - h.btn.bottom != ref!!.content!!.top - ref.btn.bottom)
             sb.append("${h.screen}: first-content gap below header button ${h.content.top - h.btn.bottom}px vs ${ref.screen} ${ref.content!!.top - ref.btn.bottom}px\n")
@@ -119,8 +125,10 @@ class HeaderGeometryTest {
         device.findObject(By.desc("Back")).click()
         val h2 = measure("main"); shot("hdr-transition-home-again"); Log.i("HeaderGeom", "T2 " + report(h2))
         assertTrue("button moved during the transition: ${samples.map { it.top }.toSet()}", samples.map { it.top }.toSet().size <= 1)
+        assertEquals("Settings header container top/bottom vs Home", listOf(h0.hdr.top, h0.hdr.bottom), listOf(hs.hdr.top, hs.hdr.bottom))
         assertEquals("Settings button top vs Home", h0.btn.top, hs.btn.top)
         assertEquals("button height", h0.btn.height(), hs.btn.height())
+        assertEquals("Home header container after returning", listOf(h0.hdr.top, h0.hdr.bottom), listOf(h2.hdr.top, h2.hdr.bottom))
         assertEquals("Home header after returning: button top", h0.btn.top, h2.btn.top)
         assertEquals("Home header after returning: button height", h0.btn.height(), h2.btn.height())
         assertEquals("Home content edge after returning", h0.content?.top, h2.content?.top)

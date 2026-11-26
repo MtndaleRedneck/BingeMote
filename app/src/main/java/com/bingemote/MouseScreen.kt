@@ -373,7 +373,8 @@ if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, last
 
         // Top-left back chip, top-right gear (pointer speed) + keyboard buttons
         // Centered vertically, so the 40dp back button lines up with the 52dp round buttons.
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Same 68dp header container as every screen (12 / 44 / 12); the 52dp round buttons sit centred inside it.
+        Row(Modifier.fillMaxWidth().headerContainer().height(68.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             HeaderIconButton(onBack, remote.store.haptics) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
             Spacer(Modifier.weight(1f))
             PressTile(
