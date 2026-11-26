@@ -2,7 +2,7 @@ name: Android parity evidence
 on:
   workflow_dispatch:
   push:
-    branches: [android-1160]
+    branches: [android-1160-saf-diag]
     paths: ['.github/workflows/parity-evidence.yml', 'scripts/parity-evidence.sh', 'app/**']
 permissions:
   contents: read
@@ -34,7 +34,7 @@ jobs:
           target: google_apis
           profile: pixel_6
           disable-animations: true
-          script: bash scripts/parity-evidence.sh
+          script: bash scripts/saf-diag.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
