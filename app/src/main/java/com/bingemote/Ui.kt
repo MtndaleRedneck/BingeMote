@@ -140,11 +140,7 @@ fun PressTile(
 fun TopBar(pill: @Composable () -> Unit, settings: @Composable () -> Unit) {
     Box(Modifier.fillMaxWidth().headerContainer().padding(horizontal = 16.dp, vertical = 12.dp)) {
         androidx.compose.ui.layout.Layout(content = {
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(R.drawable.app_logo),
-                contentDescription = null,
-                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)),
-            )
+            AppIcon(34.dp)
             Text(
                 "BingeMote", color = TextC, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,

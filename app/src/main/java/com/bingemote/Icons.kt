@@ -271,10 +271,15 @@ fun KeyboardIcon(color: Color, size: Dp = 22.dp) {
 /** Play triangle. Corners slightly blunted (roundedPoly, r = 0.025w) to match
  * the cursor/fullscreen/speaker artwork; straight sides and pointed shape kept. */
 @Composable
-fun PlayIcon(color: Color, size: Dp = 40.dp) {
+fun PlayIcon(color: Color, size: Dp = 40.dp, equilateral: Boolean = false) {
     Canvas(Modifier.size(size)) {
         val w = this.size.width; val h = this.size.height
-        val pts = listOf(
+        // equilateral: same 0.60h height, width = 0.866 * height, centroid kept at x = 0.5 (same as the default shape).
+        val pts = if (equilateral) listOf(
+            Offset(w * 0.327f, h * 0.20f),
+            Offset(w * 0.327f, h * 0.80f),
+            Offset(w * 0.847f, h * 0.50f),
+        ) else listOf(
             Offset(w * 0.34f, h * 0.20f),
             Offset(w * 0.34f, h * 0.80f),
             Offset(w * 0.82f, h * 0.50f),

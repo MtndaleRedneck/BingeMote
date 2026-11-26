@@ -36,6 +36,9 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +57,7 @@ private val ThumbDark = Color(0xFF1B1B1E)
 private val PillGradient = OrangeGradient
 private val SegmentOnGradient = OrangeGradient
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun SettingsScreen(
     remote: RemoteState,
@@ -119,13 +123,12 @@ fun SettingsScreen(
         Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
     ) {
         // One 68dp top bar (12 / 44 / 12), the same on Home, Movies and Settings.
-        ScreenHeader("Settings", hapticsOn = haptics, edge = 0.dp, onBack = onBack)
-        Spacer(Modifier.height(6.dp))
+        ScreenHeader("Settings", hapticsOn = haptics, edge = 0.dp, onBack = onBack) // first card sits flush under the header, like Home
         BackHandler { onBack() }
 
         // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry
         // point (pill + name only; the old "Pair with a different PC" text line is gone).
-        SettingsSection("Your PC") {
+        SettingsSection("Your PC", modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag("first_card")) {
             SourceRow("PC", store.pcName.ifBlank { store.host }, hapticsOn = haptics, onLabelClick = onRepair)
         }
         Spacer(Modifier.height(14.dp))
@@ -358,9 +361,9 @@ fun fieldColors(outline: Color = TrackGray) = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+fun SettingsSection(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CardGradient).padding(16.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CardGradient).padding(16.dp),
     ) {
         if (title.isNotEmpty()) {
             Text(title, color = TextC, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)

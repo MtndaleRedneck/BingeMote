@@ -114,6 +114,17 @@ class HeaderGeometryTest {
         assertTrue("Header geometry differs between screens:\n$sb", sb.isEmpty())
     }
 
+    /** The first Settings card must start exactly at the header bottom (zero tolerance), like Home's first row. */
+    @Test fun settingsFirstCardTopEqualsHeaderBottom() {
+        launch("settings")
+        val h = measure("settings")
+        val card = device.wait(Until.findObject(By.res("first_card")), 10000)
+        assertNotNull("first_card not found on settings", card)
+        val top = card!!.visibleBounds.top
+        Log.i("HeaderGeom", "settings first card top=$top headerBottom=${h.hdr.bottom} density=$dens")
+        assertEquals("Settings first card top vs header bottom (px, zero tolerance)", h.hdr.bottom, top)
+    }
+
     @Test fun homeToSettingsAndBackKeepsTheSameHeader() {
         launch("main")
         val h0 = measure("main"); Log.i("HeaderGeom", "T0 " + report(h0))
