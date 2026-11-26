@@ -48,12 +48,12 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.only != 'pc-e2e'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
@@ -80,7 +80,7 @@ jobs:
       # Public-repo artifacts are downloadable by any signed-in GitHub user, so
       # signed-binary uploads stay on the real public-release path (only == 'all')
       # only. Hidden builds stage to the private TestLab draft below instead.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
         with:
           name: BingeMote-Android-apk
@@ -133,8 +133,8 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.only != 'stage' || inputs.target == 'helper'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
 
@@ -152,7 +152,7 @@ jobs:
 
       # The raw shipped single-file exe, for the binary-level CI-hook absence proof:
       # the installer compresses its payload, so only the raw exe can be string-scanned.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         # Binary uploads are publish-path only: artifacts on a public repo are
         # publicly downloadable, and withheld builds must never publish (run
         # 45029656665's helper job exposed the installer until deleted).
@@ -170,7 +170,7 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:HELPER_VERSION" helper/installer.iss
           Move-Item helper/Output/BingeMote-PC-*.exe .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         # Publish-path only (see BingeMote-PC-raw gate above).
         if: github.event_name == 'workflow_dispatch' && inputs.publish == true && inputs.only == 'all'
         with:
@@ -221,10 +221,10 @@ jobs:
     needs: helper
     steps:
       # Full history: the upgrade-baseline build checks out the 1.7.11 ancestor below.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
 
@@ -268,7 +268,7 @@ jobs:
       # source-only push runs, where no published artifact exists yet.
       - name: Download the shipping installer (exact TestLab-bound bytes)
         if: ${{ inputs.shipping_run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: BingeMote-PC
           path: helper/Shipping
@@ -326,7 +326,7 @@ jobs:
           & helper/shot/BingeMote.exe --osd-shot
 
       - name: Upload the window shot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BingeMote-PC-window
           path: |
@@ -342,7 +342,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload e2e failure diagnostics
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: BingeMote-PC-e2e-diag
@@ -363,12 +363,12 @@ jobs:
     # BingeMote, so a clean "nothing found" run is the expected result.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Test the scanner (clean, fixture detection, mocked failure, launcher)
         run: pwsh -File scripts/scanner-test.ps1
       - name: Upload the scanner test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BingeMote-PC-scanner-test
           path: |
@@ -382,12 +382,12 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
       - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Enable KVM
         run: |
@@ -402,7 +402,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: bash scripts/focused-ui.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: BingeMote-focused-ui
@@ -412,12 +412,12 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || (inputs.only != 'pc-e2e' && inputs.only != 'stage' && inputs.only != 'verify')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Enable KVM
         run: |
@@ -432,7 +432,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: bash scripts/screenshots.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: BingeMote-screenshots
@@ -446,7 +446,7 @@ jobs:
     needs: [android, helper, helper-e2e, scanner-test, focused-ui, screenshots]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Required-job table (all must be success)
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -465,9 +465,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Exactly the one artifact being published (not a broad pattern), from THIS run.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.target == 'app' && 'BingeMote-Android-apk' || 'BingeMote-PC' }}
           path: artifacts

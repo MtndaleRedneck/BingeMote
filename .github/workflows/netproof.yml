@@ -10,8 +10,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.x
       - name: Adapter state before
@@ -31,7 +31,7 @@ jobs:
           Write-Host "exit code: $($r.ExitCode)"
           Get-NetConnectionProfile | Format-List Name,InterfaceAlias,NetworkCategory
           if ($r.ExitCode -ne 0) { throw "click-through proof failed" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wifi-click-proof
