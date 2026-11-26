@@ -1,5 +1,7 @@
 name: Network category action proof
 on:
+  push:
+    branches: [tmp/netproof]
   workflow_dispatch:
 permissions:
   contents: read
