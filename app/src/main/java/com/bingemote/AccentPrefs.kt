@@ -45,7 +45,7 @@ val AccentText: Color get() = accentTextFor(AccentPrefs.accent)
 
 internal fun lightenAccent(c: Color, f: Float) = Color(c.red + (1f - c.red) * f, c.green + (1f - c.green) * f, c.blue + (1f - c.blue) * f)
 
-/** Orange (default) first, then the eight Listen Later accent swatches in its order, copied from its Theme.kt. Shown 5 on top, 4 below. */
+/** Orange (default) first, then the eight Listen Later accent swatches in its order, copied from its Theme.kt, then teal. Shown as two rows of five. */
 val AccentSwatches: List<Color> = listOf(
     ORANGE_ARGB,
     0xFF6F9C7E, // sage
@@ -56,9 +56,10 @@ val AccentSwatches: List<Color> = listOf(
     0xFFB3838F, // mauve
     0xFF8C8FC0, // indigo
     0xFFA89A8C, // taupe
+    0xFF349E96, // teal (not a Listen Later swatch)
 ).map { Color(it) }
 
-val AccentNames: List<String> = listOf("Orange", "Sage", "Burnt orange", "Dusty blue", "Gray-green", "Terracotta", "Mauve", "Indigo", "Taupe")
+val AccentNames: List<String> = listOf("Orange", "Sage", "Burnt orange", "Dusty blue", "Gray-green", "Terracotta", "Mauve", "Indigo", "Taupe", "Teal")
 
 /** Saved accent. Plain preferences so reading it is instant. A saved colour the picker no longer offers falls back to orange. */
 object AccentPrefs {
