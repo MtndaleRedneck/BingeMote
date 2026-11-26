@@ -21,6 +21,13 @@ class AccentPrefsTest {
 }
 
 class AccentContrastTest {
+    @Test fun subInkOnlyWhereItPasses() {
+        for ((i, s) in AccentSwatches.withIndex()) {
+            val ink = onAccentSubFor(s); val top = accentTop(s)
+            assert(cr(ink, s) >= 4.5f && cr(ink, top) >= 4.5f) { "sub ink ${AccentNames[i]}" }
+        }
+        assertEquals(Color(0xFF3D2A12), onAccentSubFor(AccentSwatches[0]))
+    }
     private fun cr(a: Color, b: Color): Float {
         val x = a.luminance(); val y = b.luminance()
         return (maxOf(x, y) + 0.05f) / (minOf(x, y) + 0.05f)
@@ -28,7 +35,7 @@ class AccentContrastTest {
     @Test fun everySwatchHasReadableLabelAndText() {
         for ((i, s) in AccentSwatches.withIndex()) {
             val lab = onAccentFor(s)
-            val top = lightenAccent(s, if (i == 0) 0.20f else 0.20f)
+            val top = accentTop(s)
             assert(cr(lab, s) >= 4.5f) { "label on ${AccentNames[i]} base ${cr(lab, s)}" }
             assert(cr(lab, top) >= 4.5f) { "label on ${AccentNames[i]} top ${cr(lab, top)}" }
             val txt = accentTextFor(s)

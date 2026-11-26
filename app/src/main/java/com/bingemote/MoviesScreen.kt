@@ -501,7 +501,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             ) {
                 Column {
                     Text("Trying to reconnect", color = OnAccent, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2)
-                    Text("Both devices need to be on the same network", color = Color(0xFF3D2A12), fontSize = 14.sp, letterSpacing = 0.sp)
+                    Text("Both devices need to be on the same network", color = OnAccentSub, fontSize = 14.sp, letterSpacing = 0.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))

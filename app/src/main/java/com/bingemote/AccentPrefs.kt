@@ -13,10 +13,22 @@ private fun contrastOf(a: Color, b: Color): Float {
 }
 
 private val LabelDark = Color(0xFF1B1B1E)
+private val SubInk = Color(0xFF3D2A12)
+
+/** Top of the accent gradient: the original orange top for orange, otherwise the accent lightened 20%. The same value the OrangeLight getter draws. */
+fun accentTop(accent: Color): Color =
+    if (accent.toArgb() == ORANGE_ARGB.toInt()) Color(0xFFFB9E2E) else lightenAccent(accent, 0.20f)
+
+/** Secondary line on an accent fill: the original warm brown where it is >=4.5 on the base and the top (orange), else the label colour. */
+fun onAccentSubFor(accent: Color): Color {
+    val top = accentTop(accent)
+    return if (minOf(contrastOf(SubInk, accent), contrastOf(SubInk, top)) >= 4.5f) SubInk else onAccentFor(accent)
+}
+val OnAccentSub: Color get() = onAccentSubFor(AccentPrefs.accent)
 
 /** Label colour on an accent fill: the usual dark, or black when the dark label would be under 4.5:1 on the accent (checked on the plain accent and its lighter gradient top). */
 fun onAccentFor(accent: Color): Color {
-    val top = lightenAccent(accent, 0.20f)
+    val top = accentTop(accent)
     return if (minOf(contrastOf(LabelDark, accent), contrastOf(LabelDark, top)) >= 4.5f) LabelDark else Color.Black
 }
 

@@ -17,7 +17,7 @@ val Dimmed = Color(0xFF5C5C66)
 const val ORANGE_ARGB: Long = 0xFFF97C02
 /** The accent: the user's pick from [AccentSwatches] (see [AccentPrefs]); orange unless changed. Read at draw time so a pick applies at once. */
 val Orange: Color get() = AccentPrefs.accent
-val OrangeLight: Color get() = if (AccentPrefs.accent.toArgb() == ORANGE_ARGB.toInt()) Color(0xFFFB9E2E) else lightenAccent(AccentPrefs.accent, 0.20f)
+val OrangeLight: Color get() = accentTop(AccentPrefs.accent)
 val ErrorRed = Color(0xFFE5484D)
 val OkGreen = Color(0xFF4CAF50)
 val TrackGray = Color(0xFF4A4A52)

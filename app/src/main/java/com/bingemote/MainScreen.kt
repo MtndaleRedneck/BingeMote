@@ -202,7 +202,7 @@ private fun HomeContent(
                     "paused" -> "Paused"
                     else -> "Stopped"
                 },
-                color = Color(0xFF3D2A12), fontSize = 14.sp,
+                color = OnAccentSub, fontSize = 14.sp,
                 // Reconnect line only: slightly tighter tracking so it fits one line (size unchanged).
                 letterSpacing = if (lost) 0.sp else TextUnit.Unspecified,
             )
@@ -212,17 +212,17 @@ private fun HomeContent(
             if (!lost) {
                 if (remote.unpaired) {
                     Spacer(Modifier.height(6.dp))
-                    Text("This phone isn't paired with the PC anymore - pair again.", color = Color(0xFF3D2A12), fontSize = 13.sp)
+                    Text("This phone isn't paired with the PC anymore - pair again.", color = OnAccentSub, fontSize = 13.sp)
                 } else if (remote.helperNotice) {
                     Spacer(Modifier.height(6.dp))
-                    Text("BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume.", color = Color(0xFF3D2A12), fontSize = 13.sp)
+                    Text("BingeMote on the PC isn't answering - open it to use mouse, keyboard and PC volume.", color = OnAccentSub, fontSize = 13.sp)
                 }
             }
             // Screenshot-rig only: the proposed helper/unpaired note rendered inside the
             // hero for the review captures. Never set outside the rig; release never shows it.
             if (BuildConfig.DEBUG) remote.mockHeroNote?.let {
                 Spacer(Modifier.height(6.dp))
-                Text(it, color = Color(0xFF3D2A12), fontSize = 13.sp)
+                Text(it, color = OnAccentSub, fontSize = 13.sp)
             }
         }
     }

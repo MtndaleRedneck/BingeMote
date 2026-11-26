@@ -269,7 +269,10 @@ fun SettingsScreen(
                                 .clickable(role = androidx.compose.ui.semantics.Role.RadioButton) { tapHaptic(accentView, haptics); AccentPrefs.choose(col) },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(Modifier.size(42.dp).clip(CircleShape).background(col).let { if (on) it.border(3.dp, TextC, CircleShape) else it })
+                            // Selected: a white ring on the card with a gap, then a smaller swatch, so the ring never sits on the swatch edge.
+                            if (on) Box(Modifier.size(46.dp).border(2.dp, TextC, CircleShape), contentAlignment = Alignment.Center) {
+                                Box(Modifier.size(36.dp).clip(CircleShape).background(col))
+                            } else Box(Modifier.size(42.dp).clip(CircleShape).background(col))
                         }
                     }
                     // The short row keeps the same column spacing as the full one.
