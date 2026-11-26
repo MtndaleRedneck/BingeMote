@@ -18,6 +18,8 @@ class AccentPrefsTest {
         assertEquals(Color(ORANGE_ARGB), AccentPrefs.resolve(null))
         assertEquals(Color(ORANGE_ARGB), AccentPrefs.resolve(0x12345678))
         assertEquals(AccentSwatches[3], AccentPrefs.resolve(AccentSwatches[3].toArgb()))
+        assertEquals(Color(0xFF349E96), AccentPrefs.resolve(0xFF349E96.toInt()))
+        for (s in AccentSwatches) assertEquals(s, AccentPrefs.resolve(s.toArgb()))
     }
 }
 
