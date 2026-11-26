@@ -42,6 +42,7 @@ class PhonePickerStorageTest {
             instrumentation.targetContext.contentResolver.persistedUriPermissions.forEach {
                 instrumentation.targetContext.contentResolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+            com.bingemote.Store(instrumentation.targetContext).moviesPhoneTreeUri = ""
             val pick = device.wait(Until.findObject(By.text("Pick folder")), 10000)
             if (pick == null) { shot("no-pick"); fail("Pick folder prompt not shown") }
             pick.click()
@@ -62,6 +63,7 @@ class PhonePickerStorageTest {
             instrumentation.targetContext.contentResolver.persistedUriPermissions.forEach {
                 instrumentation.targetContext.contentResolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
+            com.bingemote.Store(instrumentation.targetContext).moviesPhoneTreeUri = ""
             device.pressHome()
         }
     }

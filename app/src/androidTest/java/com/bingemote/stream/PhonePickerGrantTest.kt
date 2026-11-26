@@ -39,6 +39,7 @@ class PhonePickerGrantTest {
         instrumentation.targetContext.contentResolver.persistedUriPermissions.forEach {
             instrumentation.targetContext.contentResolver.releasePersistableUriPermission(it.uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        com.bingemote.Store(instrumentation.targetContext).moviesPhoneTreeUri = ""
         fun shot(tag: String) {
             device.executeShellCommand("screencap -p /sdcard/zephyr-picker-$tag.png")
             // No in-session uiautomator dump: the shell-side dump can't connect a
