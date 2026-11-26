@@ -24,7 +24,27 @@ class LoadGate {
         return ok
     }
 
+    /**
+     * Debug-build test seam ONLY (a no-op in release: guarded by BuildConfig.DEBUG, nothing is recorded or kept).
+     * Called by a loader at the point where its network call returned SUCCESSFULLY, instead of a bare [isCurrent]. Records
+     * the loader kind, its generation, whether that generation was still current, and the first row name (max 40 chars)
+     * so a test can see that a specific request's success was consumed and accepted or rejected. Returns [isCurrent].
+     */
+    fun successCurrent(kind: String, g: Int, raw: String): Boolean {
+        val ok = isCurrent(g)
+        if (BuildConfig.DEBUG) {
+            val first = Regex("\"name\"\\s*:\\s*\"([^\"]{0,40})").find(raw)?.groupValues?.get(1) ?: ""
+            successes.add(Success(kind, g, ok, first))
+        }
+        return ok
+    }
+
+    data class Success(val kind: String, val gen: Int, val accepted: Boolean, val firstRow: String)
+
     companion object {
+        /** Debug-build test seam ONLY: per-request success records written by [successCurrent]. */
+        internal val successes = java.util.concurrent.CopyOnWriteArrayList<Success>()
+
         /** Debug-build test seam ONLY: how many times a loader asked and was told it was superseded (so a test can observe that a late result was consumed and dropped). */
         internal val staleDrops = AtomicInteger(0)
     }

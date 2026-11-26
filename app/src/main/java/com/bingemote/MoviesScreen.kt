@@ -250,7 +250,7 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 val raw = withContext(Dispatchers.IO) {
                     Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
                 }
-                if (!gate.isCurrent(g)) return@launch
+                if (!gate.successCurrent("vlc", g, raw)) return@launch
                 show(raw, dir, false, restore)
             } catch (e: Exception) {
                 if (!gate.isCurrent(g)) return@launch

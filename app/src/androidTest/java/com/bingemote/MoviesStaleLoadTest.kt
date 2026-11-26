@@ -89,6 +89,7 @@ class MoviesStaleLoadTest {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
             val btn = device.wait(Until.findObject(By.desc("Movies")), 20000)
             assertNotNull("Home Movies button", btn)
+            LoadGate.successes.clear()
             btn.click()
             assertTrue("request A is in flight (held by the stub)", stub.aHeld.await(15, TimeUnit.SECONDS))
 
@@ -103,17 +104,23 @@ class MoviesStaleLoadTest {
             assertEquals("exactly A and B were requested", 2, stub.browseRequests.get())
             assertNull("A has not answered yet", device.findObject(By.text("Folder A1")))
 
-            val dropsBefore = LoadGate.staleDrops.get()
+            val before = LoadGate.successes.toList()
             releaseA.countDown() // the late, older reply is delivered now
             assertTrue("A's reply was written to the app", stub.aServed.await(10, TimeUnit.SECONDS)) // signal, not a sleep
-            // The only remaining wait is the app consuming that reply on its IO thread then rendering: bounded poll that
-            // watches for the WRONG outcome for up to 3 s (no sleep-then-check); it returns early if A's rows ever show.
-            // Observed completion: the app consumed A's late SUCCESS and the gate told the loader it was superseded.
-            // (A timeout would also drop, but the drip keeps the request alive past the 4 s read timeout, and the stub only
-            // counts A served after writing the full reply and closing without error.)
+            // Request-specific completion signal: the loader that fetched A's folder recorded its own SUCCESS (a timeout or
+            // error would record nothing here), with its generation and whether the gate accepted it. Bounded poll on that record.
             val until = android.os.SystemClock.elapsedRealtime() + 10_000
-            while (LoadGate.staleDrops.get() <= dropsBefore && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(50)
-            assertTrue("the app consumed A's late reply and dropped it as stale", LoadGate.staleDrops.get() > dropsBefore)
+            fun aRec() = LoadGate.successes.firstOrNull { it.firstRow == "Folder A1" }
+            while (aRec() == null && android.os.SystemClock.elapsedRealtime() < until) Thread.sleep(50)
+            val a = aRec()
+            assertNotNull("A's late SUCCESS reached the loader (a timeout would leave no record)", a)
+            assertEquals("loader kind", "vlc", a!!.kind)
+            assertFalse("the gate REJECTED A's late success", a.accepted)
+            val b = LoadGate.successes.firstOrNull { it.firstRow == "Folder B1" }
+            assertNotNull("B's success was recorded", b)
+            assertTrue("B accepted", b!!.accepted)
+            assertTrue("A is the older generation", a.gen < b.gen)
+            assertEquals("A's record was written after the release, not before", null, before.firstOrNull { it.firstRow == "Folder A1" })
             device.waitForIdle()
             assertFalse("the late older listing must not replace the newer one", device.hasObject(By.text("Folder A1")))
             assertNotNull("the newer listing is still shown", device.findObject(By.text("Folder B1")))
