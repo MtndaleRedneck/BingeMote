@@ -1,6 +1,6 @@
 ## v1.17.0 - November 26, 2026
 
-Pick your accent color. Settings has a new Accent color card with orange as the default and eight more to choose from.
+Pick your accent color. Settings has a new Accent color card with orange as the default and nine more to choose from.
 
 **Improved**
 - Settings now lines up with the Home top bar.
