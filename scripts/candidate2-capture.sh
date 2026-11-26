@@ -43,7 +43,10 @@ adb exec-out screencap -p > "$OUT/help-settings-bottom.png"
 shoot pair1-install setup
 shoot pair2-find setup --ez pairdemo true
 shoot pair3-chosen setup --ez pairdemo true --ez pairdemoselect true
-shoot pair4-result setup --ez vlcpending true
-adb shell input swipe 540 1900 540 400 300; sleep 2; adb exec-out screencap -p > "$OUT/pair4-result-scrolled.png"
+for ST in ok unreachable refused; do
+  shoot pair4-result-$ST-top setup --ez vlcpending true --es pairdemoauto $ST
+  adb shell input swipe 540 1900 540 300 300; sleep 1; adb shell input swipe 540 1900 540 300 300; sleep 2
+  adb exec-out screencap -p > "$OUT/pair4-result-$ST-bottom.png"
+done
 adb shell wm size reset; adb shell wm density reset
 adb logcat -d -s AndroidRuntime:E > $OUT/crashes2.txt || true

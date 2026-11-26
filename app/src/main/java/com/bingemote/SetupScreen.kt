@@ -35,6 +35,8 @@ fun SetupScreen(
     onCancel: (() -> Unit)? = null,
     demoVlcPending: Boolean = false,
     demoPair: Boolean = false,
+    demoPreselect: Boolean = false, // screenshot rig only: demo PC already chosen
+    demoAuto: String = "", // screenshot rig only: ok | unreachable | refused result card with demoVlcPending
 ) {
     val store = remote.store
     val scope = rememberCoroutineScope()
@@ -45,9 +47,9 @@ fun SetupScreen(
     var step by remember { mutableStateOf(if ((demoPair || demoVlcPending) && demo) 2 else if (store.helperToken.isBlank()) 1 else 2) }
     var scanning by remember { mutableStateOf(false) }
     var found by remember {
-        mutableStateOf(if (demoPair && demo) listOf(DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC")) else emptyList())
+        mutableStateOf(if ((demoPair || demoVlcPending) && demo) listOf(DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC")) else emptyList())
     }
-    var chosen by remember { mutableStateOf<DiscoveredHelper?>(null) }
+    var chosen by remember { mutableStateOf<DiscoveredHelper?>(if (((demoPair && demoPreselect) || demoVlcPending) && demo) DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC") else null) }
     var manualHost by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var pairing by remember { mutableStateOf(false) }
@@ -59,7 +61,7 @@ fun SetupScreen(
     // Automatic-first VLC setup (helper 1.7+): the PC picked the password at pairing time.
     // "checking" while the phone verifies it, then "ok" or "refused".
     var autoSetup by remember { mutableStateOf(demoVlcPending && demo) }
-    var autoState by remember { mutableStateOf(if (demoVlcPending && demo) "ok" else "checking") }
+    var autoState by remember { mutableStateOf(if (demoVlcPending && demo) demoAuto.ifBlank { "ok" } else "checking") }
     // VLC is still running with its old settings: control starts when VLC reopens.
     var autoPending by remember { mutableStateOf(demoVlcPending && demo) }
     // VLC is simply closed (the PC attests the settings are written): control starts when it opens.
