@@ -2,14 +2,8 @@ name: Staged APK launch check
 # Workflow-only. Installs the exact staged private APK on an API 34 emulator, launches it, waits for a resumed
 # activity, and records window focus, process, crash lines and frames. No signing key, no upload of the APK.
 on:
-  workflow_dispatch:
-    inputs:
-      asset_id:
-        required: true
-        type: string
-      sha256:
-        required: true
-        type: string
+  push:
+    branches: ['staged-launch-*']
 permissions:
   contents: read
 jobs:
@@ -20,8 +14,8 @@ jobs:
       - name: Fetch the exact staged APK
         env:
           GH_TOKEN: ${{ secrets.TESTLAB_PAT }}
-          NEW_ASSET_ID: ${{ inputs.asset_id }}
-          NEW_HASH: ${{ inputs.sha256 }}
+          NEW_ASSET_ID: 796396596
+          NEW_HASH: 11178f374834b0358e1e7fcaf905e16ff4e19eb44a35e9e07f5218b317efab69
         run: |
           set -euo pipefail
           [[ "$NEW_ASSET_ID" =~ ^[0-9]+$ ]]
