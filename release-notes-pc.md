@@ -3,7 +3,7 @@
 The "This is my home Wi-Fi" fix now shows up.
 
 **Fixed**
-- When Windows marks your Wi-Fi as public, BingeMote now notices and offers to switch it to private. The check used to fail quietly, so the notice never appeared and your phone could not connect.
+- When Windows marks your Wi-Fi as public, BingeMote now notices and shows the "This is my home Wi-Fi" notice to switch it to private. Before, the check failed quietly, so the notice never appeared.
 
 ## v1.9.0 - November 24, 2026
 
