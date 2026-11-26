@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -180,7 +181,7 @@ fun Modifier.headerContainer(): Modifier = this
 
 /** The one header every sub-screen uses: 12dp / 44dp / 12dp, back tile at the 16dp edge, title centred on it. */
 @Composable
-fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20.sp, hapticsOn: Boolean? = null, edge: androidx.compose.ui.unit.Dp = 16.dp, onBack: () -> Unit) {
+fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20.sp, hapticsOn: Boolean? = null, edge: androidx.compose.ui.unit.Dp = 16.dp, matchHomeRow: Boolean = false, onBack: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().headerContainer().padding(horizontal = edge, vertical = 12.dp).heightIn(min = 44.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -188,6 +189,12 @@ fun ScreenHeader(title: String, fontSize: androidx.compose.ui.unit.TextUnit = 20
         HeaderIconButton(onBack, hapticsOn) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextC) }
         Spacer(Modifier.width(12.dp))
         Text(title, color = TextC, fontSize = fontSize, fontWeight = FontWeight.Bold)
+        // Settings only: Home's row is max(44dp, the status pill) and the pill grows with font scale. A zero-width,
+        // unplaced, semantics-free copy of the REAL pill gives this row the same height rule, measured not estimated.
+        if (matchHomeRow) androidx.compose.ui.layout.Layout(
+            content = { StatusPill(connected = true) },
+            modifier = Modifier.clearAndSetSemantics {},
+        ) { ms, _ -> val p = ms[0].measure(androidx.compose.ui.unit.Constraints()); layout(0, p.height) {} }
     }
 }
 

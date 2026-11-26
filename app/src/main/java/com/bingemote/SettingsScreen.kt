@@ -123,7 +123,7 @@ fun SettingsScreen(
         Modifier.fillMaxSize().background(Bg).verticalScroll(scrollState).padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
     ) {
         // One 68dp top bar (12 / 44 / 12), the same on Home, Movies and Settings.
-        ScreenHeader("Settings", hapticsOn = haptics, edge = 0.dp, onBack = onBack) // first card sits flush under the header, like Home
+        ScreenHeader("Settings", hapticsOn = haptics, edge = 0.dp, matchHomeRow = true, onBack = onBack) // first card sits flush under the header, like Home
         BackHandler { onBack() }
 
         // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry

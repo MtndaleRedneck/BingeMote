@@ -118,6 +118,15 @@ class HeaderGeometryTest {
         assertTrue("Header geometry differs between screens:\n$sb", sb.isEmpty())
     }
 
+    /** Settings header must equal Home's (top, bottom, height) at whatever font scale/density the run uses. Zero tolerance. */
+    @Test fun settingsHeaderEqualsHomeHeaderZeroTolerance() {
+        launch("main"); val home = measure("main")
+        launch("settings"); val settings = measure("settings")
+        Log.i("HeaderGeom", "home hdr=${home.hdr} settings hdr=${settings.hdr} density=$dens")
+        assertEquals("Settings header bottom vs Home (px)", home.hdr.bottom, settings.hdr.bottom)
+        assertEquals("Settings header top vs Home (px)", home.hdr.top, settings.hdr.top)
+    }
+
     /** The first Settings card must start exactly at the header bottom (zero tolerance), like Home's first row. */
     @Test fun settingsFirstCardTopEqualsHeaderBottom() {
         launch("settings")
