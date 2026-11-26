@@ -1,3 +1,10 @@
+## v1.9.1 - November 26, 2026
+
+The "This is my home Wi-Fi" fix now shows up.
+
+**Fixed**
+- When Windows marks your Wi-Fi as public, BingeMote now notices and offers to switch it to private. The check used to fail quietly, so the notice never appeared and your phone could not connect.
+
 ## v1.9.0 - November 24, 2026
 
 Modernized foundations and reliability fixes for pairing, Wi-Fi permissions, and the dark look.
