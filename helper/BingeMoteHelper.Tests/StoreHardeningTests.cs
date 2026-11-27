@@ -268,12 +268,14 @@ public class VlcrcStrictReadTests : IDisposable
         Directory.CreateDirectory(VlcDirPath);
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
     }
 
     public void Dispose()
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         try { Directory.Delete(_dir, true); } catch { }
     }
 
@@ -376,6 +378,7 @@ public class PasswordDecisionTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
     }
 
@@ -383,6 +386,7 @@ public class PasswordDecisionTests : IDisposable
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         Program.StoreBroken = false;
         Program.ResetDataDirForTests();
@@ -464,6 +468,7 @@ public class VlcrcAtomicWriteTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
     }
 
@@ -471,6 +476,7 @@ public class VlcrcAtomicWriteTests : IDisposable
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         VlcSetup.BeforeReplaceGuardForTests = null;
         VlcSetup.AfterReplaceForTests = null;
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
@@ -548,6 +554,7 @@ public class ClearPendingGuardTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
     }
 
@@ -556,6 +563,7 @@ public class ClearPendingGuardTests : IDisposable
         VlcSetup.ClearPendingPreMutateForTests = null;
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         Program.StoreBroken = false;
         Program.ResetDataDirForTests();
@@ -616,6 +624,7 @@ public class VlcrcConcurrentWriteTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
     }
 
@@ -625,6 +634,7 @@ public class VlcrcConcurrentWriteTests : IDisposable
         VlcSetup.BeforeNewFileMoveForTests = null;
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         Program.StoreBroken = false;
         Program.ResetDataDirForTests();
@@ -699,6 +709,7 @@ public class PairTransactionTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         lock (Program.PhonesLock) Program.Phones.Clear();
     }
@@ -707,6 +718,7 @@ public class PairTransactionTests : IDisposable
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         VlcSetup.VlcRunningForTests = null;
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         lock (Program.PhonesLock) Program.Phones.Clear();
@@ -844,6 +856,7 @@ public class I2Wip10BlockerTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         lock (Program.PhonesLock) Program.Phones.Clear();
     }
@@ -855,6 +868,7 @@ public class I2Wip10BlockerTests : IDisposable
         VlcSetup.VlcRunningForTests = null;
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         try { new DirectoryInfo(VlcDirPath).Attributes = FileAttributes.Normal; } catch { }
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         lock (Program.PhonesLock) Program.Phones.Clear();
@@ -1015,6 +1029,7 @@ public class OwedPendingProtectionTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         VlcSetup.VlcRunningForTests = null;
         ClearAnyMirrorPending(); // static mirror survives a prior class; start clean
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
@@ -1024,6 +1039,7 @@ public class OwedPendingProtectionTests : IDisposable
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         VlcSetup.VlcRunningForTests = null;
         ClearAnyMirrorPending();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
@@ -1141,6 +1157,7 @@ public class StatusSnapshotTests : IDisposable
         Program.StoreBroken = false;
         VlcSetup.VlcDirOverride = VlcDirPath;
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         ClearAnyMirrorPending(); // static mirror survives a prior class; start clean
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
     }
@@ -1150,6 +1167,7 @@ public class StatusSnapshotTests : IDisposable
         VlcSetup.VlcDirOverride = null;
         VlcSetup.VlcRunningForTests = null; // static: never leak the "VLC closed" hook into another test class
         VlcSetup.ForgetCandidateForTests();
+        VlcSetup.ResetPendingForTests();
         ClearAnyMirrorPending();
         lock (Program.ConfigSaveLock) Program.PendingVlcDurable = null;
         Program.StoreBroken = false;

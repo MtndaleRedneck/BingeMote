@@ -8,6 +8,7 @@
 // None of these proves phone reachability on a genuine Public-profile LAN.
 using System.Diagnostics;
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using Xunit;
 
 namespace BingeMoteHelper.Tests;
@@ -37,6 +38,7 @@ public sealed class WinRuntimeTests : IDisposable
     {
         VlcSetup.VlcDirOverride = null;
         VlcSetup.VlcRunningForTests = null;
+        VlcSetup.ResetPendingForTests();
         Program.ResetDataDirForTests();
         try { Directory.Delete(_dir, true); } catch { }
     }
@@ -153,7 +155,7 @@ public sealed class WinRuntimeTlsTests : IDisposable
     // only on a disposable hosted runner proven to carry no pre-existing product TLS state.
     // On any ordinary Windows machine (no GITHUB_ACTIONS) or a non-fresh runner, every test
     // in this class FAILS loudly instead of mutating shared state.
-    private static void AssertHostedFreshRunner()
+    internal static void AssertHostedFreshRunner()
     {
         Assert.Equal("true", Environment.GetEnvironmentVariable("GITHUB_ACTIONS"));
         Assert.False(File.Exists(Path.Combine(ProtectedFile.Dir, "tls-identity.json")),
@@ -179,6 +181,7 @@ public sealed class WinRuntimeTlsTests : IDisposable
     public void Dispose()
     {
         HttpServer.PortOverrideForTests = 0;
+        VlcSetup.ResetPendingForTests();
         Program.ResetDataDirForTests();
         // Conservative teardown (proven ownership, never inference): an 8489 binding is
         // deleted only when the structured HTTP.SYS query of that exact endpoint proves it
@@ -187,6 +190,17 @@ public sealed class WinRuntimeTlsTests : IDisposable
         // proof the binding is ours. The cert, key container, marker and journal are never
         // deleted; the hosted runner is destroyed whole, so residue is disposable by
         // construction (a technical fact, not an acceptance claim).
+        TryDeleteProvenTestBindings();
+        try { Directory.Delete(_dir, true); } catch { }
+    }
+
+    // Shared with the SubtitleTests hosted TLS leg: delete an 8489 binding only when the
+    // structured HTTP.SYS query of that exact endpoint proves it carries the current
+    // marker's thumbprint AND AppId. Returns true only when BOTH endpoints end up proven
+    // absent (deleted or never bound); any retain/unknown is false so callers keep the
+    // marker/journal as ownership evidence instead of orphaning the cert. Never throws.
+    internal static bool TryDeleteProvenTestBindings()
+    {
         try
         {
             var markerPath = Path.Combine(ProtectedFile.Dir, "tls-identity.json");
@@ -210,9 +224,51 @@ public sealed class WinRuntimeTlsTests : IDisposable
                         RunQuiet("netsh", "http", "delete", "sslcert", $"ipport={ep}");
                     // anything else: ownership unproven, retain for runner destruction
                 }
+            // Verify, never assume: both endpoints must query Absent AFTER the attempt.
+            foreach (var ip in new[] { IPAddress.Any, IPAddress.IPv6Any })
+                if (HttpSysSsl.QueryExact_(ip, TestPort).Kind != HttpSysSsl.Kind.Absent)
+                    return false;
+            return true;
         }
-        catch { /* cleanup never fails the test outcome */ }
-        try { Directory.Delete(_dir, true); } catch { }
+        catch { return false; /* cleanup never fails the test outcome, but the caller must know */ }
+    }
+
+    // Full proven identity teardown for legs that must leave the machine truly fresh (the
+    // WinRuntime leg's freshness guard runs later in the same job): with the 8489 bindings
+    // already proven gone, delete the cert the CURRENT marker names (exact thumbprint in
+    // LocalMachine\My - the entry guard proved no marker existed beforehand, so that cert is
+    // this leg's own creation), verify it is gone, then delete the marker and journal.
+    // Order matters: a retained cert with no marker makes later setup fail closed ("looks
+    // like ours but its marker does not"), and deleting the marker first would orphan the
+    // cert's provenance. Any failure retains everything as ownership evidence and returns
+    // false so the later leg fails loudly instead of proceeding on a poisoned machine.
+    internal static bool TryDeleteProvenIdentityAndMarkers()
+    {
+        try
+        {
+            var markerPath = Path.Combine(ProtectedFile.Dir, "tls-identity.json");
+            if (!File.Exists(markerPath)) return true; // nothing of ours here
+            var mt = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(markerPath), "[0-9A-Fa-f]{40}");
+            if (!mt.Success) return false;
+            using (var st = new X509Store(StoreName.My, StoreLocation.LocalMachine))
+            {
+                st.Open(OpenFlags.ReadWrite);
+                foreach (var c in st.Certificates)
+                    if (c.Thumbprint != null && c.Thumbprint.Equals(mt.Value, StringComparison.OrdinalIgnoreCase))
+                        st.Remove(c);
+            }
+            using (var st = new X509Store(StoreName.My, StoreLocation.LocalMachine))
+            {
+                st.Open(OpenFlags.ReadOnly);
+                foreach (var c in st.Certificates)
+                    if (c.Thumbprint != null && c.Thumbprint.Equals(mt.Value, StringComparison.OrdinalIgnoreCase))
+                        return false; // cert survived: keep the marker as its provenance
+            }
+            File.Delete(markerPath);
+            try { File.Delete(Path.Combine(ProtectedFile.Dir, "tls-journal.json")); } catch { }
+            return true;
+        }
+        catch { return false; }
     }
 
     // T-W3: REAL loopback pinned-HTTPS round trip on Windows (admin runner) on the isolated

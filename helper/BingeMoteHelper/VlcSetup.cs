@@ -578,6 +578,15 @@ internal static class VlcSetup
     /// <summary>Test hook: drop the cached plan candidate so the next PlanPassword re-reads.</summary>
     internal static void ForgetCandidateForTests() { lock (Gate) _candidate = null; }
 
+    /// <summary>Test-only reset of the process-global pending snapshot. The pending lives in
+    /// these statics (not only in Program.PendingVlcDurable), so nulling the durable mirror alone
+    /// leaves a residue: a class that deliberately ends with a live pending (e.g. the F10 raced
+    /// stage) leaks it into the NEXT class, where TrySavePair captures it as the prior snapshot
+    /// and its failure rollback restores it. Every class that can stage a pending calls this in
+    /// ctor AND Dispose. The statics are process-global by design (single-instance helper); the
+    /// suite owns isolating them.</summary>
+    internal static void ResetPendingForTests() { lock (Gate) { _pendingPassword = null; _pendingSuperseded = false; } }
+
     /// <summary>Carry out a plan after the phone is durably saved, via the E1 decision:
     /// a live current that appeared since the plan is served back and never rewritten
     /// (read-only serve-current); a deferred pending is served as-is; only branch 6 writes,
@@ -694,7 +703,7 @@ internal static class VlcSetup
     {
         try
         {
-            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "vlc", "vlcrc");
+            var path = Path.Combine(VlcDir, "vlcrc");
             if (!File.Exists(path)) return null;
             return FindValue(File.ReadAllLines(path).ToList(), key);
         }

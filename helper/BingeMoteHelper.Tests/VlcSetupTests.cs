@@ -4,24 +4,30 @@ using Xunit;
 
 namespace BingeMoteHelper.Tests;
 
+[Collection("ProgramState")] // touches VlcSetup process-global statics: serialize with every other ProgramState class
 public class VlcSetupTests : IDisposable
 {
-    private static readonly string VlcrcPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "vlc", "vlcrc");
-    private readonly string? _backup;
+    // Fresh temp fixture on ANY machine: VlcSetup honors VlcDirOverride for every read/write,
+    // so the real %AppData%\\vlc\\vlcrc is never touched (previously this class wrote it for
+    // real, with only a text backup for protection). Statics restored in Dispose.
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "bmh-vlcsetup-" + Guid.NewGuid().ToString("N"));
+    private string VlcrcPath => Path.Combine(_dir, "vlc", "vlcrc");
 
     public VlcSetupTests()
     {
-        _backup = File.Exists(VlcrcPath) ? File.ReadAllText(VlcrcPath) : null;
+        Directory.CreateDirectory(Path.Combine(_dir, "vlc"));
+        VlcSetup.VlcDirOverride = Path.Combine(_dir, "vlc");
+        VlcSetup.ResetPendingForTests();
     }
 
     public void Dispose()
     {
-        if (_backup != null) File.WriteAllText(VlcrcPath, _backup);
-        else if (File.Exists(VlcrcPath)) File.Delete(VlcrcPath);
+        VlcSetup.VlcDirOverride = null;
+        VlcSetup.ResetPendingForTests();
+        try { Directory.Delete(_dir, true); } catch { }
     }
 
-    private static void WriteVlcrc(params string[] lines)
+    private void WriteVlcrc(params string[] lines)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(VlcrcPath)!);
         File.WriteAllLines(VlcrcPath, lines);

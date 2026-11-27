@@ -5,7 +5,7 @@ using Xunit;
 
 namespace BingeMoteHelper.Tests;
 
-[Collection("HTTP reservation")]
+[Collection("ProgramState")] // touches Program.Phones and, after the HTTPS rewrite, hosted TLS state: serialize with every other ProgramState class
 public class SubtitleTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "bm-subs-" + Guid.NewGuid().ToString("N"));
@@ -152,26 +152,56 @@ public class SubtitleTests : IDisposable
         await server;Assert.Equal(new[]{"3","-1"},order);
     }
 
+    // Hosted-only over the REAL HTTPS listener: the aligned product is fail-closed HTTPS-only
+    // (HttpServer.Start throws without a complete TLS identity), so this token/method gate can
+    // no longer run over plaintext. Same hosted-fresh guard, isolated test port and
+    // capture-only TLS client pattern (the callback accepts any cert and only observes the
+    // handshake; identity pinning is the app's job, nothing here enforces a client pin) as
+    // the WinRuntime TLS leg. Cleanup removes the test's own cert, marker and journal ONLY
+    // once the 8489 bindings are proven gone (they are this test's own creations - the guard
+    // proved a fresh machine - and the WinRuntime leg's freshness guard later in the same
+    // job must still see a clean machine).
     [Fact] public async Task SubtitleRoutesRequireTokenAndCorrectMethod() {
-        using var acl = Process.Start(new ProcessStartInfo("netsh", "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-1-0)") { UseShellExecute=false, CreateNoWindow=true });
-        acl!.WaitForExit();
-        using var server = new HttpServer();server.Start();
-        using var client = new HttpClient();
-        foreach(var path in new[]{"list","media","load","select"}) {
-            using var denied = await client.GetAsync("http://127.0.0.1:8488/subtitles/"+path);
-            Assert.Equal(System.Net.HttpStatusCode.Unauthorized,denied.StatusCode);
-        }
-        const string token="unit-subtitle-token";
-        lock(Program.PhonesLock) Program.Phones.Add(new Program.PairedPhone{Token=token,Name="test"});
+        WinRuntimeTlsTests.AssertHostedFreshRunner();
+        const int testPort = 8489;
+        var cfgDir = Path.Combine(root, "cfg");
+        Directory.CreateDirectory(cfgDir);
+        Program.RedirectDataDirForTests(cfgDir);
+        HttpServer.PortOverrideForTests = testPort;
         try {
-            client.DefaultRequestHeaders.Add("X-BingeMote-Token",token);
-            foreach(var path in new[]{"load","select"}) {
-                using var wrong = await client.GetAsync("http://127.0.0.1:8488/subtitles/"+path);
-                Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,wrong.StatusCode);
+            Assert.Equal(0, TlsSetup.Run(testPort, explicitSetup: true));
+            Assert.True(HelperTls.RuntimeReady(testPort, out var tlsWhy), tlsWhy);
+            using var server = new HttpServer(); server.Start();
+            using var handler = new HttpClientHandler {
+                ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) => true // capture-only; pinning is the app's job
+            };
+            using var client = new HttpClient(handler);
+            string baseUrl = $"https://127.0.0.1:{testPort}/subtitles/";
+            foreach(var path in new[]{"list","media","load","select"}) {
+                using var denied = await client.GetAsync(baseUrl+path);
+                Assert.Equal(System.Net.HttpStatusCode.Unauthorized,denied.StatusCode);
             }
-            using var listWrong=await client.PostAsync("http://127.0.0.1:8488/subtitles/list",new StringContent("{}"));
-            Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,listWrong.StatusCode);
-        } finally {lock(Program.PhonesLock) Program.Phones.RemoveAll(p=>p.Token==token);}
+            const string token="unit-subtitle-token";
+            lock(Program.PhonesLock) Program.Phones.Add(new Program.PairedPhone{Token=token,Name="test"});
+            try {
+                client.DefaultRequestHeaders.Add("X-BingeMote-Token",token);
+                foreach(var path in new[]{"load","select"}) {
+                    using var wrong = await client.GetAsync(baseUrl+path);
+                    Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,wrong.StatusCode);
+                }
+                using var listWrong=await client.PostAsync(baseUrl+"list",new StringContent("{}"));
+                Assert.Equal(System.Net.HttpStatusCode.MethodNotAllowed,listWrong.StatusCode);
+            } finally {lock(Program.PhonesLock) Program.Phones.RemoveAll(p=>p.Token==token);}
+        } finally {
+            HttpServer.PortOverrideForTests = 0;
+            Program.ResetDataDirForTests();
+            bool bindingsGone = WinRuntimeTlsTests.TryDeleteProvenTestBindings();
+            // Cert + marker + journal are removed only once the 8489 bindings are proven gone.
+            // Inside the helper the cert is verified deleted BEFORE the marker goes, so a
+            // retained cert always keeps its provenance; any failure keeps all evidence and
+            // the WinRuntime leg's freshness guard then fails loudly on the residue.
+            if (bindingsGone) WinRuntimeTlsTests.TryDeleteProvenIdentityAndMarkers();
+        }
     }
 
 }
