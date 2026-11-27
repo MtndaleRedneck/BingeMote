@@ -31,6 +31,9 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     @Volatile var open = false
         private set
     @Volatile private var closedByUs = false
+    /** The PC presented a different key: stays set, nothing reconnects until the phone is paired again. */
+    @Volatile var keyChanged = false
+        private set
     @Volatile private var paused = false
     private var pendingReconnect: java.util.concurrent.ScheduledFuture<*>? = null
     private var heartbeat: java.util.concurrent.ScheduledFuture<*>? = null
@@ -57,13 +60,26 @@ class LiveWs(private val host: String, private val port: Int, private val token:
     fun connect() {
         if (ws != null || closedByUs || paused || scheduler.isShutdown) return
         if (host.isBlank() || port <= 0) return // not paired yet; HTTP callers no-op the same way
+        // Secure only: wss to the stored PC address, pinned to the stored key, token from the loaded record.
+        // Null host/port/token: the websocket holds no captured triple of its own - it opens from the
+        // record itself, so there is no stale caller value to enforce (R12's explicit current-only case).
+        val cred = when (val d = RequestGate.decide(HelperClient.pairingSource, null, null, null)) {
+            is RequestGate.Decision.Allow -> d.credential
+            RequestGate.Decision.KeyChanged -> { keyChanged = true; return }   // shared state: a new socket object cannot start over
+            RequestGate.Decision.NotPaired -> return
+        }
+        val tm = PinningTrustManager(cred.policy(), cred.pcId, false)
+        val secureClient = try {
+            val ctx = javax.net.ssl.SSLContext.getInstance("TLS"); ctx.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), null)
+            client.newBuilder().followRedirects(false).followSslRedirects(false).sslSocketFactory(ctx.socketFactory, tm).hostnameVerifier { _, _ -> true }.build()
+        } catch (e: Exception) { return }
         val req = try {
             Request.Builder()
-                .url("ws://$host:$port/ws")
-                .header("X-BingeMote-Token", token)
+                .url("https://${SecureHttp.urlHost(cred.host)}:${cred.port}/ws")
+                .header("X-BingeMote-Token", cred.token)
                 .build()
         } catch (e: Exception) { return } // a malformed saved host must never crash the screen
-        ws = client.newWebSocket(req, object : WebSocketListener() {
+        ws = secureClient.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 // A late onOpen from a replaced socket must not mark the new one open
                 // (drop() already checks this; onOpen did not).
@@ -77,6 +93,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
                 startHeartbeat()
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (HelperClient.isKeyMismatch(t)) { keyChanged = true; closedByUs = true } // same key-changed state as HTTP; no reconnect retries
                 drop(webSocket)
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -89,7 +106,7 @@ class LiveWs(private val host: String, private val port: Int, private val token:
         // A late callback from an old socket must not mark a newer healthy one closed.
         val ours = synchronized(this) { if (ws === webSocket) { ws = null; true } else false }
         if (ours) { open = false; stopHeartbeat() }
-        if (closedByUs || paused || scheduler.isShutdown) return
+        if (!RequestGate.mayReconnect(closedByUs, paused, scheduler.isShutdown, HelperClient.pairingSource)) return
         val delay = (500L shl attempts.coerceAtMost(4)).coerceAtMost(5000L) // 0.5, 1, 2, 4, 5... s
         attempts++
         try { synchronized(this) { pendingReconnect = scheduler.schedule({ connect() }, delay, TimeUnit.MILLISECONDS) } } catch (_: Exception) {}

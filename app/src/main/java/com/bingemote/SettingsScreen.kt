@@ -93,21 +93,40 @@ fun SettingsScreen(
         )
     }
     val configScope = rememberCoroutineScope()
+    // Read-back invalidation: a local toggle tap supersedes any in-flight read-back - a
+    // delayed old getConfig response must not overwrite the phone's newer choice. The
+    // pairing generation alone cannot see a phone-local toggle, hence this counter.
+    var configReadbackRun by remember { mutableStateOf(0) }
     // The helper owns the real state: read it back so both toggles reflect the PC, not
     // just the phone's memory. Helpers without a key leave it absent and the phone-local
     // value stands (best-effort, same as the POST).
     LaunchedEffect(Unit) {
-        val host = store.host; val port = store.helperPort; val token = store.helperToken
+        // The effect's ORIGIN generation: the response applies only while the pairing it
+        // was started under is still live.
+        val effectGen = store.pairingGeneration
+        val run = configReadbackRun
         configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val cfg = HelperClient.getConfig(host, port, token)
-                if (cfg.has("volumeOsd")) {
-                    val on = cfg.getBoolean("volumeOsd")
-                    showVolumeOnPc = on; store.showVolumeOnPc = on
-                }
-                if (cfg.has("keepAwake")) {
-                    val on = cfg.getBoolean("keepAwake")
-                    keepAwake = on; store.keepAwake = on
+                // ONE coherent snapshot+generation captured here on IO, never on Main
+                // (B5); a broken store skips the readback, and a snapshot from a DIFFERENT
+                // pairing than the effect's origin is rejected BEFORE the fetch.
+                val (snap, snapGen) = store.helperVlcSnapshotWithGeneration()
+                if (snap == null || snapGen != effectGen) return@launch
+                val cfg = HelperClient.getConfig(snap.host, snap.helperPort, snap.helperToken)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    // Reject again at the apply moment: a re-pair mid-fetch (generation
+                    // moved) or a local toggle since the read started (run superseded)
+                    // makes this response stale - the phone-local values stand. The apply
+                    // now also lands on Main, not on the IO fetch thread.
+                    if (store.pairingGeneration != effectGen || configReadbackRun != run) return@withContext
+                    if (cfg.has("volumeOsd")) {
+                        val on = cfg.getBoolean("volumeOsd")
+                        showVolumeOnPc = on; store.showVolumeOnPc = on
+                    }
+                    if (cfg.has("keepAwake")) {
+                        val on = cfg.getBoolean("keepAwake")
+                        keepAwake = on; store.keepAwake = on
+                    }
                 }
             } catch (_: Exception) { }
         }
@@ -131,16 +150,25 @@ fun SettingsScreen(
         // Zephyr's Connected Sources treatment: the orange pill IS the pairing entry
         // point (pill + name only; the old "Pair with a different PC" text line is gone).
         SettingsSection("Your PC", modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag("first_card")) {
-            SourceRow("PC", store.pcName.ifBlank { store.host }, hapticsOn = haptics, onLabelClick = onRepair)
+            SourceRow("PC", if (store.isConfigured) store.pcName.ifBlank { store.host } else if (store.pairingNeedsRepair) "Pair this phone again" else "Not paired", hapticsOn = haptics, onLabelClick = onRepair)
         }
         Spacer(Modifier.height(14.dp))
 
         SettingsSection("PC power") {
             ToggleRow("Keep PC awake while watching", keepAwake, haptics) {
                 keepAwake = it; store.keepAwake = it
-                val host = store.host; val port = store.helperPort; val token = store.helperToken
+                configReadbackRun++   // supersede any in-flight read-back
+                // The tap's pairing generation: the POST must reach the PC the tap was
+                // made against, never a PC paired between the tap and execution.
+                val tapGen = store.pairingGeneration
                 configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try { HelperClient.setKeepAwake(host, port, token, it) } catch (_: Exception) { }
+                    // ONE coherent snapshot captured here on IO, never on Main (B5). A
+                    // generation moved since the tap = a different PC: the phone-local
+                    // choice stands and the POST drops - the same honest no-op as a
+                    // failure, no claim the new PC was configured.
+                    val (snap, snapGen) = store.helperVlcSnapshotWithGeneration()
+                    if (snap == null || snapGen != tapGen) return@launch
+                    try { HelperClient.setKeepAwake(snap.host, snap.helperPort, snap.helperToken, it) } catch (_: Exception) { }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -239,9 +267,18 @@ fun SettingsScreen(
             Spacer(Modifier.height(9.dp))
             ToggleRow("Show volume on PC screen", showVolumeOnPc, haptics) {
                 showVolumeOnPc = it; store.showVolumeOnPc = it
-                val host = store.host; val port = store.helperPort; val token = store.helperToken
+                configReadbackRun++   // supersede any in-flight read-back
+                // The tap's pairing generation: the POST must reach the PC the tap was
+                // made against, never a PC paired between the tap and execution.
+                val tapGen = store.pairingGeneration
                 configScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    try { HelperClient.setVolumeOsd(host, port, token, it) } catch (_: Exception) { }
+                    // ONE coherent snapshot captured here on IO, never on Main (B5). A
+                    // generation moved since the tap = a different PC: the phone-local
+                    // choice stands and the POST drops - the same honest no-op as a
+                    // failure, no claim the new PC was configured.
+                    val (snap, snapGen) = store.helperVlcSnapshotWithGeneration()
+                    if (snap == null || snapGen != tapGen) return@launch
+                    try { HelperClient.setVolumeOsd(snap.host, snap.helperPort, snap.helperToken, it) } catch (_: Exception) { }
                 }
             }
             Spacer(Modifier.height(14.dp))

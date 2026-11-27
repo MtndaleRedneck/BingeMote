@@ -104,6 +104,37 @@ class AutoSetupCheckTest {
     }
 
     @Test
+    fun helper503IsSetupUnknownNeverDoneNeverRePair() {
+        // E6: the helper's strict setup-status 503 means "could not verify right now" - a
+        // distinct retry outcome, never a green Done and never a re-pair refusal.
+        val store = freshStore()
+        val helper = FakeServer { _, path, _, _ ->
+            if (path == "/vlc/setup-status") 503 to """{"ok":false}""" else 404 to "{}"
+        }.start()
+        val vlc = vlcServer("pw-1")
+        try {
+            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
+            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            assertEquals(AutoSetupCheck.Outcome.SETUP_UNKNOWN, AutoSetupCheck.run(store))
+        } finally { helper.stop(); vlc.stop() }
+    }
+
+    @Test
+    fun stalePhonePasswordWithSpentGrantIsRefused() {
+        // E7: the phone holds a superseded password, VLC has the current one, and the one-shot
+        // adopt grant is already spent (410) - the heal cannot fix it: REFUSED, never a false
+        // ready, and the re-pair guidance stands.
+        val store = freshStore()
+        val helper = helperServer(configured = true, pending = false, adoptPassword = null)
+        val vlc = vlcServer("new-pw")
+        try {
+            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
+            store.helperToken = "tok"; store.vlcPassword = "old-pw"
+            assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
+        } finally { helper.stop(); vlc.stop() }
+    }
+
+    @Test
     fun pendingAttestationIsDeferredWithoutPokingVlc() {
         val store = freshStore()
         val vlcHits = AtomicInteger(0)

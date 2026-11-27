@@ -8,7 +8,7 @@ using System.Text.Json;
 namespace BingeMoteHelper;
 
 /// <summary>
-/// LAN HTTP API for the paired phone. Every endpoint except /pair needs the
+/// LAN HTTPS API for the paired phone. Every endpoint except /pair needs the
 /// pairing token in X-BingeMote-Token, and only private (home network) addresses are served.
 /// </summary>
 internal sealed class HttpServer : IDisposable
@@ -17,10 +17,27 @@ internal sealed class HttpServer : IDisposable
     private Thread? _thread;
     private volatile bool _running;
 
+    // Test-only port override: lets the Windows runtime tests stand up an isolated
+    // identity/listener on their own port so teardown can never touch product state.
+    internal static int PortOverrideForTests;
+
     public void Start()
     {
-        _listener.Prefixes.Add($"http://+:{Program.HttpPort}/");
+        var port = PortOverrideForTests != 0 ? PortOverrideForTests : Program.HttpPort;
+        // HTTPS only. If the identity, key or either binding is not exactly as setup left it, nothing listens (no plaintext fallback).
+        if (!HelperTls.RuntimeReady(port, out var tlsWhy))
+        {
+            Program.Log("secure listener not started: " + tlsWhy);
+            throw new InvalidOperationException("Secure setup is not complete: " + tlsWhy);
+        }
+        _listener.Prefixes.Add($"https://+:{port}/");
         _listener.Start();
+        if (!HelperTls.VerifyListener(port, out var hsWhy))
+        {
+            try { _listener.Stop(); } catch { }
+            Program.Log("secure listener stopped: " + hsWhy);
+            throw new InvalidOperationException("Secure listener check failed: " + hsWhy);
+        }
         _running = true;
         _thread = new Thread(Loop) { IsBackground = true };
         _thread.Start();
@@ -43,6 +60,14 @@ internal sealed class HttpServer : IDisposable
         {
             var req = ctx.Request;
             var res = ctx.Response;
+
+            // A damaged pairing store is fail-closed for every route, before auth: 503 (never
+            // 401/403, which would tell the phone its token is dead), generic body, nothing spent.
+            if (Program.StoreBroken)
+            {
+                Reply(res, 503, "{\"error\":\"store broken\"}");
+                return;
+            }
 
             if (!IsPrivateAddress(req.RemoteEndPoint.Address))
             {
@@ -122,7 +147,12 @@ internal sealed class HttpServer : IDisposable
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
                     {
                         var pw = JsonDocument.Parse(ReadBody(req)).RootElement.GetProperty("password").GetString() ?? "";
-                        Reply(res, 200, VlcSetup.WriteVlcrc(pw));
+                        // E5 made the vlcrc reads strict: an unreadable file is a 503, never a
+                        // bare 500 (state stays safe - E5.6 leaves it untouched, E5.7 stages).
+                        // I2-2: expected IO/access failures from the write itself are the same
+                        // retryable 503.
+                        try { Reply(res, 200, VlcSetup.WriteVlcrc(pw)); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Reply(res, 503, "{\"ok\":false}"); }
                     }
                     return;
 
@@ -130,16 +160,70 @@ internal sealed class HttpServer : IDisposable
                 // a network error must never become a green Done on the phone by itself.
                 case "/vlc/setup-status":
                     if (!Authorized(req)) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
-                    Reply(res, 200, JsonSerializer.Serialize(new { configured = VlcSetup.Configured, pending = VlcSetup.Pending }));
+                    // E6: configured=true only from a STRICT-verified full setup state; an
+                    // unreadable vlcrc is a 503 (never a bare 500, never a false configured).
+                    // DELTA-H: BOTH fields come from ONE coherent read (ConfigSaveLock -> Gate);
+                    // pending means a LIVE obligation (never a superseded or already-applied
+                    // record). Same wire fields as before.
+                    try
+                    {
+                        var s = VlcSetup.StatusSnapshot();
+                        Reply(res, 200, JsonSerializer.Serialize(new { configured = s.configured, pending = s.pending }));
+                    }
+                    catch (VlcSetup.VlcrcUnreadableException)
+                    {
+                        Reply(res, 503, "{\"ok\":false}");
+                    }
                     return;
 
                 // The one-shot adoption fetch: a paired phone that lost its copy of the VLC
                 // password (or never finished setup) may fetch it exactly once, by request ID.
                 case "/vlc/adopt":
                     {
-                        var phone = FindPhone(req);
-                        if (phone == null) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
-                        HandleAdopt(req, res, phone);
+                        // F9: body parse and EVERY network reply stay OUTSIDE ConfigSaveLock -
+                        // a slow or stalled client must never stall every config save behind it.
+                        string requestId; bool ack;
+                        using (var doc = JsonDocument.Parse(ReadBody(req)))
+                        {
+                            var ar = doc.RootElement;
+                            requestId = ar.TryGetProperty("requestId", out var ri) ? ri.GetString() ?? "" : "";
+                            ack = ar.TryGetProperty("ack", out var ak) && ak.GetBoolean();
+                        }
+                        // E3: the token->phone lookup and the serve/ack run inside the ONE save
+                        // transaction (ConfigSaveLock -> PhonesLock), so a removal - itself a
+                        // ConfigSaveLock transaction - serializes against them: remove-then-adopt
+                        // misses the fresh lookup; adopt-then-remove legitimately pre-dates the
+                        // revoke. Fresh membership is checked on EVERY adopt call. The Result is
+                        // only CAPTURED here - mapped and replied after the lock is released.
+                        AdoptGrant.Result? adoptResult = null; string? adoptName = null;
+                        lock (Program.ConfigSaveLock)
+                        {
+                            var token = req.Headers["X-BingeMote-Token"];
+                            Program.PairedPhone? phone = null;
+                            if (token != null)
+                                lock (Program.PhonesLock) { phone = Program.Phones.FirstOrDefault(p => ConstantTimeEq(p.Token, token)); }
+                            if (phone != null)
+                            {
+                                adoptName = phone.Name;
+                                // NAMED UNRESOLVED LIMITATION: the serve reads/writes vlcrc
+                                // (local disk IO) inside ConfigSaveLock - responsiveness under a
+                                // stalled disk is not established (observed; not accepted, not
+                                // waived, not permitted by anyone).
+                                // I2-2: expected local IO/access failures map to Failed -> a
+                                // retryable 503, never a bare 500.
+                                try
+                                {
+                                    adoptResult = ack
+                                        ? AdoptGrant.Ack(phone, requestId, Program.SaveConfig)
+                                        : AdoptGrant.Serve(phone, VlcSetup.ReadOrCreatePassword, requestId, DateTime.UtcNow, Program.SaveConfig);
+                                }
+                                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                                {
+                                    adoptResult = new AdoptGrant.Result { Failed = true };
+                                }
+                            }
+                        }
+                        ReplyAdoptResult(res, ack, adoptName, adoptResult);
                     }
                     return;
 
@@ -243,64 +327,83 @@ internal sealed class HttpServer : IDisposable
     }
 
     /// <summary>POST /vlc/adopt: {requestId} fetches the PC's VLC password once per paired
-    /// phone; {requestId, ack:true} confirms the phone stored it and spends the grant.</summary>
-    private static void HandleAdopt(HttpListenerRequest req, HttpListenerResponse res, Program.PairedPhone phone)
+    /// phone; {requestId, ack:true} confirms the phone stored it and spends the grant.
+    /// F9: response mapping ONLY - this runs after the adopt save transaction's lock is
+    /// released; no Reply may be written under ConfigSaveLock.</summary>
+    private static void ReplyAdoptResult(HttpListenerResponse res, bool ack, string? phoneName, AdoptGrant.Result? r)
     {
-        using var doc = JsonDocument.Parse(ReadBody(req));
-        var r = doc.RootElement;
-        var requestId = r.TryGetProperty("requestId", out var ri) ? ri.GetString() ?? "" : "";
-        var ack = r.TryGetProperty("ack", out var ak) && ak.GetBoolean();
+        if (r == null) { Reply(res, 401, "{\"error\":\"bad token\"}"); return; }
+        if (r.Failed) { Reply(res, 503, "{\"ok\":false}"); return; } // persist failed; markers restored (E4)
         if (ack)
         {
-            var a = AdoptGrant.Ack(phone, requestId, Program.SaveConfig);
-            if (a.Acked)
+            if (r.Acked)
             {
-                Program.Log("Phone \"" + phone.Name + "\" stored the VLC password; its one-time fetch is spent.");
+                Program.Log("Phone \"" + phoneName + "\" stored the VLC password; its one-time fetch is spent.");
                 Reply(res, 200, "{\"ok\":true}");
             }
             else Reply(res, 409, "{\"error\":\"nothing to ack\"}");
             return;
         }
-        var result = AdoptGrant.Serve(phone, VlcSetup.ReadOrCreatePassword, requestId, DateTime.UtcNow, Program.SaveConfig);
-        if (result.Served)
+        if (r.Served)
         {
-            if (!result.Replayed)
-                Program.Log("Phone \"" + phone.Name + "\" fetched the VLC password (one-time; value never logged).");
-            Reply(res, 200, JsonSerializer.Serialize(new { password = result.Password }));
+            if (!r.Replayed)
+                Program.Log("Phone \"" + phoneName + "\" fetched the VLC password (one-time; value never logged).");
+            Reply(res, 200, JsonSerializer.Serialize(new { password = r.Password }));
         }
-        else if (result.Conflict)
+        else if (r.Conflict)
             Reply(res, 409, "{\"error\":\"adopt in flight\",\"detail\":\"A fetch is already underway. Retry with the same request id.\"}");
-        else if (result.AlreadySpent)
+        else if (r.AlreadySpent)
             Reply(res, 410, "{\"error\":\"adopt spent\",\"detail\":\"This phone already fetched its VLC password. Re-pair or set the password by hand.\"}");
         else
             Reply(res, 400, "{\"error\":\"bad request\"}");
     }
 
-    private static readonly object PairLock = new();
+    internal static readonly object PairLock = new();
+
+    /// <summary>Closes the Pair session when its code is older than PairSessionLifetime. Same lock as /pair.
+    /// Returns true when a code was closed. A closed session needs the owner to press Pair again.</summary>
+    internal static bool ExpirePairCodeIfStale(DateTime nowUtc)
+    {
+        lock (PairLock)
+        {
+            if (Program.PairCode == null) return false;
+            if (nowUtc - Program.PairCodeIssuedUtc < Program.PairSessionLifetime) return false;
+            Program.PairCode = null;
+            Program.PendingPhoneName = null;
+            Program.Log("Pairing session closed after 10 minutes.");
+            return true;
+        }
+    }
     private void HandlePair(HttpListenerRequest req, HttpListenerResponse res)
     {
-        lock (PairLock) { HandlePairLocked(req, res); }
+        // Read the request body BEFORE taking the lock: a slow or stalled client must never
+        // hold PairLock, or the window's Cancel/Start (same lock) would freeze behind it.
+        var body = ReadBody(req);
+        lock (PairLock) { HandlePairLocked(body, res); }
     }
-    private void HandlePairLocked(HttpListenerRequest req, HttpListenerResponse res)
+    private void HandlePairLocked(string body, HttpListenerResponse res)
     {
         if (Program.PairFailures >= Program.MaxPairFailures)
         {
             Program.Log("Pairing locked - too many wrong codes.");
-            Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Restart BingeMote on the PC to try again.\"}");
+            Reply(res, 429, "{\"error\":\"locked\",\"detail\":\"Too many wrong codes. Press Pair again in the BingeMote window on the PC.\"}");
             return;
         }
+        ExpirePairCodeIfStale(DateTime.UtcNow);
+        // Snapshot the pairing state ONCE under the lock: the UI thread also writes it
+        // (Start/Cancel/expiry), and a null landing between the check and the compare
+        // would turn into an exception instead of an answer.
+        var pairCode = Program.PairCode;
         // No code on screen: guesses here must not count toward the lock, or anyone on the
         // Wi-Fi could lock pairing while he is not even pairing.
-        if (Program.PairCode == null)
+        if (pairCode == null)
         {
             Reply(res, 403, "{\"error\":\"bad code\"}");
             return;
         }
-        var body = ReadBody(req);
         var code = JsonDocument.Parse(body).RootElement.GetProperty("code").GetString() ?? "";
-        // One-shot and rate-limited, but never timed: the code stays valid until it pairs or is canceled.
-        var valid = Program.PairCode != null
-                    && ConstantTimeEq(code, Program.PairCode);
+        // One-shot, rate-limited, and closes after the 10-minute Pair session.
+        var valid = ConstantTimeEq(code, pairCode);
         if (!valid)
         {
             Program.PairFailures++;
@@ -314,30 +417,90 @@ internal sealed class HttpServer : IDisposable
             Reply(res, 409, "{\"error\":\"too many phones\",\"detail\":\"This PC already has " + Program.MaxPhones + " phones paired. Remove one in the BingeMote window on the PC to make room.\"}");
             return;
         }
+        // S10: decide the VLC password BEFORE anything is saved or spent (E1). An unreadable
+        // vlcrc refuses the whole pair with a retryable 503 - never a fresh password planned
+        // over an unreadable (possibly configured) one.
+        VlcSetup.PasswordPlan plan;
+        try { plan = VlcSetup.PlanPassword(); }
+        catch (VlcSetup.VlcrcUnreadableException)
+        {
+            Reply(res, 503, "{\"error\":\"vlcrc unreadable\",\"detail\":\"VLC's settings file could not be read. Nothing was saved - try the same code again in a moment.\"}");
+            return;
+        }
         var token = Program.NewToken();
         // The name typed in the window when Pair was tapped; a code from elsewhere pairs as "Phone N".
-        var phoneName = Program.PendingPhoneName;
+        string? phoneName = Program.PendingPhoneName;
         Program.PendingPhoneName = null;
-        lock (Program.PhonesLock)
+        // Transactional: mutation and persist inside the one save lock. A failed save rolls the
+        // in-memory add back and the code is NOT spent - he can try the same code again; the
+        // typed name goes back too.
+        if (!TrySavePair(token, ref phoneName, plan.IsFreshCandidate ? plan.Value : null, out var livePendingInstead))
         {
-            if (string.IsNullOrWhiteSpace(phoneName)) phoneName = "Phone " + (Program.Phones.Count + 1);
-            Program.Phones.Add(new Program.PairedPhone { Token = token, Name = phoneName.Trim() });
+            Program.PendingPhoneName = phoneName;
+            Reply(res, 503, "{\"error\":\"save failed\",\"detail\":\"The pairing worked but could not be saved on the PC. Try the same code again in a moment.\"}");
+            return;
         }
+        // Persisted: only now is the code spent.
         Program.PairCode = null;
         Program.PairFailures = 0;
-        Program.SaveConfig();
         Program.Log("Phone paired as \"" + phoneName + "\" (" + Program.PhonesCount + " total).");
-        // Automatic-first VLC setup: the freshly paired phone gets the PC's password in the
-        // code-gated pair response, so nobody types anything into VLC's settings.
-        var vlcPassword = VlcSetup.ReadOrCreatePassword();
+        // Automatic-first VLC setup (S10): the phone is durable now, so the token MUST reach
+        // it - truthfulness comes from the fields. For a fresh candidate the pending record is
+        // already durable (staged in the SAME save as the phone, F12/D1); the apply completes
+        // it via the E1 decision. F12/D2: vlcPending is true whenever the served value is not
+        // verified in effect - an unverified password NEVER reads as "ready".
+        // I2-3: when an intervening live pending was preserved, the pair serves THAT value.
+        var applied = VlcSetup.ApplyPlannedPassword(livePendingInstead ?? plan.Value);
         Reply(res, 200, JsonSerializer.Serialize(new
         {
             token = token,
             name = Program.MachineLabel(),
-            vlcPassword = vlcPassword,
-            vlcPending = VlcSetup.Pending,
+            vlcPassword = applied.value,
+            vlcPending = !applied.verifiedInEffect || VlcSetup.Pending,
         }));
         Program.PhonesChanged?.Invoke();
+    }
+
+    /// <summary>F12/D1: the pair save transaction - the phone record and, for a FRESH password
+    /// candidate, the pending vlcrc stage persist as ONE save (order ConfigSaveLock ->
+    /// PhonesLock). A failed persist rolls BOTH back (phone removed, prior pending snapshot
+    /// restored) and returns false: the pair code stays unspent and the route answers 503.
+    /// Serve-branch plans stage nothing (current already in effect; branch 5 already durable).</summary>
+    internal static bool TrySavePair(string token, ref string? phoneName, string? freshCandidate, out string? livePendingInstead)
+    {
+        livePendingInstead = null;
+        lock (Program.ConfigSaveLock)
+        {
+            lock (Program.PhonesLock)
+            {
+                if (string.IsNullOrWhiteSpace(phoneName)) phoneName = "Phone " + (Program.Phones.Count + 1);
+                Program.Phones.Add(new Program.PairedPhone { Token = token, Name = phoneName!.Trim() });
+            }
+            // E2: a superseded pending record is cleared in the SAME save as the phone
+            // record - never restaged, never served again.
+            var priorPending = VlcSetup.ClearSupersededPendingWithinSaveLock();
+            // F12/D1 + I2-3: a fresh candidate is staged in the SAME save - a crash between
+            // commit and apply can never leave a durable phone with its password nowhere. But
+            // the plan predates this lock: if a DIFFERENT live pending was staged in between
+            // (e.g. a /vlc/setup deferral), it is owed and durable - never overwritten; the
+            // pair serves that value instead.
+            if (freshCandidate != null && !VlcSetup.TryStageFreshCandidateWithinSaveLock(freshCandidate))
+            {
+                // F15: the owed pending stands; the never-staged candidate is DROPPED so no
+                // later caller can apply it. What the phone is served (the owed value) is
+                // already durable - D1 crash-safety holds for the value actually served.
+                VlcSetup.DropCandidateWithinSaveLock(freshCandidate);
+                livePendingInstead = VlcSetup.PendingValueWithinSaveLock;
+            }
+            try { Program.SaveConfig(); return true; }
+            catch (Exception ex)
+            {
+                VlcSetup.RestorePendingSnapshotWithinSaveLock(priorPending.prior, priorPending.priorSup);
+                lock (Program.PhonesLock) { Program.Phones.RemoveAll(p => p.Token == token); }
+                Program.Log("Pairing could not be saved: " + ex.Message);
+                return false;
+            }
+        }
     }
 
     /// <summary>GET returns the shared settings; POST writes them: movies folder, keep-awake, volume pop-up.</summary>
@@ -349,27 +512,45 @@ internal sealed class HttpServer : IDisposable
             return;
         }
         var root = JsonDocument.Parse(ReadBody(req)).RootElement;
-        if (root.TryGetProperty("moviesFolder", out var mf))
-        {
-            Program.MoviesFolder = (mf.GetString() ?? "").Trim();
-            Program.Log("Movies folder set from the phone: " + (Program.MoviesFolder.Length == 0 ? "(cleared)" : Program.MoviesFolder));
-        }
-        // The keep-awake switch: off means the laptop follows its normal sleep rules again.
-        if (root.TryGetProperty("keepAwake", out var ka) && (ka.ValueKind == JsonValueKind.True || ka.ValueKind == JsonValueKind.False))
-        {
-            Program.KeepAwakeEnabled = ka.GetBoolean();
-            if (!Program.KeepAwakeEnabled) PowerWake.SyncToVlc(false);
-            Program.Log("Keep-awake while a video is loaded in VLC: " + (Program.KeepAwakeEnabled ? "on" : "off") + ".");
-        }
-        // The "Show volume on PC screen" switch: off hides the pop-up immediately.
-        if (root.TryGetProperty("volumeOsd", out var vo) && (vo.ValueKind == JsonValueKind.True || vo.ValueKind == JsonValueKind.False))
-        {
-            Program.VolumeOsdEnabled = vo.GetBoolean();
-            if (!Program.VolumeOsdEnabled) VolumeOsd.HideNow();
-            Program.Log("Volume pop-up on the PC screen: " + (Program.VolumeOsdEnabled ? "on" : "off") + ".");
-        }
-        Program.SaveConfig();
+        string? newFolder = root.TryGetProperty("moviesFolder", out var mf) ? (mf.GetString() ?? "").Trim() : null;
+        bool? newKeepAwake = root.TryGetProperty("keepAwake", out var ka) && (ka.ValueKind == JsonValueKind.True || ka.ValueKind == JsonValueKind.False) ? ka.GetBoolean() : null;
+        bool? newVolumeOsd = root.TryGetProperty("volumeOsd", out var vo) && (vo.ValueKind == JsonValueKind.True || vo.ValueKind == JsonValueKind.False) ? vo.GetBoolean() : null;
+        if (!ApplyConfigChange(newFolder, newKeepAwake, newVolumeOsd)) { Reply(res, 503, "{\"ok\":false,\"detail\":\"The PC could not save the change.\"}"); return; }
         Reply(res, 200, "{\"ok\":true}");
+    }
+
+    /// <summary>S8: change + persist as one unit. Side effects (sleep rules, pop-up) and log
+    /// lines run only after the change is on disk; a refused save rolls the settings back and
+    /// returns false, so the phone never shows a state the PC will lose at restart.</summary>
+    internal static bool ApplyConfigChange(string? newFolder, bool? newKeepAwake, bool? newVolumeOsd)
+    {
+        string? priorFolder = null; bool priorKeep = true, priorOsd = true;
+        var saved = Program.MutateAndPersist(
+            () =>
+            {
+                priorFolder = Program.MoviesFolder; priorKeep = Program.KeepAwakeEnabled; priorOsd = Program.VolumeOsdEnabled;
+                if (newFolder != null) Program.MoviesFolder = newFolder;
+                if (newKeepAwake is bool k) Program.KeepAwakeEnabled = k;
+                if (newVolumeOsd is bool v) Program.VolumeOsdEnabled = v;
+            },
+            () => { Program.MoviesFolder = priorFolder; Program.KeepAwakeEnabled = priorKeep; Program.VolumeOsdEnabled = priorOsd; },
+            "the settings from the phone");
+        if (!saved) return false;
+        if (newFolder != null)
+            Program.Log("Movies folder set from the phone: " + (newFolder.Length == 0 ? "(cleared)" : newFolder));
+        if (newKeepAwake is bool k2)
+        {
+            // The keep-awake switch: off means the laptop follows its normal sleep rules again.
+            if (!k2) PowerWake.SyncToVlc(false);
+            Program.Log("Keep-awake while a video is loaded in VLC: " + (k2 ? "on" : "off") + ".");
+        }
+        if (newVolumeOsd is bool v2)
+        {
+            // The "Show volume on PC screen" switch: off hides the pop-up immediately.
+            if (!v2) VolumeOsd.HideNow();
+            Program.Log("Volume pop-up on the PC screen: " + (v2 ? "on" : "off") + ".");
+        }
+        return true;
     }
 
     private static void RouteCommand(string path, string body, HttpListenerResponse res)

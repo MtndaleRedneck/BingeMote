@@ -1,0 +1,108 @@
+# DRAFT v3 - private, not committed. One bounded whole-team TEST-ONLY review; separate from
+# product release and from the firewall design question. Push (if cleared) via guard v2 gpush,
+# explicit refspec: ci/windows-runtime-20261127. Branch deleted after green.
+name: Windows runtime checks
+on:
+  push:
+    branches: [ci/windows-runtime-20261127]   # exact ref, no glob family, no dispatch trigger
+permissions:
+  contents: read                              # read-only token
+
+jobs:
+  helper-runtime:
+    if: github.ref == 'refs/heads/ci/windows-runtime-20261127'   # exact-ref guard
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2, SHA-pinned (verified live 2026-11-27)
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1, SHA-pinned (verified live 2026-11-27)
+        with:
+          dotnet-version: 10.x
+
+      - name: Elevation facts (claimed-unelevated checks must be really unelevated)
+        shell: pwsh
+        run: |
+          $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+          $p = [System.Security.Principal.WindowsPrincipal]$id
+          "runner user: $($id.Name)"
+          "admin: $($p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator))"
+          # T-W1's read-only parse + T-W2/T-W4/T-W5/T-W6 make no elevation claim.
+          # Any future step claiming UNELEVATED must prove it here, not assert it.
+
+      - name: Helper unit tests (existing set, mirrors build.yml; WinRuntime excluded, fail-loud with TRX counts)
+        shell: pwsh
+        run: |
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc&FullyQualifiedName!~WinRuntime' --logger "trx;LogFileName=unit.trx" --results-directory results
+          if ($LASTEXITCODE -ne 0) { throw "unit tests failed rc=$LASTEXITCODE" }
+
+      - name: Windows lifecycle/runtime tests T-W1..W6 (hosted-only guard inside the test class; fail-loud with TRX counts)
+        shell: pwsh
+        run: |
+          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName~WinRuntime' --logger "trx;LogFileName=winrt.trx" --results-directory results
+          if ($LASTEXITCODE -ne 0) { throw "WinRuntime tests failed rc=$LASTEXITCODE" }
+
+      - name: Assert real counts (executed=passed=total, notExecuted=0, exact five facts)
+        shell: pwsh
+        run: |
+          $u = [xml](Get-Content results/unit.trx); $w = [xml](Get-Content results/winrt.trx)
+          $ut = $u.TestRun.ResultSummary.Counters; $wt = $w.TestRun.ResultSummary.Counters
+          "unit:  total=$($ut.total) executed=$($ut.executed) passed=$($ut.passed) notExecuted=$($ut.notExecuted)"
+          "winrt: total=$($wt.total) executed=$($wt.executed) passed=$($wt.passed) notExecuted=$($wt.notExecuted)"
+          foreach ($c in @($ut, $wt)) {
+            if ([int]$c.total -eq 0) { throw "a leg ran ZERO tests" }
+            if ([int]$c.executed -ne [int]$c.total -or [int]$c.passed -ne [int]$c.total -or [int]$c.notExecuted -ne 0) {
+              throw "unclean counters: executed=passed=total and notExecuted=0 required" }
+          }
+          if ([int]$wt.total -ne 5) { throw "WinRuntime leg must run exactly the 5 authored facts" }
+          $names = @($w.TestRun.Results.UnitTestResult | ForEach-Object { $_.testName })
+          $expected = @('TW1_UrlAclParsingAgainstRealNetshOutput',
+                        'TW2_DefaultRouteProfileIsRealAndClassified',
+                        'TW3_RealLoopbackPinnedHttpsRoundTrip',
+                        'TW4_VlcrcRewritePreservesAclAndCreationTime',
+                        'TW56_DeferredWriteWaitsForRealVlcProcessThenCompletes')
+          foreach ($e in $expected) { if ($names -notcontains $e) { throw "missing fact: $e" } }
+          foreach ($r in $w.TestRun.Results.UnitTestResult) { if ($r.outcome -ne 'Passed') { throw "non-passed fact: $($r.testName) = $($r.outcome)" } }
+
+      - name: Cleanup disposable test residue (always; best-effort; proven-ownership only)
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item "$env:TEMP\bm-winrt-*" -Recurse -Force -ErrorAction SilentlyContinue
+          # Binding backstop, Zephyr conservative pattern: an 8489 binding is removed only when
+          # a successful query of that exact endpoint proves it carries THIS run's marker
+          # thumbprint AND AppId. Failed/unparseable/non-matching queries retain; absence is
+          # never inferred. Owning the marker or the port alone is not proof of ownership.
+          # The cert, key container, marker and journal are never deleted: the hosted runner
+          # is destroyed whole, so residue is disposable by construction (a technical fact,
+          # not an acceptance claim). Cleanup never turns the run red.
+          $marker = Join-Path $env:ProgramData 'BingeMote\tls-identity.json'
+          $thumb = ''; $appId = ''
+          if (Test-Path $marker) {
+            $text = Get-Content $marker -Raw
+            $mt = [regex]::Match($text, '[0-9A-Fa-f]{40}'); if ($mt.Success) { $thumb = $mt.Value }
+            $ma = [regex]::Match($text, '[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}'); if ($ma.Success) { $appId = $ma.Value }
+          }
+          foreach ($ep in @('0.0.0.0:8489', '[::]:8489')) {
+            if ($thumb.Length -ne 40 -or $appId.Length -ne 36) { Write-Output "CLEANUP: no valid test marker; retaining $ep"; continue }
+            $out = (netsh http show sslcert "ipport=$ep" 2>&1) -join "`n"
+            if ($LASTEXITCODE -ne 0) { Write-Output "CLEANUP: query failed for $ep; retaining"; continue }
+            $h = [regex]::Match($out, 'Certificate Hash\s*:\s*([0-9A-Fa-f]{40})')
+            $a = [regex]::Match($out, 'Application ID\s*:\s*\{?([0-9A-Fa-f-]{36})\}?')
+            if ($h.Success -and $a.Success -and ($h.Groups[1].Value -ieq $thumb) -and ($a.Groups[1].Value -ieq $appId)) {
+              netsh http delete sslcert "ipport=$ep" | Out-Null
+              Write-Output "CLEANUP: removed test-owned binding $ep"
+            } else { Write-Output "CLEANUP: binding ownership unproven at $ep; retaining" }
+          }
+          Write-Output "CLEANUP: cert/key/marker/journal intentionally retained for runner destruction"
+          $global:LASTEXITCODE = 0
+          exit 0
+
+# Proof boundaries: T-W1/T-W2 prove parse/detection vs real Windows output; T-W3 proves
+# pinned-HTTPS loopback plumbing on an isolated test identity; T-W4 real File.Replace
+# ACL/metadata semantics; T-W5/W6 deferred vlcrc write vs a real process. NONE proves phone
+# reachability on a genuine Public-profile LAN - that stays a device-verified gate.
+# Freshness is enforced, not assumed: WinRuntimeTlsTests refuses (fail-loud) unless
+# GITHUB_ACTIONS=true and no pre-existing product TLS marker/journal/8488 binding exists.
+# Disposable-runner rationale (technical, not an acceptance claim): the runner VM is created
+# per job and destroyed after; retained test residue dies with it.

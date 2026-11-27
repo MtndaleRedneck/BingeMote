@@ -17,7 +17,9 @@ object Diag {
     val cmdsExpired = AtomicLong()
     /** Volume steps folded into a newer step. */
     val volumeCoalesced = AtomicLong()
+    /** Commands (or the rest of a sequence) dropped because the pairing changed mid-flight. */
+    val cmdsPairingDropped = AtomicLong()
 
     fun snapshot(): String =
-        "ws=${wsSends.get()} wsDrops=${wsDrops.get()} httpFallback=${httpFallbacks.get()} expired=${cmdsExpired.get()} volCoalesced=${volumeCoalesced.get()}"
+        "ws=${wsSends.get()} wsDrops=${wsDrops.get()} httpFallback=${httpFallbacks.get()} expired=${cmdsExpired.get()} volCoalesced=${volumeCoalesced.get()} pairingDropped=${cmdsPairingDropped.get()}"
 }

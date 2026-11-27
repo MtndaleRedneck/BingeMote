@@ -99,23 +99,31 @@ class MediaControlsService : Service() {
      * unmute only if it was muted); otherwise drive VLC volume, capped at 100%. */
     @Volatile private var lastStatus: VlcStatus? = null
     private fun currentPlayback(store: Store): VlcStatus = lastStatus
-        ?: Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+        ?: run { val vt = store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC."); Vlc.status(vt.host, vt.port, vt.password) }
 
     private fun volumeBy(store: Store, delta: Int) {
         scope.launch {
             try {
-                val helper = if (store.helperToken.isNotBlank())
-                    try { HelperClient.volumeGet(store.host, store.helperPort, store.helperToken) } catch (_: Exception) { null }
+                // ONE capture owns the whole get->set sequence: a re-pair mid-sequence
+                // drops the rest instead of redirecting it onto the new pairing.
+                val seq = store.pairingSequence()
+                val helper = if (seq != null)
+                    try { HelperClient.volumeGet(seq.snapshot.host, seq.snapshot.helperPort, seq.snapshot.helperToken) } catch (_: Exception) { null }
                 else null
-                if (helper != null) {
+                if (helper != null && seq != null) {
+                    if (!seq.isCurrent()) { Diag.cmdsPairingDropped.incrementAndGet(); return@launch }
                     val (win, winMuted) = helper
                     val next = (win + if (delta > 0) 5 else -5).coerceIn(0, 100)
-                    HelperClient.volumeSet(store.host, store.helperPort, store.helperToken, next)
-                    if (winMuted) HelperClient.volumeMute(store.host, store.helperPort, store.helperToken, false)
+                    HelperClient.volumeSet(seq.snapshot.host, seq.snapshot.helperPort, seq.snapshot.helperToken, next)
+                    if (winMuted) {
+                        if (!seq.isCurrent()) { Diag.cmdsPairingDropped.incrementAndGet(); return@launch }
+                        HelperClient.volumeMute(seq.snapshot.host, seq.snapshot.helperPort, seq.snapshot.helperToken, false)
+                    }
                 } else {
                     val st = currentPlayback(store)
                     val next = (st.volumeRaw + delta).coerceIn(0, Vlc.VOLUME_100)
-                    Vlc.setVolume(store.host, store.vlcPort, store.vlcPassword, next)
+                    val vt = store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                    Vlc.setVolume(vt.host, vt.port, vt.password, next)
                     lastStatus = st.copy(volumeRaw = next)
                             }
                 refreshNow()
@@ -126,7 +134,8 @@ class MediaControlsService : Service() {
     private fun jump(store: Store, deltaSec: Int) {
         scope.launch {
             try {
-                Vlc.skip(store.host, store.vlcPort, store.vlcPassword, deltaSec)
+                val vt = store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                Vlc.skip(vt.host, vt.port, vt.password, deltaSec)
                 refreshNow()
             } catch (e: Exception) { if (e is CancellationException) throw e }
         }
@@ -161,8 +170,10 @@ class MediaControlsService : Service() {
         if (recognized) { commandEpoch.incrementAndGet(); pollVersion.incrementAndGet() }
         when (intent?.action) {
             // Both skips use the primary interval, matching the in-app controls.
-            ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
-            ACTION_MEDIA_FAST_FORWARD -> { jump(Store(this), Store(this).skipMainSec); return START_STICKY }
+            // One Store per tap (was two constructions per expression); lifetime and
+            // initialization are unchanged - built here on Main per command, as before.
+            ACTION_MEDIA_REWIND -> { val st = Store(this); jump(st, -st.skipMainSec); return START_STICKY }
+            ACTION_MEDIA_FAST_FORWARD -> { val st = Store(this); jump(st, st.skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
                 //  the glyph used to wait for VLC's answer (1-2 s on a
                 // busy player). Flip on receipt for instant feedback. If the command
@@ -192,7 +203,8 @@ class MediaControlsService : Service() {
                     try {
                         val store = Store(this@MediaControlsService)
                         deliveryObserver?.invoke()
-                        Vlc.togglePause(store.host, store.vlcPort, store.vlcPassword)
+                        val vt = store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                        Vlc.togglePause(vt.host, vt.port, vt.password)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         synchronized(this@MediaControlsService) {
@@ -328,10 +340,11 @@ class MediaControlsService : Service() {
             val commitObserver = if (BuildConfig.DEBUG) beforePollCommit else null
             val committedObserver = if (BuildConfig.DEBUG) pollCommitted else null
             val st = try {
-                Vlc.status(store.host, store.vlcPort, store.vlcPassword)
+                val vt = store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                Vlc.status(vt.host, vt.port, vt.password)
             } catch (e: Vlc.BadAuth) {
                 // The one automatic heal: adopt the PC's current password once; never push ours.
-                if (VlcAuthRepair.tryHealOnce(store)) { return } // the next poll uses it
+                if (VlcAuthRepair.tryHealOnce(store) != null) { return } // healed: the next poll uses it
                 recordPollFailure(epoch, failureObserver)
                 return
             } catch (e: Exception) { if (e is CancellationException) throw e;

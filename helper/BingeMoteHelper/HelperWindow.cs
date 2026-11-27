@@ -639,9 +639,12 @@ internal sealed class HelperWindow : Form
                 _wifiBtn.Enabled = true;
                 if (ok)
                 {
-                    Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
-                    if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
-                        Program.HomeNetworks.Add(profile.Name);
+                    lock (Program.PhonesLock)
+                    {
+                        Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                        if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
+                            Program.HomeNetworks.Add(profile.Name);
+                    }
                     Program.SaveConfig();
                     Program.Log("Network \"" + profile.Name + "\" marked Private from the window strip.");
                     _wifiProfile = null;
@@ -743,15 +746,16 @@ internal sealed class HelperWindow : Form
     /// <summary>Show or hide the pairing code block (window-visible work).</summary>
     private void TickStatus()
     {
+        HttpServer.ExpirePairCodeIfStale(DateTime.UtcNow);
         _code.Text = Program.PairCode ?? "----";
-        // The block shows only a live code (caption, code, Cancel, note); codes never expire.
+        // The block shows only a live code (caption, code, Cancel, note); a Pair session closes after 10 minutes.
         var live = Program.PairCode != null;
         if (live != _codeShown || live != _code.Visible)
         {
             _codeShown = live;
             _codeCaption.Visible = _code.Visible = _cancelPair.Visible = live;
             _codeNote.Visible = live;
-            _codeNote.Text = "Enter this code in the BingeMote app on your phone. Works once.";
+            _codeNote.Text = "Enter this code in the BingeMote app on your phone. Works once, for 10 minutes.";
             ApplyLayout();
         }
     }
@@ -759,9 +763,15 @@ internal sealed class HelperWindow : Form
     /// <summary>Cancel drops the code and goes back to step one, keeping the typed name.</summary>
     private void CancelPairing()
     {
-        var name = Program.PendingPhoneName;
-        Program.PairCode = null;
-        Program.PendingPhoneName = null;
+        string? name;
+        // Same lock as /pair and expiry: a cancel landing between the pair handler's check and
+        // its compare must never turn into an exception or a half-cleared state.
+        lock (HttpServer.PairLock)
+        {
+            name = Program.PendingPhoneName;
+            Program.PairCode = null;
+            Program.PendingPhoneName = null;
+        }
         if (!string.IsNullOrEmpty(name) && _nameBox.Text.Trim().Length == 0) _nameBox.Text = name;
         Program.Log("Pairing canceled from the window.");
         TickStatus();
@@ -840,8 +850,19 @@ internal sealed class HelperWindow : Form
         if (!ConfirmDialog.Ask(this,
                 "Remove " + ph.Name + "? It stops controlling this PC right away. You can pair it again any time with a new code.",
                 "Remove")) return;
-        lock (Program.PhonesLock) { Program.Phones.Remove(ph); }
-        Program.SaveConfig();
+        // Transactional: the removal is durable before it is reported; a failed save restores it.
+        lock (Program.ConfigSaveLock)
+        {
+            lock (Program.PhonesLock) { Program.Phones.Remove(ph); }
+            try { Program.SaveConfig(); }
+            catch (Exception ex)
+            {
+                lock (Program.PhonesLock) { Program.Phones.Add(ph); }
+                Program.Log("Phone removal could not be saved: " + ex.Message);
+                NoteDialog.Show(this, "The change could not be saved on the PC. Try again in a moment.");
+                return;
+            }
+        }
         Program.Log("Phone removed: " + ph.Name + " (" + Program.PhonesCount + " left).");
         RefreshPhones();
     }
@@ -852,8 +873,20 @@ internal sealed class HelperWindow : Form
         if (!ConfirmDialog.Ask(this,
                 "Remove all phones? Every phone stops controlling this PC right away. Pair them again with new codes.",
                 "Remove all")) return;
-        lock (Program.PhonesLock) { Program.Phones.Clear(); }
-        Program.SaveConfig();
+        // Transactional: the removal is durable before it is reported; a failed save restores it.
+        lock (Program.ConfigSaveLock)
+        {
+            Program.PairedPhone[] removed;
+            lock (Program.PhonesLock) { removed = Program.Phones.ToArray(); Program.Phones.Clear(); }
+            try { Program.SaveConfig(); }
+            catch (Exception ex)
+            {
+                lock (Program.PhonesLock) { Program.Phones.AddRange(removed); }
+                Program.Log("Phone removal could not be saved: " + ex.Message);
+                NoteDialog.Show(this, "The change could not be saved on the PC. Try again in a moment.");
+                return;
+            }
+        }
         Program.Log("All phones removed.");
         RefreshPhones();
     }
@@ -863,9 +896,18 @@ internal sealed class HelperWindow : Form
     {
         var name = _nameBox.Text.Trim();
         if (name.Length == 0) return;
-        Program.PendingPhoneName = name;
-        Program.PairCode = Program.NewPairCode();
-        Program.PairFailures = 0;
+        if (Program.StoreBroken)
+        {
+            NoteDialog.Show(this, "The saved pairing data on this PC " + Program.StoreBrokenReason + ", so BingeMote will not pair a new phone until that is sorted out. Nothing was changed or deleted.");
+            return;
+        }
+        lock (HttpServer.PairLock)
+        {
+            Program.PendingPhoneName = name;
+            Program.PairCode = Program.NewPairCode();
+            Program.PairCodeIssuedUtc = DateTime.UtcNow;
+            Program.PairFailures = 0;
+        }
         _nameBox.Clear();
         Program.Log("Pairing code created for \"" + name + "\".");
         TickStatus();
@@ -1315,9 +1357,12 @@ internal sealed class HelperWindow : Form
                     {
                         if (ok)
                         {
-                            Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
-                            if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
-                                Program.HomeNetworks.Add(profile.Name);
+                            lock (Program.PhonesLock)
+                            {
+                                Program.DeclinedNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                                if (!Program.HomeNetworks.Any(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase)))
+                                    Program.HomeNetworks.Add(profile.Name);
+                            }
                             Program.SaveConfig();
                             _wifiProfile = null;
                             SetWifiStripVisible(false);
@@ -1338,9 +1383,14 @@ internal sealed class HelperWindow : Form
                 OpenWifiSettings();
                 break;
             case WifiDialog.Result.NotNow:
-                Program.DeclinedNetworks.Add(profile.Name);
-                // Saying "Not now" on a network once marked home means it is not home after all.
-                Program.HomeNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                // Both list mutations under the one lock (S9): a torn window here is exactly
+                // what the Wi-Fi coherence fix exists to close.
+                lock (Program.PhonesLock)
+                {
+                    Program.DeclinedNetworks.Add(profile.Name);
+                    // Saying "Not now" on a network once marked home means it is not home after all.
+                    Program.HomeNetworks.RemoveAll(n => string.Equals(n, profile.Name, StringComparison.OrdinalIgnoreCase));
+                }
                 Program.SaveConfig();
                 Program.Log("Public-network popup declined for \"" + profile.Name + "\" - not asking again.");
                 break;

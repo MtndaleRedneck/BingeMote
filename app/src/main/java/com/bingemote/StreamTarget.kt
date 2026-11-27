@@ -9,7 +9,9 @@ object StreamTarget {
         fun state(): StreamIdlePolicy.PlayerState =
             StreamIdlePolicy.mapState(Vlc.status(host, port, credential).state)
     }
-    fun capture(s: Store): Target = Target(s.host, s.vlcPort, s.vlcPassword)
+    /** One coherent VLC target (host+port+password from a single locked read) or null when the
+     *  store is broken or unpaired - the caller shows the same honest failure a dead VLC gives. */
+    fun capture(s: Store): Target? = s.vlcTarget()?.let { Target(it.host, it.port, it.password) }
     fun play(target: Target, url: String, subs: List<String>) {
         // Capture ownership even if the final response is lost. UNKNOWN never authorizes stop.
         StreamCoordinator.servedReceivers.add(target)

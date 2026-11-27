@@ -21,6 +21,7 @@ internal static class AdoptGrant
         public bool Conflict;      // a different request ID while one is still in flight
         public bool AlreadySpent;  // 410
         public bool Acked;         // consumed-ack accepted
+        public bool Failed;        // persist failed: markers restored, route replies 503
         public string? Password;   // set when Served/Replayed
     }
 
@@ -40,19 +41,26 @@ internal static class AdoptGrant
                     return new Result { Served = true, Replayed = true, Password = password() };
                 if (withinWindow)
                     return new Result { Conflict = true }; // another fetch attempt must wait for the window
-                // Window expired without an ack: the grant is spent.
+                // Window expired without an ack: the grant is spent. On a failed persist the
+                // markers are restored (E4): memory must never run ahead of disk, or a retry
+                // replays from memory and a restart re-arms the grant.
+                var ws = phone.AdoptSpent; var wr = phone.AdoptRequestId; var wa = phone.AdoptServedAtUtc;
                 phone.AdoptSpent = true;
                 phone.AdoptRequestId = null;
                 phone.AdoptServedAtUtc = null;
-                persist();
+                try { persist(); }
+                catch { phone.AdoptSpent = ws; phone.AdoptRequestId = wr; phone.AdoptServedAtUtc = wa; return new Result { Failed = true }; }
                 return new Result { AlreadySpent = true };
             }
             var pw = password();
             // Persist the marker BEFORE serving: a restart now replays/spends from the
-            // record instead of silently re-arming a fresh grant.
+            // record instead of silently re-arming a fresh grant. On a failed persist the
+            // markers are restored and nothing is served (E4).
+            var ps = phone.AdoptSpent; var pr = phone.AdoptRequestId; var pa = phone.AdoptServedAtUtc;
             phone.AdoptRequestId = requestId;
             phone.AdoptServedAtUtc = nowUtc;
-            persist();
+            try { persist(); }
+            catch { phone.AdoptSpent = ps; phone.AdoptRequestId = pr; phone.AdoptServedAtUtc = pa; return new Result { Failed = true }; }
             return new Result { Served = true, Password = pw };
         }
     }
@@ -65,10 +73,12 @@ internal static class AdoptGrant
             if (phone.AdoptSpent) return new Result { Acked = true, AlreadySpent = true }; // idempotent ack
             if (phone.AdoptRequestId == null || phone.AdoptRequestId != requestId)
                 return new Result(); // nothing to ack
+            var as0 = phone.AdoptSpent; var ar = phone.AdoptRequestId; var aa = phone.AdoptServedAtUtc;
             phone.AdoptSpent = true;
             phone.AdoptRequestId = null;
             phone.AdoptServedAtUtc = null;
-            persist();
+            try { persist(); }
+            catch { phone.AdoptSpent = as0; phone.AdoptRequestId = ar; phone.AdoptServedAtUtc = aa; return new Result { Failed = true }; }
             return new Result { Acked = true };
         }
     }

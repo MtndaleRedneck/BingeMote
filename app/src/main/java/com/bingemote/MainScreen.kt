@@ -209,7 +209,10 @@ private fun HomeContent(
             // A removed pairing says pair again; a silent helper says what it affects.
             // Neither shows while the hero already says the PC is unreachable.
             if (!lost) {
-                if (remote.unpaired) {
+                if (remote.keyChanged) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("This PC's security key changed, so the phone refused to connect. Unless you reinstalled or reset BingeMote on the PC, do not continue. To use it again, open Pair on the PC and pair this phone from Settings.", color = OnAccentSub, fontSize = 13.sp)
+                } else if (remote.unpaired) {
                     Spacer(Modifier.height(6.dp))
                     Text("This phone isn't paired with the PC anymore - pair again.", color = OnAccentSub, fontSize = 13.sp)
                 } else if (remote.helperNotice) {

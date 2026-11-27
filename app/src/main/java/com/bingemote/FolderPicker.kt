@@ -62,11 +62,16 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
         loading = true
         error = null
         scope.launch {
+            // ONE locked snapshot on IO: the helper decision and its credentials come from the
+            // same coherent read - no Main pairingLock wait for the token check, and a re-pair
+            // mid-browse can never mix one pairing's host with another's token. A blank host or
+            // a broken store skips straight to the VLC path (a helper call would have failed).
+            val snap = withContext(Dispatchers.IO) { remote.store.helperVlcSnapshot() }
             // The PC app first: it answers with VLC closed. Too old or unreachable: VLC.
-            if (remote.store.helperToken.isNotBlank()) {
+            if (snap != null && snap.helperToken.isNotBlank()) {
                 try {
                     val names = withContext(Dispatchers.IO) {
-                        HelperClient.browse(remote.store.host, remote.store.helperPort, remote.store.helperToken, dir)
+                        HelperClient.browse(snap.host, snap.helperPort, snap.helperToken, dir)
                     }
                     dirs = names.map { BrowseItem(name = it, isDir = true, path = childPath(dir, it), uri = "", sizeBytes = 0L) }
                     viaHelper = true
@@ -79,7 +84,8 @@ fun FolderPickerScreen(remote: RemoteState, listState: LazyListState, onPick: (S
             }
             try {
                 val raw = withContext(Dispatchers.IO) {
-                    Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
+                    val vt = remote.store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                    Vlc.browse(vt.host, vt.port, vt.password, dir)
                 }
                 dirs = raw.filter { it.isDir }
                 viaHelper = false

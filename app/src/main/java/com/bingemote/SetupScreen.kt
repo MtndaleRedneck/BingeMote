@@ -44,7 +44,22 @@ fun SetupScreen(
 
     // Re-entering setup with a saved pairing opens on the pair screen. The pair-screen
     // demos open there directly even with no saved pairing.
-    var step by remember { mutableStateOf(if ((demoPair || demoVlcPending) && demo) 2 else if (store.helperToken.isBlank()) 1 else 2) }
+    // B7: the pairing state is read ONCE on IO, never as a Main-thread secure read during
+    // composition. Until it lands, an honest checking screen shows instead of a guessed
+    // step. The screenshot rig gets a synchronous value so its captures stay deterministic.
+    // ONE atomic locked capture of (token?, password?, generation): two separate getter
+    // reads could mix one pairing's token with another's password. The generation rides
+    // along so the Continue publication can prove the card still describes the current
+    // pairing. The screenshot rig gets a synchronous value (sentinel generation -1).
+    var setupPairing by remember { mutableStateOf<Triple<Boolean, Boolean, Long>?>(if ((demoPair || demoVlcPending) && demo) Triple(true, demoVlcPending, -1L) else null) }
+    var pairingCheckRun by remember { mutableStateOf(0) }
+    var pairingCheckExhausted by remember { mutableStateOf(false) }
+    // All wizard/continuation state is hoisted ABOVE the neutral-checking gate below: a
+    // temporary checking interlude (Continue on exhausted drift) used to dispose every
+    // remember under the gate - step, justPaired, the entered host/code - and recreate
+    // them fresh on reseed. Hoisted, they survive; fresh-screen seeding is preserved by
+    // the step = 0 marker (the first verified install below seeds 1/2 from the status).
+    var step by remember { mutableStateOf(if ((demoPair || demoVlcPending) && demo) 2 else 0) }   // 0 = not yet seeded; the first verified install seeds 1/2
     var scanning by remember { mutableStateOf(false) }
     var found by remember {
         mutableStateOf(if ((demoPair || demoVlcPending) && demo) listOf(DiscoveredHelper("192.168.1.50", HelperClient.DEFAULT_PORT, "MY-PC")) else emptyList())
@@ -55,6 +70,20 @@ fun SetupScreen(
     var pairing by remember { mutableStateOf(false) }
     // A code just paired on this screen: the success confirmation shows below the form.
     var justPaired by remember { mutableStateOf(demoVlcPending && demo) }
+    // One-shot refresh on resume / setup transitions (no polling): reseed the displayed
+    // status ONLY on drift and ONLY from a generation-verified capture; otherwise keep it.
+    // The screenshot rig's synchronous seed (sentinel -1) is never replaced.
+    LaunchedEffect(pairingCheckRun, step, justPaired) {
+        val current = setupPairing ?: return@LaunchedEffect
+        if (current.third == -1L) return@LaunchedEffect
+        var cap = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+        var attempts = 0
+        while (store.pairingGeneration != cap.third && attempts < 3) {
+            attempts++
+            cap = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+        }
+        if (store.pairingGeneration == cap.third && cap.third != current.third) setupPairing = cap
+    }
     var pairedName by remember { mutableStateOf(if (demoVlcPending && demo) "MY-PC" else "") }
     // An earlier pairing continued to the VLC hand-off without a fresh code.
     var continueVlc by remember { mutableStateOf(false) }
@@ -62,7 +91,7 @@ fun SetupScreen(
     // "checking" while the phone verifies it, then "ok" or "refused".
     var autoSetup by remember { mutableStateOf(demoVlcPending && demo) }
     var autoState by remember { mutableStateOf(if (demoVlcPending && demo) demoAuto.ifBlank { "ok" } else "checking") }
-    // VLC is still running with its old settings: control starts when VLC reopens.
+    // The PC has a VLC settings update still waiting (any reason): control starts once it's applied.
     var autoPending by remember { mutableStateOf(demoVlcPending && demo) }
     // VLC is simply closed (the PC attests the settings are written): control starts when it opens.
     var autoNotOpen by remember { mutableStateOf(false) }
@@ -73,6 +102,52 @@ fun SetupScreen(
     var discoveryMessage by remember { mutableStateOf<String?>(null) }
     // The PC scan runs once when the pair screen opens; demos skip it so the renders are stable.
     var scannedOnce by remember { mutableStateOf(demoPair || demoVlcPending) }
+    // Resume triggers a ONE-SHOT re-check (no polling): the effects below.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) pairingCheckRun++
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    LaunchedEffect(pairingCheckRun) {
+        if (setupPairing == null) {
+            // The generation must be STILL LIVE on Main at the assignment: a writer landing
+            // between the IO capture and the assignment would otherwise stamp a stale status
+            // current. On drift, recapture (bounded). On EXHAUSTED drift nothing unverified
+            // is installed: the checking screen shows a Retry instead of a forever spinner.
+            pairingCheckExhausted = false
+            var cap = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+            var attempts = 0
+            while (store.pairingGeneration != cap.third && attempts < 3) {
+                attempts++
+                cap = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+            }
+            if (store.pairingGeneration == cap.third) {
+                setupPairing = cap
+                if (step == 0) step = if (!cap.first) 1 else 2
+            } else pairingCheckExhausted = true
+        }
+    }
+    val sp = setupPairing
+    if (sp == null) {
+        Column(Modifier.fillMaxSize().background(Bg), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+            if (pairingCheckExhausted) {
+                // The bounded capture kept drifting: nothing unverified was installed, and
+                // no permanent spinner - the user retries explicitly.
+                Text("Couldn't check the pairing. Try again.", color = Muted, fontSize = 14.sp)
+                Spacer(Modifier.height(10.dp))
+                OrangeButton("Retry", onClick = { pairingCheckExhausted = false; pairingCheckRun++ })
+            } else {
+                CircularProgressIndicator(color = Orange, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("Checking pairing…", color = Muted, fontSize = 14.sp)
+            }
+        }
+        return
+    }
+
 
     fun say(text: String, isError: Boolean) { message = text; messageIsError = isError }
 
@@ -89,6 +164,7 @@ fun SetupScreen(
             AutoSetupCheck.Outcome.OK_NOT_OPEN -> { autoPending = false; autoNotOpen = true; autoState = "ok" }
             AutoSetupCheck.Outcome.REFUSED -> autoState = "refused"
             AutoSetupCheck.Outcome.PC_UNREACHABLE -> autoState = "unreachable"
+            AutoSetupCheck.Outcome.SETUP_UNKNOWN -> autoState = "unknown"
         }
     }
 
@@ -122,19 +198,23 @@ fun SetupScreen(
         say("", false)
         scope.launch {
             try {
-                val paired = withContext(Dispatchers.IO) { HelperClient.pair(target.host, target.port, code) }
-                store.host = target.host
-                store.helperPort = target.port
-                store.helperToken = paired.token
-                store.pcName = paired.name.ifBlank { target.name }
+                val sp = withContext(Dispatchers.IO) { HelperClient.pairSecure(target.host, target.port, code) }
+                val paired = sp.result
+                val saveOutcome = withContext(Dispatchers.IO) { SecurePairSave.save(store.securePairStore, target.host, target.port,
+                    paired.name.ifBlank { target.name }, paired.vlcPassword, sp.proof, sp.pcId) }
+                if (saveOutcome != SecurePairSave.Outcome.SAVED) {
+                    pairing = false; say(saveOutcome.userMessage, true); return@launch
+                }
                 remote.publishAddress(target.host, target.port, paired.token)
                 // Automatic-first: the PC generated the VLC password and handed it over with
                 // the pair. Older helpers need an update before automatic setup can finish.
                 if (paired.vlcPassword != null) {
-                    store.vlcPassword = paired.vlcPassword
+                    // The password is already durably saved: SecurePairSave.saveInner wrote it via the
+                    // store adapter (flush + read-back verified) before SAVED was returned. autoPending
+                    // needs no seed here either: autoState "checking" runs AutoSetupCheck first, and every
+                    // outcome that can show the pending note sets autoPending itself.
                     autoSetup = true
                     autoState = "checking"
-                    autoPending = paired.vlcPending
                 } else {
                     autoSetup = false
                     autoState = "unsupported"
@@ -143,6 +223,9 @@ fun SetupScreen(
                 pairedName = store.pcName
                 justPaired = true
                 say("", false)
+            } catch (e: HelperClient.KeyChanged) {
+                pairing = false
+                say(e.msg, true)
             } catch (e: HelperClient.BadPairCode) {
                 pairing = false
                 say("That code didn't work. Get a fresh one: on your PC, open BingeMote from the icon by the clock, type a name under Pair new phone, and tap Pair.", true)
@@ -196,7 +279,7 @@ fun SetupScreen(
                 // Mid-setup recovery only: a pairing exists but setup never finished, so
                 // offer continuing to the VLC step. A finished setup re-entering from
                 // Your PC -> Pair again gets just the pair form - no wizard loop.
-                if (store.helperToken.isNotBlank() && !store.setupDone && !justPaired) {
+                if (sp.first && !store.setupDone && !justPaired) {
                     SetupCard {
                         Text("Already paired" + (if (store.pcName.isNotBlank()) " with ${store.pcName}" else ""), color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
@@ -204,10 +287,29 @@ fun SetupScreen(
                         Spacer(Modifier.height(12.dp))
                         OrangeButton("Continue", onClick = {
                             say("", false)
-                            autoSetup = store.vlcPassword.isNotBlank()
-                            autoState = if (autoSetup) "checking" else "unsupported"
-                            continueVlc = true
-                            checkRun++
+                            // ONE fresh atomic capture on IO; the state-set order is exactly
+                            // preserved (autoSetup, autoState, continueVlc, checkRun). If the
+                            // pairing DRIFTED since the card was drawn, reseed from the fresh
+                            // capture instead of publishing from a stale one.
+                            scope.launch {
+                                // The generation must be STILL LIVE at the actual Main
+                                // state-set: a writer landing between the IO capture and
+                                // the publish would make this a stale seed. On EXHAUSTED
+                                // drift, drop to the neutral checking/retry path (a fresh
+                                // run) - the unverified capture is never installed.
+                                var cur = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+                                var attempts = 0
+                                while (store.pairingGeneration != cur.third && attempts < 3) {
+                                    attempts++
+                                    cur = withContext(Dispatchers.IO) { store.pairingStatusWithGeneration() }
+                                }
+                                if (store.pairingGeneration != cur.third) { setupPairing = null; pairingCheckRun++; return@launch }
+                                if (sp.third != -1L && cur.third != sp.third) { setupPairing = cur; return@launch }
+                                autoSetup = cur.second
+                                autoState = if (autoSetup) "checking" else "unsupported"
+                                continueVlc = true
+                                checkRun++
+                            }
                         })
                     }
                     Spacer(Modifier.height(14.dp))
@@ -331,7 +433,7 @@ fun SetupScreen(
                                 Text(
                                     when {
                                         autoPending ->
-                                            "VLC on the PC is still running with its old settings - phone control starts when VLC reopens."
+                                            "A VLC settings update is waiting on your PC - phone control starts when it's applied."
                                         autoNotOpen ->
                                             "VLC isn't open on the PC right now - the password is saved, and phone control starts when you open it."
                                         else ->
@@ -347,6 +449,14 @@ fun SetupScreen(
                                 Text("Couldn't check with your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(10.dp))
                                 Text("BingeMote on the PC didn't answer. Make sure it's running, then try again.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                                Spacer(Modifier.height(12.dp))
+                                OrangeButton("Try again", onClick = { autoState = "checking"; checkRun++ })
+                                SetupMessage(message, messageIsError)
+                            }
+                            "unknown" -> {
+                                Text("Couldn't check with your PC", color = TextC, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(10.dp))
+                                Text("Your PC couldn't verify the VLC settings just now. Try again in a moment.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                                 Spacer(Modifier.height(12.dp))
                                 OrangeButton("Try again", onClick = { autoState = "checking"; checkRun++ })
                                 SetupMessage(message, messageIsError)

@@ -90,6 +90,12 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     var viaHelper by remember { mutableStateOf(false) }
     // In-flight guard: a double-tap must not start two movies (two VLCs, two soundtracks).
     var starting by remember { mutableStateOf(false) }
+    // The pairing generation the SHOWN PC listing was loaded under (null on the Phone origin):
+    // a re-pair since makes every shown item a path on the OLD PC.
+    var listingGen by remember { mutableStateOf<Long?>(null) }
+    // One-shot signal consumed by the LaunchedEffect after load()'s declaration (local
+    // functions can only reference locals declared above them, and load is declared later).
+    var pairingChangedReload by remember { mutableStateOf(false) }
     // PC unreachable: the same state the home hero reads. The approved Movies design shows
     // the orange reconnect banner under the header and reloads by itself when the PC is back.
     val lost = !remote.pcReachable && !remote.expectingVlc
@@ -101,16 +107,50 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         )
     }
 
+    /** The shown PC listing belongs to the pairing it was loaded under: a re-pair since
+     *  makes every shown item the OLD PC's path. */
+    fun listingPairingStale(): Boolean {
+        val lg = listingGen ?: return false
+        return lg != remote.store.pairingGeneration
+    }
+
+    /** Refuse to play a stale listing's item on the new PC: drop it and reload from the
+     *  current pairing instead (the same self-refresh the reconnect banner does). */
+    fun reloadAfterPairingChange() {
+        error = "The pairing changed. Reloaded the folder from the current PC."
+        items = emptyList()
+        scrollStack.clear()
+        resumeAsk = null
+        pairingChangedReload = true   // consumed by the LaunchedEffect below load()
+    }
+
     /** Ask the PC to play a movies-folder file. resume: null = ask if a saved place
      * exists; true = resume; false = start over. */
     fun startPlay(relPath: String, resume: Boolean?) {
         if (starting) return
+        // The item names a file in the LISTING's pairing - the tap's own generation alone
+        // would pass a fresh pairing, so the item origin is checked first.
+        if (listingPairingStale()) { reloadAfterPairingChange(); return }
+        // The expected generation is the DISPLAYED LISTING's origin, never a fresh tap
+        // capture: an off-Main writer landing between the stale check above and a fresh
+        // capture would stamp this old-listing item with the NEW pairing's generation. A null
+        // listingGen means NO PC listing provenance: fail CLOSED and reload - never stamp a
+        // fresh generation. (streamPlay keeps the tap capture: its item is a local phone
+        // file, not a PC listing's.)
+        val tapGen = listingGen ?: run { reloadAfterPairingChange(); return }
         starting = true
         scope.launch(Dispatchers.IO) {
             try {
+                // ONE coherent snapshot carries BOTH the helper identity and the VLC credentials:
+                // a re-pair between the reads can never send the old pairing's VLC password to the
+                // new PC - the whole call carries one identity, and the WIP16 token gate refuses
+                // the send if a re-pair landed between this capture and the request.
+                val s = remote.store.helperVlcSnapshot() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                // A mutation between tap and capture: drop, never play on a PC paired after the tap.
+                if (remote.store.pairingGeneration != tapGen) throw PairingChanged()
                 val resp = HelperClient.playMovie(
-                    remote.store.host, remote.store.helperPort, remote.store.helperToken, relPath,
-                    remote.store.vlcPort, remote.store.vlcPassword, fullscreen = true, resume = resume,
+                    s.host, s.helperPort, s.helperToken, relPath,
+                    s.vlcPort, s.vlcPassword, fullscreen = true, resume = resume,
                 )
                 // Screen was dark: the tap only woke the PC. Nothing else happens - the
                 // press sink was the feedback, and the next tap plays normally.
@@ -174,6 +214,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     fun loadPhone(restore: Pair<Int, Int>? = null) {
         val g = gate.bump()
+        // The Phone origin's items are local files, not a PC's listing - but the PC
+        // listing's origin generation is RETAINED so switching back can tell a re-pair
+        // happened while away (no PC-origin consumer runs while the Phone list is shown).
         if (demoPhone && BuildConfig.DEBUG) {
             // CI screenshot state only: fake phone listing, no SAF access.
             items = listOf(
@@ -222,10 +265,16 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     fun streamPlay(item: BrowseItem) {
         if (starting) return
         askStreamNotifPermissionOnce()
-        val receiver = try { StreamTarget.capture(remote.store) } catch (e: Exception) { error = plainPlayerError(e, "Couldn't start the stream."); return }
         starting = true
+        // The tap's pairing generation: a storage-free volatile read, no Main lock wait. The IO
+        // capture below re-checks it before the handoff: a re-pair, forget, rediscovery or heal
+        // landing between tap and capture bumps the generation and the capture is DROPPED - the
+        // stream is never silently retargeted to a PC paired after the tap.
+        val tapGen = remote.store.pairingGeneration
         scope.launch(Dispatchers.IO) {
             try {
+                val receiver = StreamTarget.capture(remote.store) ?: throw Vlc.Unreachable("Could not reach VLC.")
+                if (remote.store.pairingGeneration != tapGen) throw PairingChanged()
                 val bound = StreamCoordinator.bind(context)
                 try {
                     val movieUri = Uri.parse(item.uri)
@@ -243,17 +292,23 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     fun loadVlc(dir: String, restore: Pair<Int, Int>?) {
         val g = gate.bump()
+        // Pairing guard: a re-pair mid-browse drops this listing - the next load lists the new PC.
+        val gen0 = remote.store.pairingGeneration
         loading = true
         error = null
         scope.launch {
             try {
                 val raw = withContext(Dispatchers.IO) {
-                    Vlc.browse(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, dir)
+                    val vt = remote.store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                    Vlc.browse(vt.host, vt.port, vt.password, dir)
                 }
+                if (remote.store.pairingGeneration != gen0) return@launch
                 if (!gate.successCurrent("vlc", g, raw)) return@launch
+                listingGen = gen0
                 show(raw, dir, false, restore)
             } catch (e: Exception) {
                 if (!gate.isCurrent(g)) return@launch
+                if (remote.store.pairingGeneration != gen0) return@launch
                 loading = false
                 // Only a dead VLC/PC shows the connection message; a VLC error (bad folder,
                 // VLC itself upset) is shown where he is - no mode flip, no jump to the top.
@@ -266,14 +321,20 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
 
     fun loadHelper(rel: String, restore: Pair<Int, Int>? = null, healed: Boolean = false) {
         val g = gate.bump()
+        // Pairing guard: a re-pair mid-browse drops this listing - the next load lists the new PC.
+        val gen0 = remote.store.pairingGeneration
         loading = true
         error = null
         scope.launch {
             try {
                 val raw = withContext(Dispatchers.IO) {
-                    HelperClient.listMovies(remote.store.host, remote.store.helperPort, remote.store.helperToken, rel)
+                    // ONE coherent listing-origin snapshot: no mixed host/token mid-re-pair.
+                    val snap = remote.store.helperVlcSnapshot() ?: throw Vlc.Unreachable("Could not reach the PC.")
+                    HelperClient.listMovies(snap.host, snap.helperPort, snap.helperToken, rel)
                 }
+                if (remote.store.pairingGeneration != gen0) return@launch
                 if (!gate.isCurrent(g)) return@launch
+                listingGen = gen0
                 val rows = raw.map { (name, dir) ->
                     BrowseItem(name = name, isDir = dir, path = if (rel.isEmpty()) name else "$rel\\$name", uri = "", sizeBytes = 0L)
                 }
@@ -282,27 +343,35 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
                 if (!gate.isCurrent(g)) return@launch
                 // Self-heal once: the PC may have lost or never received the folder. If the
                 // PC's copy is empty or different, re-save the phone's copy and retry.
-                if (!healed && remote.store.helperToken.isNotBlank() && remote.store.moviesPath.isNotBlank()) {
+                if (!healed && remote.store.moviesPath.isNotBlank()) {
                     // heal: null = none, "push" = PC folder was blank and we pushed
                     // the phone's copy, "pull" = PC had a different folder and won.
                     val heal = withContext(Dispatchers.IO) {
                         try {
-                            // Strict read: a failed get throws and lands in the catch
-                            // below (no heal) - an unknown PC state must never look
-                            // like "PC has none" and trigger a push over its folder.
-                            val onPc = HelperClient.getMoviesFolderStrict(remote.store.host, remote.store.helperPort, remote.store.helperToken)
-                            if (onPc.isBlank()) {
-                                // Superseded while this IO ran: no PC write. (Check-then-act: narrows, does not remove, the window.)
-                                if (!gate.isCurrent(g)) return@withContext null
-                                HelperClient.setMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken, remote.store.moviesPath.trim())
-                                "push"
-                            } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
-                                // The PC's setting wins: pull its folder instead of
-                                // pushing the phone's stale copy over it.
-                                if (!gate.isCurrent(g)) return@withContext null // superseded: no Store write (narrow check-then-act)
-                                remote.store.moviesPath = onPc
-                                "pull"
-                            } else null
+                            // ONE coherent operation snapshot for the whole heal: no mixed
+                            // host/token, and the token check itself is off Main.
+                            val snap = remote.store.helperVlcSnapshot()
+                            if (snap == null || snap.helperToken.isBlank()) null
+                            else {
+                                // Strict read: a failed get throws and lands in the catch
+                                // below (no heal) - an unknown PC state must never look
+                                // like "PC has none" and trigger a push over its folder.
+                                val onPc = HelperClient.getMoviesFolderStrict(snap.host, snap.helperPort, snap.helperToken)
+                                if (onPc.isBlank()) {
+                                    // Superseded or re-paired while this IO ran: no PC write. (Check-then-act: narrows, does not remove, the window.)
+                                    if (!gate.isCurrent(g)) return@withContext null
+                                    if (remote.store.pairingGeneration != gen0) return@withContext null
+                                    HelperClient.setMoviesFolder(snap.host, snap.helperPort, snap.helperToken, remote.store.moviesPath.trim())
+                                    "push"
+                                } else if (!onPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+                                    // The PC's setting wins: pull its folder instead of
+                                    // pushing the phone's stale copy over it.
+                                    if (!gate.isCurrent(g)) return@withContext null // superseded: no Store write (narrow check-then-act)
+                                    // Atomic conditional write: skipped whole if a re-pair landed since the fetch.
+                                    if (!remote.store.setMoviesPathIfCurrent(onPc, gen0)) return@withContext null
+                                    "pull"
+                                } else null
+                            }
                         } catch (e2: Exception) { null }
                     }
                     if (!gate.isCurrent(g)) return@launch
@@ -343,6 +412,11 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
         loadVlc(dir, restore)
     }
 
+    // The reload a stale-listing rejection asked for (declared here because load() is local).
+    LaunchedEffect(pairingChangedReload) {
+        if (pairingChangedReload) { pairingChangedReload = false; load("") }
+    }
+
     fun switchOrigin(o: Origin) {
         if (origin == o) return
         origin = o
@@ -351,7 +425,10 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             // The other origin's rows must not stay on screen while the PC list loads or when the PC can't answer (disconnected).
             items = emptyList()
             loading = true
-            load(path)
+            // The retained path comes from the DISPLAYED PC listing: after a re-pair it is
+            // an old-PC path, so reload from the current pairing's root instead. load()
+            // itself stays unguarded - it is the reload funnel.
+            if (listingPairingStale()) reloadAfterPairingChange() else load(path)
         }
     }
 
@@ -370,6 +447,9 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     }
 
     fun upOne() {
+        // The current path comes from the DISPLAYED listing too: after a re-pair, reload
+        // from the current PC instead of walking the old PC's folders.
+        if (listingPairingStale()) { reloadAfterPairingChange(); return }
         fun popPos(forPath: String): Pair<Int, Int>? {
             val top = scrollStack.lastOrNull() ?: return null
             if (top.first != forPath) return null
@@ -400,6 +480,10 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             }
             return
         }
+        // Every PC-origin open - a folder row, "..", or a file - navigates or plays paths
+        // from the DISPLAYED listing, so one stale-listing check covers all of them:
+        // after a re-pair the listing is dropped and reloaded from the current PC instead.
+        if (listingPairingStale()) { reloadAfterPairingChange(); return }
         when {
             item.isDir -> {
                 if (item.name == "..") {
@@ -419,11 +503,18 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             viaHelper -> startPlay(item.path, null)
             else -> {
                 if (starting) return
+                // Same fail-closed listing-origin binding as startPlay: a null listingGen
+                // reloads, never a fresh tap capture.
+                val tapGen = listingGen ?: run { reloadAfterPairingChange(); return }
                 starting = true
                 scope.launch(Dispatchers.IO) {
                     try {
-                        Vlc.playUri(remote.store.host, remote.store.vlcPort, remote.store.vlcPassword, item.uri)
+                        val vt = remote.store.vlcTarget() ?: throw Vlc.Unreachable("Could not reach VLC.")
+                        if (remote.store.pairingGeneration != tapGen) throw PairingChanged()
+                        Vlc.playUri(vt.host, vt.port, vt.password, item.uri)
                         withContext(Dispatchers.Main) { onBack() }
+                    } catch (e: PairingChanged) {
+                        withContext(Dispatchers.Main) { error = e.message ?: "The pairing changed. Try again." }
                     } catch (e: Exception) {
                         // Used to fail silently and just close - stay put and say it didn't play.
                         withContext(Dispatchers.Main) { error = "Couldn't play that one." }
@@ -444,16 +535,20 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
             // Without this, a folder changed on the PC during the outage kept the
             // phone's stale copy (and could push it back over the PC's choice).
             val g0 = gate.current()
-            val fromPc = withContext(Dispatchers.IO) {
-                if (remote.store.helperToken.isBlank()) null
-                else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+            val fetch = withContext(Dispatchers.IO) {
+                // The snapshot AND its pairing generation captured in ONE locked section BEFORE
+                // the fetch: a re-pair mid-fetch bumps the generation, so the write below skips.
+                val (snap, gen) = remote.store.helperVlcSnapshotWithGeneration()
+                if (snap == null || snap.helperToken.isBlank()) null
+                else HelperClient.getMoviesFolder(snap.host, snap.helperPort, snap.helperToken)?.let { it to gen }
             }
             // Superseded by a newer load, or the user is on the phone list now: do not write the PC folder or reload over it.
             if (!gate.isCurrent(g0) || origin == Origin.PHONE) return@LaunchedEffect
-            if (!fromPc.isNullOrBlank() && !fromPc.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
+            if (fetch != null && fetch.first.isNotBlank() && !fetch.first.trim().equals(remote.store.moviesPath.trim(), ignoreCase = true)) {
                 // New root: the old relative path and saved scroll spots no longer
                 // exist, so viewport preservation only applies within the same folder.
-                remote.store.moviesPath = fromPc
+                // The write lands only while the pairing is still the fetch's pairing.
+                if (!remote.store.setMoviesPathIfCurrent(fetch.first, fetch.second)) return@LaunchedEffect
                 scrollStack.clear()
                 load(rootArgForMode(viaHelper, remote.store.moviesPath.trim()))
             } else {
@@ -466,12 +561,17 @@ fun MoviesScreen(remote: RemoteState, listState: LazyListState, onBack: () -> Un
     LaunchedEffect(Unit) {
         if (!remote.pcReachable) { gate.bump(); loading = false; return@LaunchedEffect }
         val g0 = gate.current()
-        val fromPc = withContext(Dispatchers.IO) {
-            if (remote.store.helperToken.isBlank()) null
-            else HelperClient.getMoviesFolder(remote.store.host, remote.store.helperPort, remote.store.helperToken)
+        val fetch = withContext(Dispatchers.IO) {
+            // The snapshot AND its pairing generation captured in ONE locked section BEFORE
+            // the fetch: a re-pair mid-fetch bumps the generation, so the write below skips.
+            val (snap, gen) = remote.store.helperVlcSnapshotWithGeneration()
+            if (snap == null || snap.helperToken.isBlank()) null
+            else HelperClient.getMoviesFolder(snap.host, snap.helperPort, snap.helperToken)?.let { it to gen }
         }
         if (!gate.isCurrent(g0)) return@LaunchedEffect // a load started while the PC answered: it owns the screen now
-        if (!fromPc.isNullOrBlank()) remote.store.moviesPath = fromPc
+        // The write lands only while the pairing is still the fetch's pairing; if it was
+        // skipped, the load below uses the phone's current folder, never the old PC's value.
+        if (fetch != null && fetch.first.isNotBlank()) remote.store.setMoviesPathIfCurrent(fetch.first, fetch.second)
         if (demoPhone && BuildConfig.DEBUG) loadPhone() else load(remote.store.moviesPath.trim().ifBlank { path })
     }
 
@@ -646,8 +746,14 @@ fun prettyPath(path: String): String {
 
 /** Raw plumbing never reaches the screen: socket text, timeouts and the stream server's
  *  "server not ready" each get one plain sentence; anything else gets the caller's fallback. */
+/** A pairing mutation landed between the tap and the action's locked capture: the captured
+ *  target may belong to a different pairing than the one under the user's finger, so the action
+ *  is dropped instead of silently retargeted. Tapping again uses the new pairing. */
+internal class PairingChanged : Exception("The pairing changed while that was starting. Try again.")
+
 internal fun plainPlayerError(e: Exception, fallback: String): String {
     val m = e.message ?: return fallback
+    if (e is PairingChanged) return m
     if (e is HelperClient.BadPairCode || e is HelperClient.BadToken || e is HelperClient.Unreachable) return m
     if (m.contains("server not ready", true) || m.contains("no wi-fi", true) || m.contains("network is unreachable", true))
         return "Your phone needs to be on Wi-Fi to play from it."

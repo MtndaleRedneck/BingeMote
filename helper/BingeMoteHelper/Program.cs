@@ -42,6 +42,11 @@ internal static class Program
         return Directory.Exists(dir) || !Directory.Exists(old) ? dir : old;
     }
 
+    internal static void RedirectDataDirForTests(string dir) { DataDir = dir; }
+    /// <summary>Restore the real data dir after a redirected test: a leaked redirect would make
+    /// the NEXT suite write its config into a deleted temp folder.</summary>
+    internal static void ResetDataDirForTests() { DataDir = PickDataDir(); }
+
     /// <summary>The data folder used to be %LocalAppData%\BingeMoteHelper; it is now ...\BingeMote.
     /// One move carries pairing, the movies folder and the log over. Called from Main only by
     /// the copy holding the single-instance mutex.</summary>
@@ -60,7 +65,7 @@ internal static class Program
         catch { /* the next start tries again */ }
     }
 
-    private static string ConfigPath => Path.Combine(DataDir, "config.json");
+    internal static string ConfigPath => Path.Combine(DataDir, "config.json");
     private static string FirewallMarker => Path.Combine(DataDir, "firewall.ok");
     private static string QuitMarkerPath => Path.Combine(DataDir, "quit-on-purpose");
     /// <summary>Fresh while an update installer runs: the watchdog skips its round so it cannot
@@ -116,12 +121,35 @@ internal static class Program
     /// <summary>"Show volume on PC screen" - the small pop-up on each phone volume change. Default ON.</summary>
     internal static bool VolumeOsdEnabled = true;
     internal static string? PairCode;
+    /// <summary>When the on-screen code was made. A Pair session lasts PairSessionLifetime, then closes by itself.</summary>
+    internal static DateTime PairCodeIssuedUtc = DateTime.MinValue;
+    internal static readonly TimeSpan PairSessionLifetime = TimeSpan.FromMinutes(10);
     /// <summary>The version that last ran; a change means an upgrade just landed.</summary>
     internal static string? LastRunVersion;
     /// <summary>A newer published helper version, found by the background update check.</summary>
     internal static (string Version, string ExeUrl, string? Sha256)? AvailableUpdate;
     internal static int PairFailures;
     internal const int MaxPairFailures = 5;
+    /// <summary>Fail-closed store state: a config we failed to READ is never overwritten - the
+    /// pairings it holds are the only copy. Set only by a failed LOAD (never by a save failure);
+    /// a clean reload clears it. Pairing and saving refuse while set.</summary>
+    internal static bool StoreBroken;
+    /// <summary>The DURABLE deferred vlcrc password (E8): authoritative for serialization,
+    /// guarded by ConfigSaveLock; VlcSetup mirrors it under its Gate for decisions.</summary>
+    internal static string? PendingVlcDurable;
+    internal static string StoreBrokenReason = "could not be read";
+    /// <summary>One writer at a time: the whole read-modify-write (snapshot AND write) happens
+    /// inside this outer transaction lock, so two saves can never finish out of order. Lock graph
+    /// (E8): PairLock -> ConfigSaveLock -> PhonesLock; ConfigSaveLock -> AdoptGrant.Gate ->
+    /// VlcSetup.Gate (the adopt route holds ConfigSaveLock, persist re-enters it on the same
+    /// thread - re-entrant, safe); VlcSetup.Gate is a leaf: holders never synchronously acquire
+    /// ConfigSaveLock, PhonesLock or AdoptGrant.Gate (E2 release-reacquire-reverify).
+    /// I2 companion: VlcSetup.WriteVlcrc also holds ConfigSaveLock across its whole
+    /// guard -> write -> verify -> clear critical section, so no internal pending mutation can
+    /// land between the obligation guard and the commit; vlcrc disk IO under the lock is a
+    /// NAMED UNRESOLVED responsiveness cost (observed, not accepted or permitted by anyone;
+    /// same order ConfigSaveLock -> VlcSetup.Gate, no new edge, no inversion).</summary>
+    internal static readonly object ConfigSaveLock = new();
 
     [STAThread]
     private static int Main(string[] args)
@@ -276,7 +304,7 @@ internal static class Program
             // new icon now instead of after a sign-out.
             try { SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0x3000 /* SHCNF_IDLIST|SHCNF_FLUSH */, IntPtr.Zero, IntPtr.Zero); } catch { }
             LastRunVersion = VersionText;
-            SaveConfig();
+            try { SaveConfig(); } catch (Exception ex) { Log("Could not save the version stamp: " + ex.Message); }
         }
         Log("Started. " + (!Paired ? "Not paired - open the window and tap Pair to get a code." : "Paired (" + PhonesCount + (PhonesCount == 1 ? " phone" : " phones") + ") - starting tucked in the tray."));
         RegisterAutostart();
@@ -284,13 +312,14 @@ internal static class Program
 
         // Markers from older versions do not attest to the current listen-permission scope.
         // Recheck the exact URL on upgrades too; a broad legacy grant needs one UAC repair.
-        if (!File.Exists(FirewallMarker) || !FirewallSetup.UrlAclExists())
+        FirewallSetup.LastReadFailed = false;
+        if (!File.Exists(FirewallMarker) || !FirewallSetup.SetupIsCurrent())
         {
             // The Setup download adds the rule and listen permission during install; a
             // first run of the plain exe adds them here with one admin prompt.
-            if (FirewallSetup.RuleExists() && FirewallSetup.UrlAclExists())
+            if (FirewallSetup.SetupIsCurrent())
             {
-                try { File.WriteAllText(FirewallMarker, DateTime.UtcNow.ToString("O")); } catch { }
+                try { File.WriteAllText(FirewallMarker, FirewallSetup.MarkerVersion + "\n" + DateTime.UtcNow.ToString("O")); } catch { }
             }
             else
             {
@@ -302,7 +331,7 @@ internal static class Program
             // Surface the vlc.exe rule inventory the elevated step saved (report only).
             FirewallSetup.LogVlcRuleInventory();
             // Cancellation or failed verification must not proceed under a broader legacy ACL.
-            if (!FirewallSetup.RuleExists() || !FirewallSetup.UrlAclExists()) return 1;
+            if (!FirewallSetup.SetupIsCurrent()) return 1;
         }
 
         // Resume places must load on every startup, not only on first-time firewall setup.
@@ -318,6 +347,7 @@ internal static class Program
         if (overrideCode is { Length: 4 } && overrideCode.All(char.IsDigit))
         {
             PairCode = overrideCode;
+            PairCodeIssuedUtc = DateTime.UtcNow;
         }
 
         using var http = new HttpServer();
@@ -405,44 +435,83 @@ internal static class Program
         catch { /* logging must never break the helper */ }
     }
 
+    /// <summary>Parse the phone list from a config root. Fail-closed: a current-format phones[]
+    /// entry without a readable token fails the WHOLE store (the caller preserves the file and
+    /// refuses saves); a legacy tokens[] null element fails the same way; a 1.0/1.1 single-token
+    /// entry with a null token is tolerated exactly as the base (that entry stored the token
+    /// alone, so a null carried nothing). All non-token fields (name, adopt markers) are
+    /// defaultable and never fail the load. Plaintext port of the base: unreadable = missing or
+    /// null token string.</summary>
+    internal static bool TryParsePhones(JsonElement root, out List<PairedPhone> phones, out string? unreadableName)
+    {
+        phones = new List<PairedPhone>();
+        unreadableName = null;
+        if (root.TryGetProperty("phones", out var ps))
+            foreach (var p in ps.EnumerateArray())
+            {
+                var t = p.TryGetProperty("token", out var pt) ? pt.GetString() : null;
+                var n = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
+                if (t == null) { unreadableName = n; return false; }
+                var spent = p.TryGetProperty("adoptSpent", out var asp) && asp.GetBoolean();
+                string? adoptReq = p.TryGetProperty("adoptRequestId", out var ari) ? ari.GetString() : null;
+                DateTime? adoptAt = null;
+                if (p.TryGetProperty("adoptServedAtUtc", out var asa) && asa.GetString() is string asas
+                    && DateTime.TryParse(asas, null, System.Globalization.DateTimeStyles.RoundtripKind, out var asad))
+                    adoptAt = asad;
+                phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (phones.Count + 1) : n, AdoptSpent = spent, AdoptRequestId = adoptReq, AdoptServedAtUtc = adoptAt });
+            }
+        // 1.2 stored bare tokens without names; those phones show as "Phone 1" etc.
+        if (phones.Count == 0 && root.TryGetProperty("tokens", out var ts))
+            foreach (var el in ts.EnumerateArray())
+            {
+                var v = el.GetString();
+                if (v == null) return false;
+                phones.Add(new PairedPhone { Token = v, Name = "Phone " + (phones.Count + 1) });
+            }
+        // 1.0/1.1 configs stored one token; keep that phone paired.
+        if (phones.Count == 0 && root.TryGetProperty("token", out var old))
+        {
+            var v = old.GetString();
+            if (v != null) phones.Add(new PairedPhone { Token = v, Name = "Phone 1" });
+        }
+        return true;
+    }
+
     internal static void LoadConfig()
     {
+        StoreBroken = false;
         try
         {
             if (!File.Exists(ConfigPath)) return;
-            using var doc = JsonDocument.Parse(File.ReadAllText(ConfigPath));
+            // A transient read or permission error is NOT a broken store: retry before failing closed.
+            string? text = null;
+            for (var attempt = 1; ; attempt++)
+            {
+                try { text = File.ReadAllText(ConfigPath); break; }
+                catch (System.IO.IOException) { if (attempt == 3) throw; System.Threading.Thread.Sleep(250); }
+                catch (UnauthorizedAccessException) { if (attempt == 3) throw; System.Threading.Thread.Sleep(250); }
+            }
+            using var doc = JsonDocument.Parse(text!);
+            // Fail-closed parse (S1): one record without a readable token marks the WHOLE
+            // store broken - the file is preserved byte-for-byte, reads look unpaired, no code
+            // is minted, and every save refuses. Skipping it would silently drop that phone on
+            // the next save.
+            if (!TryParsePhones(doc.RootElement, out var parsedPhones, out var unreadableName))
+            {
+                StoreBroken = true;
+                StoreBrokenReason = "is damaged";
+                lock (PhonesLock) { Phones.Clear(); DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+                Log(unreadableName != null
+                    ? "A saved phone record (\"" + unreadableName + "\") has no token. The file is left untouched; pairing and saving are off until it is examined."
+                    : "A saved phone record is unreadable. The file is left untouched; pairing and saving are off until it is examined.");
+                return;
+            }
             lock (PhonesLock)
             {
             Phones.Clear();
             DeclinedNetworks.Clear();
             HomeNetworks.Clear();
-            if (doc.RootElement.TryGetProperty("phones", out var ps))
-                foreach (var p in ps.EnumerateArray())
-                {
-                    var t = p.TryGetProperty("token", out var pt) ? pt.GetString() : null;
-                    if (t == null) continue;
-                    var n = p.TryGetProperty("name", out var pn) ? pn.GetString() : null;
-                    var spent = p.TryGetProperty("adoptSpent", out var asp) && asp.GetBoolean();
-                    string? adoptReq = p.TryGetProperty("adoptRequestId", out var ari) ? ari.GetString() : null;
-                    DateTime? adoptAt = null;
-                    if (p.TryGetProperty("adoptServedAtUtc", out var asa) && asa.GetString() is string asas
-                        && DateTime.TryParse(asas, null, System.Globalization.DateTimeStyles.RoundtripKind, out var asad))
-                        adoptAt = asad;
-                    Phones.Add(new PairedPhone { Token = t, Name = string.IsNullOrWhiteSpace(n) ? "Phone " + (Phones.Count + 1) : n, AdoptSpent = spent, AdoptRequestId = adoptReq, AdoptServedAtUtc = adoptAt });
-                }
-            // 1.2 stored bare tokens without names; those phones show as "Phone 1" etc.
-            if (Phones.Count == 0 && doc.RootElement.TryGetProperty("tokens", out var ts))
-                foreach (var t in ts.EnumerateArray())
-                {
-                    var v = t.GetString();
-                    if (v != null) Phones.Add(new PairedPhone { Token = v, Name = "Phone " + (Phones.Count + 1) });
-                }
-            // 1.0/1.1 configs stored one token; keep that phone paired.
-            if (Phones.Count == 0 && doc.RootElement.TryGetProperty("token", out var old))
-            {
-                var v = old.GetString();
-                if (v != null) Phones.Add(new PairedPhone { Token = v, Name = "Phone 1" });
-            }
+            Phones.AddRange(parsedPhones);
             if (doc.RootElement.TryGetProperty("declinedNetworks", out var dn))
                 foreach (var n in dn.EnumerateArray())
                 {
@@ -462,31 +531,91 @@ internal static class Program
             _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
             }
         }
-        catch { lock (PhonesLock) { Phones.Clear(); } DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+        catch (Exception ex)
+        {
+            StoreBroken = true;
+            StoreBrokenReason = ex is System.Text.Json.JsonException ? "is damaged" : "could not be read";
+            lock (PhonesLock) { Phones.Clear(); DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+            Log("Saved pairing data could not be read (" + ex.GetType().Name + "). The file is left untouched; pairing and saving are off until it is examined.");
+        }
         // A vlcrc write that was waiting for VLC to close survives a helper restart:
         // complete it now when VLC is already closed, or re-arm the retry when it is not.
         var pendingVlc = _pendingVlcFromConfig;
         _pendingVlcFromConfig = null;
-        if (!string.IsNullOrEmpty(pendingVlc)) VlcSetup.RestorePending(pendingVlc);
+        if (!string.IsNullOrEmpty(pendingVlc) && !StoreBroken)
+        {
+            lock (ConfigSaveLock) PendingVlcDurable = pendingVlc;
+            VlcSetup.RestorePending(pendingVlc);
+        }
     }
 
     private static string? _pendingVlcFromConfig;
 
+    /// <summary>Change + persist as one unit under the save lock: side effects run only after
+    /// the change is on disk; a refused save rolls the change back and returns false, so the
+    /// phone never sees success for a state the PC would lose at restart. A WRITE failure here
+    /// must NOT set StoreBroken - broken is strictly a load state.</summary>
+    internal static bool MutateAndPersist(Action mutate, Action rollback, string what)
+    {
+        lock (ConfigSaveLock)
+        {
+            mutate();
+            try { SaveConfig(); return true; }
+            catch (Exception ex)
+            {
+                try { rollback(); } catch (Exception rex) { Log("Rollback after a failed save of " + what + " also failed: " + rex.Message); }
+                Log("Could not save " + what + " (change undone): " + ex.Message);
+                return false;
+            }
+        }
+    }
+
     internal static void SaveConfig()
     {
-        Directory.CreateDirectory(DataDir);
-        var json = JsonSerializer.Serialize(new
+        // A file we failed to READ is never overwritten - the pairings it holds are the only
+        // copy. A WRITE failure here must NOT set StoreBroken: broken is strictly a load state;
+        // a transient save failure rolls back at the caller and later saves proceed after recovery.
+        if (StoreBroken) throw new InvalidOperationException("Saved pairing data is unreadable; refusing to overwrite it.");
+        lock (ConfigSaveLock)
         {
-            phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),
-            pendingVlcPassword = VlcSetup.PendingValue,
-            moviesFolder = MoviesFolder,
-            keepAwake = KeepAwakeEnabled,
-            volumeOsd = VolumeOsdEnabled,
-            declinedNetworks = DeclinedNetworks.ToArray(),
-            homeNetworks = HomeNetworks.ToArray(),
-            lastRunVersion = LastRunVersion,
-        });
-        File.WriteAllText(ConfigPath, json);
+            string json;
+            lock (PhonesLock)
+            {
+                json = JsonSerializer.Serialize(new
+                {
+                    phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),
+                    pendingVlcPassword = PendingVlcDurable,
+                    moviesFolder = MoviesFolder,
+                    keepAwake = KeepAwakeEnabled,
+                    volumeOsd = VolumeOsdEnabled,
+                    declinedNetworks = DeclinedNetworks.ToArray(),
+                    homeNetworks = HomeNetworks.ToArray(),
+                    lastRunVersion = LastRunVersion,
+                });
+            }
+            Directory.CreateDirectory(DataDir);
+            // Atomic write: same-dir temp, then replace, so a crash or power cut mid-save can
+            // never tear the file. The temp write stays inside the try (no orphan tmp).
+            var tmp = ConfigPath + ".tmp";
+            try
+            {
+                // temp + flush-to-disk + replace: the flush closes the OS-buffer durability gap
+                // before the atomic replace (a bare WriteAllText+Move can lose the temp on a
+                // power cut even though the replace itself is atomic).
+                using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    var bytes = Encoding.UTF8.GetBytes(json);
+                    fs.Write(bytes, 0, bytes.Length);
+                    fs.Flush(true);
+                }
+                File.Move(tmp, ConfigPath, true);
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
+        }
     }
 
     internal static string MachineLabel() => Environment.MachineName;
