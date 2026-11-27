@@ -11,7 +11,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * opening a page fresh starts at the top; Back to a
+ *  opening a page fresh starts at the top; Back to a
  * parent keeps its place. Real MainActivity, real taps. Every check is a bounds query on the live
  * hierarchy; a missing node counts as "not on screen", and every positive step asserts presence,
  * so an unreadable screen fails instead of passing.

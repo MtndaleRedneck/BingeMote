@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
                 else if (store.setupDone) "main" else "setup") }
             screen = current
             // Scroll positions live above the screen switch so leaving a screen and
-            // coming back lands you where you were. the Settings rule (2026-11-24):
+            // coming back lands you where you were. Settings rule:
             // back from a subpage (Feedback, Your PC, pair re-entry) returns to the
             // same spot; only opening Settings fresh from Home starts at the top.
             val settingsScroll = rememberScrollState(initial = if (BuildConfig.DEBUG && intent.hasExtra("updateResult")) Int.MAX_VALUE else 0)

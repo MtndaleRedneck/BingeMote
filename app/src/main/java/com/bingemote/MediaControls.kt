@@ -164,7 +164,7 @@ class MediaControlsService : Service() {
             ACTION_MEDIA_REWIND -> { jump(Store(this), -Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_FAST_FORWARD -> { jump(Store(this), Store(this).skipMainSec); return START_STICKY }
             ACTION_MEDIA_PLAY_PAUSE -> {
-                // the glyph used to wait for VLC's answer (1-2 s on a
+                //  the glyph used to wait for VLC's answer (1-2 s on a
                 // busy player). Flip on receipt for instant feedback. If the command
                 // never lands, revert - but only when no newer bar action superseded
                 // this press (a late failure must not stomp a later flip). The 2 s
@@ -233,7 +233,7 @@ class MediaControlsService : Service() {
     @Volatile private var lastPlaying = false
     private fun refreshNow() { if (!destroyed) scope.launch { pollOnce() } }
 
-    /** short confirmation tick on each bar button press. Honors
+    /**  short confirmation tick on each bar button press. Honors
      * the app's "Vibrate on press" setting AND the system haptic-feedback switch;
      * the notification channel itself never vibrates, and the status poll path
      * never calls this. */
@@ -421,7 +421,7 @@ class MediaControlsService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(false)
             .setCustomContentView(row)
-            // no expanded form - the big view repeated the same row,
+            //  no expanded form - the big view repeated the same row,
             // so the shade offered a pointless expand arrow. Collapsed-only: one fixed
             // row. (OEM shades may still decorate; validated on the CI profile.)
             .setStyle(Notification.DecoratedCustomViewStyle())

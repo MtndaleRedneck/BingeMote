@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * End-to-end proof on 1.12.2:
+ * End-to-end proof for the notification controls on 1.12.2:
  * the five card buttons must REACH the PC and do their job, and the card must follow
  * the PC's state. A stub VLC on localhost records every request; the test fires each
  * visible notification button by label and asserts the exact VLC command

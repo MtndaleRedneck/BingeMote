@@ -36,8 +36,7 @@ class RemoteState(
     /** Status as the home screen presents it. The raw status is the last good poll and
      *  survives a dropped connection so a blip loses nothing; but once the PC is
      *  unreachable (or VLC itself is gone/refused) the seek bar, times and play glyph
-     *  must read zero/play instead of that stale playback
-     * The cached status itself stays
+     *  must read zero/play instead of that stale playback. The cached status itself stays
      *  for an instant recovery when the connection returns. */
     val shownStatus: VlcStatus?
         get() = if (unreachable || vlcClosed || vlcRefused) null else status
@@ -369,7 +368,7 @@ class RemoteState(
     fun volumeStep(up: Boolean) {
         val win = winVolume
         if (win != null) {
-            // Windows system volume via the helper (recommended pick).
+            // Windows system volume via the helper (recommended pick; the default was chosen).
             val base = win
             val wasMuted = muted
             if (wasMuted) muted = false

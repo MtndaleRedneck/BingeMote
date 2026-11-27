@@ -440,8 +440,7 @@ fun ToggleRow(label: String, checked: Boolean, haptics: Boolean, buzzWhenEnablin
 
 /** The shared settings toggle: one 190ms ease-in-out crossfade and thumb slide on every
  * settings switch, so all of them feel identical. Track 52x32dp radius 16dp; ON crossfades
- * gray into the shared OrangeGradient ombre every other filled orange surface uses.
- * Whole-dp thumb: 24dp with 4dp margins, no rim. */
+ * gray into the shared OrangeGradient ombre every other filled orange surface uses. Whole-dp thumb: 24dp with 4dp margins, no rim. */
 @Composable
 fun SettingToggle(checked: Boolean) {
     val fade by animateFloatAsState(if (checked) 1f else 0f, tween(190, easing = FastOutSlowInEasing), label = "track")

@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * the bar measured uneven edge gaps between the five glyphs (65/97/68/63 px at
+ * The bar measured uneven edge gaps between the five glyphs (65/97/68/63 px at
  * the reference resolution) because each glyph had its own size and internal margins. The
  * slots are equal-weight, so even gaps follow iff every glyph's CONTENT has the
  * same width and sits centered in its bitmap. This pins both properties for all

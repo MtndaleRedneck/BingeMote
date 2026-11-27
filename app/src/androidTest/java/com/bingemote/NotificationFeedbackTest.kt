@@ -236,7 +236,7 @@ class HapticTickTest {
  *  5. a status poll in flight across the command (stale response) must not undo the flip.
  * On the pre-fix code, tests 1 and 3 fail by construction (the flip waited for the
  * answer; a dead PC gave no feedback at all) - that red run is the delayed-response
- * repro.
+ * repro of the reported behavior.
  */
 class ImmediateFlipTest {
     // Same failure-evidence rule as the sheet tests: this class failed in run

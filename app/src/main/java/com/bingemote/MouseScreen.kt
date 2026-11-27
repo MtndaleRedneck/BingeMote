@@ -269,7 +269,7 @@ fun MouseScreen(remote: RemoteState, startKeyboardOpen: Boolean = false, onBack:
                         // Lift flush: leftover scroll/zoom fractions still go out (slow scrolling loses no steps).
                         if (lastSc != 0f) fire { HelperClient.scroll(host, port, token, lastSc) }
                         if (lastZm != 0f) fire { HelperClient.zoom(host, port, token, lastZm) }
-                        // The tail of a swipe used the ancient hardcoded 2.2x gain (the flick feels at
+                        // The tail of a swipe used the ancient hardcoded 2.2x gain (the flick felt at
 // liftoff): flush at HIS speed like every other move.
 if (lastX != 0f || lastY != 0f) fire { HelperClient.move(host, port, token, lastX * remote.store.mouseSpeed, lastY * remote.store.mouseSpeed) }
 

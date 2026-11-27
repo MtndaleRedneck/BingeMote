@@ -11,7 +11,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * back from a Settings subpage keeps the scroll position; leaving Settings
+ *  back from a Settings subpage keeps the scroll position; leaving Settings
  * and re-entering from Home starts at the top. Real MainActivity, real taps.
  * On-screen checks use bounds, since scrolled-off Compose nodes can still be in the tree.
  */

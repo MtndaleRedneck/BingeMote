@@ -78,7 +78,7 @@ fun MainScreen(
                 },
             )
 
-            // the responsive layout, measured not estimated (Tab's ruling):
+            // the layout, measured not estimated (Tab's ruling):
             // a probe pass measures the true content height, then the main pass
             // places the rows with the REAL leftover split into equal gaps. No
             // fitted constants: equality holds on any profile, font or nav mode,
@@ -99,7 +99,7 @@ fun MainScreen(
                 }.map { it.measure(loose) }
                 val gapCount = (probe.size - 1).coerceAtLeast(1)
                 val contentDp = probe.sumOf { it.height } / d + 14f
-                // the responsive rules: a
+                // Responsive rules: a
                 // smaller phone shrinks EVERYTHING to scale; a different aspect
                 // ratio re-spaces the rows, content size untouched; nothing ever
                 // grows past how it renders on the reference screen. One uniform factor
@@ -112,7 +112,7 @@ fun MainScreen(
                 // tiles by the same factor; scaling fontScale too would square
                 // it for text. Exact no-op at uniform == 1f.
                 val uniform = minOf(1f, availWdp / 356f, availHdp / contentDp).coerceAtLeast(0.75f)
-                // the drawing: side margins and
+                // Side margins and
                 // inter-tile gaps match the vertical gaps, in the content's own
                 // coordinate space. The placed gaps below come out to exactly
                 // this many px. Capped so taller phones grow only the vertical
@@ -157,8 +157,7 @@ fun MainScreen(
 
 
 /** The home rows, top to bottom. They carry NO vertical spacing of their own:
- * the enclosing measured layout places them with equal gaps.
- * [marginDp] is the shared horizontal share - side
+ * the enclosing measured layout places them with equal gaps. [marginDp] is the shared horizontal share - side
  * margins and inter-tile gaps, the same size as the vertical gaps. The seek
  * block sits above or below the skip rows per the Settings toggle (default below). */
 @Composable
@@ -340,7 +339,7 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
     )
 
     Column(Modifier.padding(horizontal = marginDp.dp)) {
-        // the gaps are measured glyph-to-glyph, but digits only fill their
+        // The gaps are measured glyph-to-glyph, but digits only fill their
         // cap height: a natural line box reserves ascent/descent room the time
         // row never inks (~11px at font 1.0), which made the gap above this
         // row read too big on the reference render. Measure the digit ink at runtime and
@@ -366,8 +365,8 @@ private fun SeekBlock(remote: RemoteState, marginDp: Float, drag: SeekDrag) {
                 }
             },
         ) {
-            // While dragging, the times preview the drag target,
-            // in the row that already
+            // While dragging, the times preview the drag target
+            // (show where you're up to while moving), in the row that already
             // exists - no new bubble. Live everywhere, inside the circle too.
             val previewSec = dragPos?.takeIf { length > 0 }?.let { (it * length).toLong() } ?: s?.timeSec ?: 0
             val previewRemain = (length - previewSec).coerceAtLeast(0)

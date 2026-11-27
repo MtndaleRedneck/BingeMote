@@ -46,7 +46,7 @@ object NotificationArt {
     }
 
     /**
-     * Normalize a bar glyph so all five share ONE centered content box. the bar
+     * Normalize a bar glyph so all five share ONE centered content box. The bar
      * measured uneven edge gaps (65/97/68/63 px between glyph edges) because each
      * glyph carried its own size and margins (the play triangle alone had a 12dp
      * left margin). With one shared content width and centered placement, the equal
@@ -54,7 +54,7 @@ object NotificationArt {
      * tall art. Render the source large (48dp) for quality.
      */
     private const val BAR_BOX_W = 24f / 36f
-    private const val BAR_BOX_H = 26f / 36f // cap tall glyphs at 26dp so the bar reads one size (play/volDown/pause shrink ~13-20%, skip/volUp unchanged)
+    private const val BAR_BOX_H = 26f / 36f //  cap tall glyphs at 26dp so the bar reads one size (play/volDown/pause shrink ~13-20%, skip/volUp unchanged)
     fun forBar(src: Bitmap, outPx: Int): Bitmap {
         val r = contentBounds(src)
         val out = Bitmap.createBitmap(outPx, outPx, Bitmap.Config.ARGB_8888)

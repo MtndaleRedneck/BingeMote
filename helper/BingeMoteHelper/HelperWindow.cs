@@ -552,7 +552,7 @@ internal sealed class HelperWindow : Form
     /// to Public (test setup), then (A) opens the production popup and clicks its "This is my home Wi-Fi" button, and (B) clicks
     /// the in-window strip button; each runs the production MarkPrivate. The category is read back independently with
     /// Get-NetConnectionProfile and the strip's visibility is read from the real control. The original category is restored.
-    /// Not Wi-Fi, not a real PC, not a real UAC prompt (the runner is admin).</summary>
+    /// Not Wi-Fi, not the user's PC, not a real UAC prompt (the runner is admin).</summary>
     internal static int ProofClickThrough(string logPath)
     {
         var log = new List<string>();

@@ -154,8 +154,8 @@ fun FullscreenIcon(color: Color, size: Dp = 22.dp, pressed: Boolean = false) {
     }
 }
 
-/** Chunky cross arrows for the Keyboard sheet
- * : one filled polygon per direction, sharp clean tips. */
+/** Chunky cross arrows for the Keyboard sheet (preferred over the thin text
+ * glyphs): one filled polygon per direction, sharp clean tips. */
 enum class ArrowDir { Up, Down, Left, Right }
 
 @Composable
