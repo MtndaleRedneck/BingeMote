@@ -8,7 +8,9 @@
 // None of these proves phone reachability on a genuine Public-profile LAN.
 using System.Diagnostics;
 using System.Net;
+using System.Security.AccessControl;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Principal;
 using Xunit;
 
 namespace BingeMoteHelper.Tests;
@@ -85,14 +87,35 @@ public sealed class WinRuntimeTests : IDisposable
         File.SetCreationTimeUtc(path, created);
         File.SetAttributes(path, FileAttributes.ReadOnly);
         File.SetAttributes(path, FileAttributes.None); // prove attributes round-trip via Replace
-        // Custom ACL marker via icacls: grant "Everyone:Read" as a detectable extra ACE.
-        Run("icacls", path, "/grant", "*S-1-1-0:(R)");
+        // Custom ACL marker via the object model (no icacls): grant Everyone:Read as a
+        // detectable extra ACE. The static File.GetAccessControl/SetAccessControl are .NET
+        // Framework-only (dotnet-api-docs #9641); the FileInfo extension methods
+        // (System.IO.FileSystemAclExtensions) are the inbox API since .NET 5, no package needed.
+        var everyone = new SecurityIdentifier("S-1-1-0");
+        var file = new FileInfo(path);
+        var granted = file.GetAccessControl();
+        granted.AddAccessRule(new FileSystemAccessRule(everyone, FileSystemRights.Read, AccessControlType.Allow));
+        file.SetAccessControl(granted);
 
         VlcSetup.WriteVlcrc("second-pass");
 
         Assert.Equal(created, File.GetCreationTimeUtc(path));   // metadata preserved by File.Replace
-        var acl = Run("icacls", path);
-        Assert.Contains("S-1-1-0", acl);                        // custom ACE survived the replace
+        var rules = new FileInfo(path).GetAccessControl()
+            .GetAccessRules(true, false, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .ToList();
+        // Raw dump in SID form (no localized-name rendering, the icacls blindness) so a failed
+        // assert shows the actual ACL, never a paraphrase.
+        var aclDump = string.Join(Environment.NewLine,
+            rules.Select(r => $"{r.IdentityReference.Value} {r.AccessControlType} {r.FileSystemRights}"));
+        var surviving = rules
+            .Where(r => r.IdentityReference.Equals(everyone)
+                && r.AccessControlType == AccessControlType.Allow
+                && r.FileSystemRights.HasFlag(FileSystemRights.Read))
+            .ToList();
+        Assert.True(surviving.Count > 0, "custom ACE survived the replace; actual ACL:\n" + aclDump);
+        Assert.DoesNotContain(surviving, r => r.FileSystemRights.HasFlag(FileSystemRights.Write)
+            || r.FileSystemRights.HasFlag(FileSystemRights.FullControl));
     }
 
     // T-W5 + T-W6: deferred vlcrc write vs a REAL running "vlc" process (renamed ping.exe),

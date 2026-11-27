@@ -9,19 +9,33 @@ import org.junit.Test
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.security.spec.PKCS8EncodedKeySpec
 import java.util.concurrent.atomic.AtomicInteger
+import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.SSLContext
 
 /**
  * The step-3 automatic check driven for real: AutoSetupCheck runs the production
  * HelperClient / Vlc / VlcAuthRepair code over actual HTTP against fake PC and VLC
  * servers on localhost. No demo states, no assigned UI state - the same calls the
- * setup screen's LaunchedEffect makes.
+ * setup screen's LaunchedEffect makes. The helper side is REAL pinned HTTPS: the
+ * fixture pairs through the production SecurePairSave path with a credential bound
+ * to the fake server's key (a checked-in throwaway test identity, never a real
+ * secret). No production bypass and no RequestGate weakening - the transport's
+ * secure-only rule is exercised, not circumvented.
  */
 class AutoSetupCheckTest {
 
     /** Minimal threaded HTTP fake: the handler maps (method, path, authorization, body) to (code, body). */
-    private class FakeServer(private val handler: (String, String, String?, String) -> Pair<Int, String>) {
-        private val socket = ServerSocket(0)
+    private class FakeServer(
+        private val handler: (String, String, String?, String) -> Pair<Int, String>,
+        tls: SSLContext? = null,
+    ) {
+        private val socket: ServerSocket = tls?.serverSocketFactory?.createServerSocket(0) ?: ServerSocket(0)
         val port: Int = socket.localPort
         @Volatile private var stopped = false
         private val thread = Thread {
@@ -61,6 +75,60 @@ class AutoSetupCheckTest {
         fun stop() { stopped = true; try { socket.close() } catch (_: Exception) {} }
     }
 
+    /** The fake helper's TLS identity: a checked-in throwaway test key pair (assets
+     *  fakehelper-test.crt/.key), NOT a real credential. The secure transport pins this
+     *  exact key, so instrumentation drives the real pinned-HTTPS path. PEM assets +
+     *  pure JCA loading: no PKCS12/keystore-format risk on-device. */
+    private object HelperTls {
+        private const val ALIAS_PASSWORD = "test-only"
+        private fun loadCertAndKey(): Pair<X509Certificate, PrivateKey> {
+            val assets = InstrumentationRegistry.getInstrumentation().context.assets
+            val cert = assets.open("fakehelper-test.crt").use {
+                CertificateFactory.getInstance("X.509").generateCertificate(it)
+            } as X509Certificate
+            val keyDer = assets.open("fakehelper-test.key").use { stream ->
+                val pem = stream.readBytes().toString(Charsets.US_ASCII)
+                android.util.Base64.decode(
+                    pem.replace("-----BEGIN PRIVATE KEY-----", "")
+                        .replace("-----END PRIVATE KEY-----", "")
+                        .replace("\\s".toRegex(), ""),
+                    android.util.Base64.DEFAULT,
+                )
+            }
+            val key = java.security.KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyDer))
+            return cert to key
+        }
+        val context: SSLContext by lazy {
+            val (cert, key) = loadCertAndKey()
+            val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+                load(null)
+                setKeyEntry("fakehelper", key, ALIAS_PASSWORD.toCharArray(), arrayOf(cert))
+            }
+            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+                .apply { init(ks, ALIAS_PASSWORD.toCharArray()) }
+            SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
+        }
+        /** The SPKI pin of the fake helper's key - the credential record binds to exactly this. */
+        val pinHex: String by lazy { PairedCredential.toHex(PinPolicy.hashSpki(loadCertAndKey().first.publicKey.encoded)) }
+    }
+
+    /** 64 lowercase hex, the helper-issued token shape PairedCredential requires. */
+    private val helperToken = "ab".repeat(32)
+
+    /** Pair the test store with the fake helper through the REAL secure save path: a genuine
+     *  PairedCredential record bound to the fake server's key pin. A fresh pcId per call keeps
+     *  the process-wide key-change state out of the tests. Fails loudly (never silently
+     *  unpaired) when the Keystore-backed store cannot persist on this device. */
+    private fun pairWithHelper(store: Store, helperPort: Int, vlcPassword: String?): PairedCredential {
+        val c = PairedCredential.of(PairedCredential.newPcId(), HelperTls.pinHex, "127.0.0.1", helperPort, helperToken)!!
+        val outcome = SecurePairSave.save(
+            store.securePairStore, c.host, c.port, "FakePC", vlcPassword,
+            SecureHttp.BoundPin(HelperTls.pinHex, helperToken), c.pcId,
+        )
+        assertEquals("the fixture must pair through the real secure save path", SecurePairSave.Outcome.SAVED, outcome)
+        return c
+    }
+
     private fun freshStore(): Store {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
@@ -78,7 +146,7 @@ class AutoSetupCheckTest {
         }.start()
 
     private fun helperServer(configured: Boolean, pending: Boolean, adoptPassword: String? = null, adoptCalls: AtomicInteger? = null): FakeServer =
-        FakeServer { _, path, _, body ->
+        FakeServer({ _, path, _, body ->
             when {
                 path == "/vlc/setup-status" -> 200 to """{"configured":$configured,"pending":$pending}"""
                 path == "/vlc/adopt" && adoptPassword != null && !body.contains("\"ack\":true") -> {
@@ -89,7 +157,7 @@ class AutoSetupCheckTest {
                 path == "/vlc/adopt" -> 410 to """{"error":"adopt spent"}"""
                 else -> 404 to "{}"
             }
-        }.start()
+        }, HelperTls.context).start()
 
     @Test
     fun configuredAndVlcAnswersIsOk() {
@@ -97,8 +165,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false)
         val vlc = vlcServer("pw-1")
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.OK, AutoSetupCheck.run(store))
         } finally { helper.stop(); vlc.stop() }
     }
@@ -108,13 +175,12 @@ class AutoSetupCheckTest {
         // E6: the helper's strict setup-status 503 means "could not verify right now" - a
         // distinct retry outcome, never a green Done and never a re-pair refusal.
         val store = freshStore()
-        val helper = FakeServer { _, path, _, _ ->
+        val helper = FakeServer({ _, path, _, _ ->
             if (path == "/vlc/setup-status") 503 to """{"ok":false}""" else 404 to "{}"
-        }.start()
+        }, HelperTls.context).start()
         val vlc = vlcServer("pw-1")
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.SETUP_UNKNOWN, AutoSetupCheck.run(store))
         } finally { helper.stop(); vlc.stop() }
     }
@@ -128,8 +194,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false, adoptPassword = null)
         val vlc = vlcServer("new-pw")
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "old-pw"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "old-pw")
             assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
         } finally { helper.stop(); vlc.stop() }
     }
@@ -141,8 +206,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = false, pending = true)
         val vlc = vlcServer("pw-1", vlcHits) // must never be contacted: old settings still live
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.OK_DEFERRED, AutoSetupCheck.run(store))
             assertEquals(0, vlcHits.get())
         } finally { helper.stop(); vlc.stop() }
@@ -154,8 +218,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false)
         val deadPort = ServerSocket(0).use { it.localPort } // closed the moment the socket frees
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = deadPort
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = deadPort; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.OK_NOT_OPEN, AutoSetupCheck.run(store))
         } finally { helper.stop() }
     }
@@ -167,8 +230,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false, adoptPassword = "pw-2", adoptCalls = adoptCalls)
         val vlc = vlcServer("pw-2") // VLC only takes the PC's current password
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "stale" // the phone's copy is wrong
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "stale") // the phone's copy is wrong
             assertEquals(AutoSetupCheck.Outcome.OK, AutoSetupCheck.run(store))
             assertEquals(1, adoptCalls.get()) // exactly one adoption fetch
             assertEquals("pw-2", store.vlcPassword) // adopted, never pushed
@@ -182,8 +244,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false) // adopt -> 410
         val vlc = vlcServer("other") // every password the phone has is refused
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "stale"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "stale")
             assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
             assertEquals("stale", store.vlcPassword) // a refusal never overwrites the stored copy
         } finally { helper.stop(); vlc.stop() }
@@ -196,8 +257,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = false, pending = false)
         val vlc = vlcServer("pw-1", vlcHits)
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
             assertEquals(0, vlcHits.get()) // no probe: the PC says nothing is set up
         } finally { helper.stop(); vlc.stop() }
@@ -207,8 +267,7 @@ class AutoSetupCheckTest {
     fun pcDownIsUnreachable() {
         val store = freshStore()
         val deadPort = ServerSocket(0).use { it.localPort }
-        store.host = "127.0.0.1"; store.helperPort = deadPort; store.vlcPort = deadPort
-        store.helperToken = "tok"; store.vlcPassword = "pw-1"
+        store.vlcPort = deadPort; pairWithHelper(store, deadPort, "pw-1")
         assertEquals(AutoSetupCheck.Outcome.PC_UNREACHABLE, AutoSetupCheck.run(store))
     }
 
@@ -223,8 +282,7 @@ class AutoSetupCheckTest {
         val helper = helperServer(configured = true, pending = false, adoptPassword = "pw-9")
         val vlc = vlcServer("pw-9")
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
-            store.helperToken = "tok" // NO vlcPassword: the pair finished without one
+            store.vlcPort = vlc.port; pairWithHelper(store, helper.port, null) // NO vlcPassword: the pair finished without one
             assertEquals(AutoSetupCheck.Outcome.OK, AutoSetupCheck.run(store))
             assertEquals("pw-9", store.vlcPassword)
         } finally { helper.stop(); vlc.stop() }
@@ -235,10 +293,9 @@ class AutoSetupCheckTest {
         // An old PC helper has no /vlc/setup-status (404 -> MissingRoute): the honest outcome
         // is UNSUPPORTED (the update card), never a "couldn't reach the PC" retry loop.
         val store = freshStore()
-        val helper = FakeServer { _, _, _, _ -> 404 to "{}" }.start()
+        val helper = FakeServer({ _, _, _, _ -> 404 to "{}" }, HelperTls.context).start()
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = helper.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = helper.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.UNSUPPORTED, AutoSetupCheck.run(store))
         } finally { helper.stop() }
     }
@@ -246,10 +303,9 @@ class AutoSetupCheckTest {
     @Test
     fun badTokenIsRefused() {
         val store = freshStore()
-        val helper = FakeServer { _, _, _, _ -> 401 to """{"error":"bad token"}""" }.start()
+        val helper = FakeServer({ _, _, _, _ -> 401 to """{"error":"bad token"}""" }, HelperTls.context).start()
         try {
-            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = helper.port
-            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            store.vlcPort = helper.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
         } finally { helper.stop() }
     }

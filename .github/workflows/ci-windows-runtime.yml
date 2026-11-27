@@ -1,9 +1,12 @@
-# DRAFT v4 - private. Minimal change from the version that ran as 46054116310: an explicit
-# build step, and the WinRT + counts legs gated on `always() && !cancelled() && build success`
-# so a unit-leg failure still yields WinRuntime evidence while keeping the job RED. No
-# continue-on-error anywhere. One bounded whole-team TEST-ONLY review; separate from
-# product release and from the firewall design question. Push (if cleared) via guard v2 gpush,
-# explicit refspec: ci/windows-runtime-20261127. Branch deleted after green.
+# DRAFT v5 - private. v4 ran as 46073390543: unit 184/184 green, WinRT 4/5 - TW4's icacls
+# text assert proved blind (icacls renders S-1-1-0 as a localized name; ReplaceFile docs say
+# the ACL is preserved, flags=0 - the object-model assert now settles actual ACE retention).
+# v5: TW4 grants/asserts the marker ACE by SID via the object model with the raw ACL dump
+# (SID form, no localized names) embedded in the xunit failure message, and TRX results are published so failures are inspectable without a
+# re-run. Otherwise as v4: WinRT + counts legs gated on `always() && !cancelled() && build
+# success`, no continue-on-error anywhere. One bounded whole-team TEST-ONLY review; separate
+# from product release and from the firewall design question. Push (if cleared) via guard v2
+# gpush, explicit refspec: ci/windows-runtime-20261127. Branch deleted after green.
 name: Windows runtime checks
 on:
   push:
@@ -75,6 +78,15 @@ jobs:
           foreach ($e in $expected) { if ($names -notcontains $e) { $fail += "missing fact: $e" } }
           foreach ($r in $w.TestRun.Results.UnitTestResult) { if ($r.outcome -ne 'Passed') { $fail += "non-passed fact: $($r.testName) = $($r.outcome)" } }
           if ($fail.Count -gt 0) { throw ($fail -join ' | ') }
+
+      - name: Publish TRX results (failures inspectable, no blind re-runs)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (repo-pinned)
+        with:
+          name: ci-windows-runtime
+          path: results/*.trx
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Cleanup disposable test residue (always; best-effort; proven-ownership only)
         if: always()
