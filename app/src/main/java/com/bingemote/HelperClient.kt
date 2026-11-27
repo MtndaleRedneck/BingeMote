@@ -123,6 +123,7 @@ object HelperClient {
                 else -> throw failure(c)
             }
         } catch (e: BadToken) { throw e }
+        catch (e: PcSetupUnknown) { throw e }
         catch (e: Unreachable) { throw e }
         catch (e: ConnectTimeout) { throw e }
         catch (e: java.net.SocketTimeoutException) { throw ConnectTimeout(NO_PC) }
