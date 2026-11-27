@@ -450,15 +450,52 @@ internal sealed class HttpServer : IDisposable
         // it via the E1 decision. F12/D2: vlcPending is true whenever the served value is not
         // verified in effect - an unverified password NEVER reads as "ready".
         // I2-3: when an intervening live pending was preserved, the pair serves THAT value.
-        var applied = VlcSetup.ApplyPlannedPassword(livePendingInstead ?? plan.Value);
-        Reply(res, 200, JsonSerializer.Serialize(new
+        Reply(res, 200, FinishPairReply(token, livePendingInstead ?? plan.Value));
+        Program.PhonesChanged?.Invoke();
+    }
+
+    /// <summary>S10/I2 route recovery: the phone is durable and the code spent, so the token
+    /// MUST reach the phone - truthfulness comes from the fields. The apply runs AFTER that
+    /// commit, so its expected IO/access failures (including the I2 N2 explicit failure when a
+    /// proven-stale plan has nothing verified to serve) are caught HERE, never escaping as a
+    /// bare dispatch 500 that would strand the durable phone and the spent code. The VLC value
+    /// rides the reply when verified in effect, or when the apply CONVERGES on a durably owed
+    /// live pending (the retry timer completes it); the failure catch below carries NO
+    /// credential (conservative disposition: raw fields cannot prove owed vs stale/uncertain),
+    /// only the token with vlcPending true. NAMED RESIDUAL (F14 edge): if the emergency
+    /// re-stage's persist itself fails, the reply can still carry an owed-but-not-durable
+    /// value - pre-existing; the phone's 401/adopt heal converges. vlcPending is true whenever
+    /// the value is not verified in effect or a live obligation stands (S10 wire contract), so
+    /// the phone finishes setup through its status/adopt checks instead of reading a false
+    /// Done.</summary>
+    internal static string FinishPairReply(string token, string plannedOrLivePending)
+    {
+        string? value; bool pending;
+        try
+        {
+            var applied = VlcSetup.ApplyPlannedPassword(plannedOrLivePending);
+            value = applied.value;
+            pending = !applied.verifiedInEffect || VlcSetup.Pending;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Program.Log("VLC setup could not be verified after the pair was saved - the phone keeps its pairing; an owed password completes via the retry/adopt path.");
+            // Conservative disposition (I2 narrow closure): raw fields alone cannot prove a
+            // pending record is owed rather than stale/uncertain/superseded, so NO credential
+            // rides this failure reply - the durable token always does (the phone never loses
+            // its pairing), vlcPending is true unconditionally (the S10 contract: the value
+            // was not verified in effect), and the phone finishes via setup-status/adopt
+            // while any live owed record completes on the retry timer.
+            value = null;
+            pending = true;
+        }
+        return JsonSerializer.Serialize(new
         {
             token = token,
             name = Program.MachineLabel(),
-            vlcPassword = applied.value,
-            vlcPending = !applied.verifiedInEffect || VlcSetup.Pending,
-        }));
-        Program.PhonesChanged?.Invoke();
+            vlcPassword = value,
+            vlcPending = pending,
+        });
     }
 
     /// <summary>F12/D1: the pair save transaction - the phone record and, for a FRESH password
@@ -495,7 +532,7 @@ internal sealed class HttpServer : IDisposable
             try { Program.SaveConfig(); return true; }
             catch (Exception ex)
             {
-                VlcSetup.RestorePendingSnapshotWithinSaveLock(priorPending.prior, priorPending.priorSup);
+                VlcSetup.RestorePendingSnapshotWithinSaveLock(priorPending.prior, priorPending.priorSup, priorPending.priorOver, priorPending.priorOverUncertain);
                 lock (Program.PhonesLock) { Program.Phones.RemoveAll(p => p.Token == token); }
                 Program.Log("Pairing could not be saved: " + ex.Message);
                 return false;

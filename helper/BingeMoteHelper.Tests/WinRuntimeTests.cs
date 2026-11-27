@@ -106,16 +106,24 @@ public sealed class WinRuntimeTests : IDisposable
         var fakeExe = Path.Combine(_dir, "vlc.exe");
         File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe"), fakeExe);
         using var fakeVlc = Process.Start(new ProcessStartInfo(fakeExe, "-t 127.0.0.1") { CreateNoWindow = true })!;
+        try
+        {
+            Assert.True(VlcSetup.RetryPending());                    // still waiting: real process seen
+            Assert.Contains("on-disk-a", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
+            Assert.DoesNotContain("fresh-b", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
 
-        Assert.True(VlcSetup.RetryPending());                    // still waiting: real process seen
-        Assert.Contains("on-disk-a", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
-        Assert.DoesNotContain("fresh-b", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
-
-        fakeVlc.Kill();
-        Assert.True(fakeVlc.WaitForExit(10_000));
-        Assert.False(VlcSetup.RetryPending());                   // applied: nothing left waiting
-        Assert.Contains("fresh-b", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
-        Assert.False(VlcSetup.Pending);
+            fakeVlc.Kill();
+            Assert.True(fakeVlc.WaitForExit(10_000));
+            Assert.False(VlcSetup.RetryPending());                   // applied: nothing left waiting
+            Assert.Contains("fresh-b", File.ReadAllText(Path.Combine(_dir, "vlcrc")));
+            Assert.False(VlcSetup.Pending);
+        }
+        finally
+        {
+            // A failed assert must never leak the fake vlc.exe: a later test's REAL process
+            // detection would see it and defer its write (run-2's TW4 cascade was exactly this).
+            try { if (!fakeVlc.HasExited) { fakeVlc.Kill(); fakeVlc.WaitForExit(10_000); } } catch { }
+        }
     }
 
     private static string Run(string exe, params string[] args)

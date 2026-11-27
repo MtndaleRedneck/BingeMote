@@ -137,6 +137,13 @@ internal static class Program
     /// <summary>The DURABLE deferred vlcrc password (E8): authoritative for serialization,
     /// guarded by ConfigSaveLock; VlcSetup mirrors it under its Gate for decisions.</summary>
     internal static string? PendingVlcDurable;
+    /// <summary>The DURABLE staged-over marker (I2Wip10): the vlcrc current the deferred write
+    /// was staged against. Distinguishes a still-owed deferred apply from a stale pending after
+    /// an external change. Moves with PendingVlcDurable in the same save units.</summary>
+    internal static string? PendingVlcStagedOverDurable;
+    /// <summary>DURABLE fail-closed flag (I2 D2): the staged-over baseline could not be
+    /// established with certainty. Moves with PendingVlcDurable in the same save units.</summary>
+    internal static bool PendingVlcStagedOverUncertainDurable;
     internal static string StoreBrokenReason = "could not be read";
     /// <summary>One writer at a time: the whole read-modify-write (snapshot AND write) happens
     /// inside this outer transaction lock, so two saves can never finish out of order. Lock graph
@@ -529,6 +536,16 @@ internal static class Program
             VolumeOsdEnabled = !doc.RootElement.TryGetProperty("volumeOsd", out var vo) || vo.ValueKind != JsonValueKind.False;
             LastRunVersion = doc.RootElement.TryGetProperty("lastRunVersion", out var lv) ? lv.GetString() : null;
             _pendingVlcFromConfig = doc.RootElement.TryGetProperty("pendingVlcPassword", out var pvp) ? pvp.GetString() : null;
+            var hasOverKey = doc.RootElement.TryGetProperty("pendingVlcStagedOver", out var pso);
+            _pendingVlcStagedOverFromConfig = hasOverKey ? pso.GetString() : null;
+            // I2Wip10 migration + torn-store fail-closed: a well-formed atomic save ALWAYS
+            // carries the baseline key (explicit null included) and the uncertain flag together.
+            // A pending with EITHER key missing (a pre-marker config OR a torn/partial store)
+            // has NO proven baseline - rehydrate fail-CLOSED uncertain whatever the flag says,
+            // never the old silent stale-clear, never a certain-absent baseline from a
+            // malformed record.
+            var hasUncertainKey = doc.RootElement.TryGetProperty("pendingVlcStagedOverUncertain", out var psou);
+            _pendingVlcStagedOverUncertainFromConfig = _pendingVlcFromConfig != null && (!hasOverKey || !hasUncertainKey || psou.GetBoolean());
             }
         }
         catch (Exception ex)
@@ -541,15 +558,21 @@ internal static class Program
         // A vlcrc write that was waiting for VLC to close survives a helper restart:
         // complete it now when VLC is already closed, or re-arm the retry when it is not.
         var pendingVlc = _pendingVlcFromConfig;
+        var pendingVlcOver = _pendingVlcStagedOverFromConfig;
+        var pendingVlcOverUncertain = _pendingVlcStagedOverUncertainFromConfig;
         _pendingVlcFromConfig = null;
+        _pendingVlcStagedOverFromConfig = null;
+        _pendingVlcStagedOverUncertainFromConfig = false;
         if (!string.IsNullOrEmpty(pendingVlc) && !StoreBroken)
         {
-            lock (ConfigSaveLock) PendingVlcDurable = pendingVlc;
-            VlcSetup.RestorePending(pendingVlc);
+            lock (ConfigSaveLock) { PendingVlcDurable = pendingVlc; PendingVlcStagedOverDurable = pendingVlcOver; PendingVlcStagedOverUncertainDurable = pendingVlcOverUncertain; }
+            VlcSetup.RestorePending(pendingVlc, pendingVlcOver, pendingVlcOverUncertain);
         }
     }
 
     private static string? _pendingVlcFromConfig;
+    private static string? _pendingVlcStagedOverFromConfig;
+    private static bool _pendingVlcStagedOverUncertainFromConfig;
 
     /// <summary>Change + persist as one unit under the save lock: side effects run only after
     /// the change is on disk; a refused save rolls the change back and returns false, so the
@@ -585,6 +608,8 @@ internal static class Program
                 {
                     phones = PhonesSnapshot().Select(p => new { token = p.Token, name = p.Name, adoptSpent = p.AdoptSpent, adoptRequestId = p.AdoptRequestId, adoptServedAtUtc = p.AdoptServedAtUtc?.ToString("o") }).ToArray(),
                     pendingVlcPassword = PendingVlcDurable,
+                    pendingVlcStagedOver = PendingVlcStagedOverDurable,
+                    pendingVlcStagedOverUncertain = PendingVlcStagedOverUncertainDurable,
                     moviesFolder = MoviesFolder,
                     keepAwake = KeepAwakeEnabled,
                     volumeOsd = VolumeOsdEnabled,

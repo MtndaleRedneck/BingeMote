@@ -22,21 +22,50 @@ internal static class VlcSetup
     /// (responsiveness, not correctness). The EXTERNAL race
     /// (VLC itself rewriting vlcrc) is unchanged and still covered by the E5.6 guard below.
     /// </summary>
+    /// <summary>Explicit phone-facing write (the /vlc/setup route): the strict planning read
+    /// IS this request's consent baseline, and an unresolvable owed record can be resolved by
+    /// the explicit request (I2 N1). Autonomous/internal applies use WriteVlcrcInternal.
+    /// Test hook (null in production): BeforePlanningReadForTests lands an external change
+    /// inside the decision-to-planning-read window.</summary>
     public static string WriteVlcrc(string password)
     {
-        lock (Program.ConfigSaveLock) { return WriteVlcrcUnderConfigLock(password); }
+        lock (Program.ConfigSaveLock) { return WriteVlcrcUnderConfigLock(password, resolveUnresolved: true, expectedBaseline: null, hasExpectedBaseline: false); }
     }
 
-    private static string WriteVlcrcUnderConfigLock(string password)
+    /// <summary>Autonomous/internal apply (retry timer, restart restore, R3 apply, host
+    /// repair): NO resolution intent (an incidental internal caller never clears an
+    /// obligation), and the DECISION's expected baseline is carried into the write (I2
+    /// baseline window) - a change between the decision and the planning read aborts into a
+    /// re-decide instead of writing over the discovered state.</summary>
+    internal static string WriteVlcrcInternal(string password, string? expectedBaseline)
+    {
+        lock (Program.ConfigSaveLock) { return WriteVlcrcUnderConfigLock(password, resolveUnresolved: false, expectedBaseline, hasExpectedBaseline: true); }
+    }
+
+    private static string WriteVlcrcUnderConfigLock(string password, bool resolveUnresolved, string? expectedBaseline, bool hasExpectedBaseline)
     {
         if (password.Length == 0 || password.Length > 200 || password.Contains('\r') || password.Contains('\n'))
             return JsonSerializer.Serialize(new { ok = false, reason = "bad password" });
         Directory.CreateDirectory(VlcDir);
         var path = Path.Combine(VlcDir, "vlcrc");
-        // E5.1: tolerant merge read of the current vlcrc (null = absent).
-        List<string>? before;
-        try { before = File.Exists(path) ? File.ReadAllLines(path).ToList() : null; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new VlcrcUnreadableException(); }
+        BeforePlanningReadForTests?.Invoke();
+        // E5.1: STRICT merge read of the current vlcrc (I2 D4): null is PROVEN absent
+        // (FileNotFound/DirectoryNotFound only) - never File.Exists, which reports false for a
+        // file it merely cannot reach and would launder "inaccessible" into a certain-absent
+        // staged-over baseline (a later decision would stale-clear the owed write over the file
+        // that was really there). Unreadable = the whole write refuses (the route maps 503).
+        List<string>? before = ReadVlcrcLinesStrict();
+        // I2Wip10/D2: the staged-over baseline for any pending THIS write stages comes from
+        // THIS strict planning read (proven certain by construction), never a later re-read.
+        var plannedOver = before == null ? null : FindValue(before, "http-password");
+        // I2 baseline window: an autonomous apply carries the DECISION's expected baseline -
+        // if the world changed since (an external write landed in between), never write over
+        // it: re-decide on the discovered state exactly like the E5.6 abort.
+        if (hasExpectedBaseline && plannedOver != expectedBaseline)
+        {
+            Program.Log("vlcrc changed between the decision and the write - re-deciding instead of writing over it.");
+            return ServeDiscoveredAfterChange(password);
+        }
         // E5.2: merge, don't overwrite - another interface may already sit in extraintf.
         var lines = before == null ? new List<string>() : new List<string>(before);
         Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
@@ -49,10 +78,37 @@ internal static class VlcSetup
         // is cleared as ONE save unit (E2), never by a separate save.
         if (LinesEqual(lines, before))
         {
+            // I2Wip10: even a no-op ATTESTS state - verify it against a strict re-read at the
+            // attestation point first. A concurrent change since the merge read is discovered
+            // and re-decided by the caller, never attested stale (same identity contract as E5.6).
+            BeforeReplaceGuardForTests?.Invoke();
+            List<string>? currentNow = ReadVlcrcLinesStrict(); // strict (I2 D4): unreadable refuses, never reads as absent
+            if (!LinesEqual(currentNow, before))
+            {
+                Program.Log("vlcrc changed while the existing setup was being verified - re-checking instead of attesting a stale state.");
+                return JsonSerializer.Serialize(new { ok = false, reason = "changed" });
+            }
             // I2 companion: clear only the obligation THIS value satisfies - an unrelated owed
             // pending is never cleared by another value's no-op.
             string? toClear; lock (Gate) { toClear = _pendingPassword == password ? _pendingPassword : null; }
             if (toClear != null) ClearPending(toClear);
+            // I2 N1: explicit intent + the requested value VERIFIED in effect (the strict
+            // re-read above): an unresolvable owed record (uncertain baseline, different from
+            // the verified current) is cleared now - after the verification, never before a
+            // commit. Internal/incidental callers (resolveUnresolved false) never trigger it.
+            if (resolveUnresolved)
+            {
+                string? unres; lock (Gate) { unres = _pendingPassword != null && !_pendingSuperseded && _pendingStagedOverUncertain && _pendingPassword != password ? _pendingPassword : null; }
+                if (unres != null)
+                {
+                    Program.Log("Clearing the unresolvable deferred vlcrc write - the requested value is verified in effect.");
+                    // I2: the clear's persist result is never ignored - if it cannot save,
+                    // the record stands over the verified current (a coherent unresolved
+                    // state the next explicit request resolves); the failure is observable.
+                    if (!ClearPending(unres))
+                        Program.Log("pending vlc password: the replaced unresolved record could not be cleared durably - it stands over the verified current; the next explicit request resolves it.");
+                }
+            }
             Program.Log("vlcrc already has the web remote set up - nothing to write.");
             return JsonSerializer.Serialize(new { ok = true });
         }
@@ -60,16 +116,35 @@ internal static class VlcSetup
         // phone(s) - this write must not silently replace it or make it disappear, BEFORE any
         // stage or write. Retryable busy (ok:false over 200, never 503: not a PC-unavailable
         // signal), state unchanged. Same value (or none) proceeds.
+        // I2 N1: an UNRESOLVABLE standing pending (uncertain baseline + this strict planning
+        // read proves a DIFFERENT current) never blocks an EXPLICIT request - but the old
+        // record is NOT cleared up front: the replacement commits atomically (defer paths: one
+        // save unit via StagePendingReplacingUnresolved) or the old record is cleared only
+        // AFTER the new value is verified in effect (direct write). No crash window loses both.
+        string? replacingUnresolved = null;
         lock (Gate)
         {
             if (_pendingPassword != null && !_pendingSuperseded && _pendingPassword != password)
-                return JsonSerializer.Serialize(new { ok = false, reason = "pending-busy" });
+            {
+                if (!(resolveUnresolved && _pendingStagedOverUncertain && plannedOver != null && plannedOver != _pendingPassword))
+                    return JsonSerializer.Serialize(new { ok = false, reason = "pending-busy" });
+                replacingUnresolved = _pendingPassword;
+            }
         }
+        // I2 same-value explicit consent: an explicit request for the OWED value itself, with
+        // an uncertain baseline and a proven different current, re-baselines on this request's
+        // proven planning read instead of converging on the unprovable one - the requester is
+        // present and the read is strict. (VLC closed: the direct write applies and the
+        // matching clear resolves; VLC running: the defer stage re-baselines, see below.)
+        var explicitRebaseline = false;
+        lock (Gate) { explicitRebaseline = resolveUnresolved && _pendingPassword == password && !_pendingSuperseded && _pendingStagedOverUncertain && plannedOver != null && plannedOver != password; }
         // E5.4: VLC running - stage the deferred write as ONE save unit (E2/E8); the retry
         // timer applies it when VLC closes.
         if (VlcRunning())
         {
-            var deferred = StagePendingGuarded(password);
+            var deferred = replacingUnresolved != null
+                ? StagePendingReplacingUnresolved(password, plannedOver, true, replacingUnresolved) // ONE save unit: the old record is restored whole on persist failure (I2 N1)
+                : StagePendingGuarded(password, plannedOver, true, explicitRebaseline);
             if (deferred == "busy")
                 return JsonSerializer.Serialize(new { ok = false, reason = "pending-busy" });
             if (deferred == "failed")
@@ -91,6 +166,13 @@ internal static class VlcSetup
         var tmp = path + ".tmp." + Guid.NewGuid().ToString("N");
         try
         {
+            // Re-stage after a failed/interrupted apply: the atomic replace when this call
+            // resolves an unresolvable record, else the compare-guarded stage (with explicit
+            // re-baseline consent). Always the planning read's baseline, never the
+            // post-failure disk state (I2 D2).
+            string? RestageAfterFailedApply() => replacingUnresolved != null
+                ? StagePendingReplacingUnresolved(password, plannedOver, true, replacingUnresolved)
+                : StagePendingGuarded(password, plannedOver, true, explicitRebaseline);
             using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 var bytes = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", lines) + "\n");
@@ -106,27 +188,13 @@ internal static class VlcSetup
             {
                 try { File.Delete(tmp); } catch { }
                 Program.Log(logLine);
-                var d = ResolvePasswordDecision(); // strict; may throw VlcrcUnreadableException
-                if (d.StalePending != null) ClearPending(d.StalePending);
-                else if (d.ClearMatchingPending) ClearPending(d.Serve!);
-                // F13/I2-1: ok:true ONLY when the REQUESTED value is truly in effect (someone
-                // else installed exactly it). Any other serving state (different current OR an
-                // owed pending) is authoritative and stands untouched - stage NOTHING over it.
-                // Only when nothing serves at all does the requested write wait as pending.
-                if (d.Serve == password && !d.DeferredOwed) return JsonSerializer.Serialize(new { ok = true });
-                if (d.Serve == null)
-                {
-                    var st = StagePendingGuarded(password);
-                    if (st == "busy") Program.Log("an owed pending landed during the write - it stands, nothing staged over it.");
-                    else if (st == "failed") Program.Log("the deferred write could not be persisted after the abort - the next decide re-checks.");
-                }
-                return JsonSerializer.Serialize(new { ok = false, reason = "changed" });
+                return ServeDiscoveredAfterChange(password);
             }
             // E5.6: content-identity guard - strict re-read and compare with `before`
             // immediately before the replace. Changed under us -> abort, do not overwrite.
             List<string>? now;
-            try { now = File.Exists(path) ? File.ReadAllLines(path).ToList() : null; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { try { File.Delete(tmp); } catch { } throw new VlcrcUnreadableException(); }
+            try { now = ReadVlcrcLinesStrict(); } // strict (I2 D4)
+            catch (VlcrcUnreadableException) { try { File.Delete(tmp); } catch { } throw; }
             if (!LinesEqual(now, before))
                 return AbortAndServeDiscovered("vlcrc changed while the write was being prepared - re-checking instead of overwriting.");
             // File.Replace preserves the destination ACL/metadata; a new file takes the
@@ -148,10 +216,10 @@ internal static class VlcSetup
             // failed apply: the value stays staged as pending and the caller reports it.
             List<string>? after;
             try { after = File.ReadAllLines(path).ToList(); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { StagePendingGuarded(password); throw new VlcrcUnreadableException(); } // busy: the owed pending stands
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { RestageAfterFailedApply(); throw new VlcrcUnreadableException(); } // busy: the owed pending stands
             if (!LinesEqual(after, lines))
             {
-                var st = StagePendingGuarded(password);
+                var st = RestageAfterFailedApply(); // the planning read's baseline, never the post-failure disk state (I2 D2)
                 if (st == "busy")
                     return JsonSerializer.Serialize(new { ok = false, reason = "pending-busy" });
                 if (st == "failed") Program.Log("the failed write could not be re-staged durably - nothing is owed; the caller re-decides.");
@@ -168,8 +236,45 @@ internal static class VlcSetup
         // (E2). An unrelated owed pending is never cleared by this write (I2 companion).
         string? written; lock (Gate) { written = _pendingPassword == password ? _pendingPassword : null; }
         if (written != null) ClearPending(written);
+        // I2 N1: the requested value is VERIFIED on disk - only NOW is the replaced unresolved
+        // record cleared (never before its replacement was durable: no crash window loses
+        // both). A failure before this point leaves the old record standing over the new
+        // current - bounded: the next explicit request resolves it.
+        if (replacingUnresolved != null)
+        {
+            Program.Log("Cleared the unresolvable deferred vlcrc write - the explicit replacement is verified in effect.");
+            // I2: the clear's persist result is never ignored - a failed save leaves the old
+            // record standing over the new current (coherent, surfaced as unresolved, resolved
+            // by the next explicit request) and is observable, never silent.
+            if (!ClearPending(replacingUnresolved))
+                Program.Log("pending vlc password: the replaced unresolved record could not be cleared durably - it stands over the new current; the next explicit request resolves it.");
+        }
         Program.Log("VLC web remote written into vlcrc.");
         return JsonSerializer.Serialize(new { ok = true });
+    }
+
+    /// <summary>Shared re-decide after a discovered external change (E5.6 abort, F11 create
+    /// race, or the I2 baseline window): the discovered on-disk state is the truth - stale /
+    /// matching pending records reconcile, ok:true ONLY when the requested value is truly in
+    /// effect; any other serving state stands untouched and NOTHING is staged over it; only
+    /// when nothing serves at all does the requested write wait as pending.</summary>
+    private static string ServeDiscoveredAfterChange(string password)
+    {
+        var d = ResolvePasswordDecision(); // strict; may throw VlcrcUnreadableException
+        if (d.StalePending != null) ClearPending(d.StalePending);
+        else if (d.ClearMatchingPending) ClearPending(d.Serve!);
+        // F13/I2-1: ok:true ONLY when the REQUESTED value is truly in effect (someone else
+        // installed exactly it). Any other serving state (different current OR an owed
+        // pending) is authoritative and stands untouched - stage NOTHING over it. Only when
+        // nothing serves at all does the requested write wait as pending.
+        if (d.Serve == password && !d.DeferredOwed) return JsonSerializer.Serialize(new { ok = true });
+        if (d.Serve == null)
+        {
+            var st = StagePendingGuarded(password, null, true); // the strict re-decide proved nothing serves (certain)
+            if (st == "busy") Program.Log("an owed pending landed during the write - it stands, nothing staged over it.");
+            else if (st == "failed") Program.Log("the deferred write could not be persisted after the abort - the next decide re-checks.");
+        }
+        return JsonSerializer.Serialize(new { ok = false, reason = "changed" });
     }
 
     /// <summary>VLC process check; the test hook (null in production) overrides it.</summary>
@@ -182,6 +287,10 @@ internal static class VlcSetup
         return a.SequenceEqual(b);
     }
 
+    /// <summary>Test hook (null in production): runs at the top of WriteVlcrc before the
+    /// strict planning read, to land an external change inside the decision-to-write window
+    /// (I2 baseline window).</summary>
+    internal static Action? BeforePlanningReadForTests;
     /// <summary>Test hooks (null in production): run around the E5 content-identity guard.</summary>
     internal static Action? BeforeReplaceGuardForTests;
     internal static Action? AfterReplaceForTests;
@@ -198,6 +307,19 @@ internal static class VlcSetup
     // only (an observed design fact, not a reviewed-or-accepted risk waiver): a restart
     // re-derives safety from the strict read in branch 2.
     private static bool _pendingSuperseded;
+    // I2Wip10: the current value this pending was STAGED OVER, captured from the PLANNING READ
+    // with its read status (I2 D2: a tolerant re-read at stage time could capture a LATER
+    // external change and launder it into a consent baseline). null = the planning read proved
+    // NOTHING was configured; _pendingStagedOverUncertain = the baseline could not be established
+    // (read failure, or a pre-marker config migrated) - fail-CLOSED: the decision never
+    // stale-clears such a pending (could strand a phone holding it) and never applies it over
+    // an arbitrary current; it stands until a later state resolves it.
+    // NAMED LIMITATIONS (honest scope, I2): the marker tracks the PASSWORD only - a host- or
+    // extraintf-only external change, and an ABA password round-trip (X -> Z -> X), are not
+    // detected; the verified serve/write guards still leave a bounded read-to-reply TOCTOU
+    // window; and until the owed apply lands, the CURRENT value on disk is what controls VLC.
+    private static string? _pendingStagedOver;
+    private static bool _pendingStagedOverUncertain;
 
     /// <summary>VLC was open, so the write was skipped; retry when VLC closes.</summary>
     public static bool Pending { get { lock (Gate) return _pendingPassword != null; } }
@@ -238,6 +360,14 @@ internal static class VlcSetup
         return new VlcrcSnapshot { Password = FindValue(lines, "http-password"), Extraintf = FindValue(lines, "extraintf"), Host = FindValue(lines, "http-host") };
     }
 
+    /// <summary>The staged-over baseline WITH its read status (I2 D2): a strict read, so a
+    /// null value means PROVEN absent - never conflated with unreadable. Uncertain = fail-closed.</summary>
+    private static (string? value, bool certain) CaptureStagedOverBaseline()
+    {
+        try { return (ReadVlcrcValueStrict("http-password"), true); }
+        catch (VlcrcUnreadableException) { return (null, false); }
+    }
+
     /// <summary>The full STRICT configured checks (E6): a live password, the web interface on,
     /// and a bind the phone can reach - never password presence alone.</summary>
     private static bool StrictConfiguredOnDisk(VlcrcSnapshot s)
@@ -254,23 +384,30 @@ internal static class VlcSetup
     /// then Gate (the documented order, Program.cs; WriteVlcrc holds ConfigSaveLock across its
     /// whole critical section, so a status read never observes a half-committed write/pending
     /// pair). READ-ONLY: no mutation and no reconciliation here - that stays with the E1
-    /// decision paths. pending = a LIVE obligation: the pending record is non-null, NOT
-    /// superseded, and NO current password is on disk - the only state where a decision would
-    /// still APPLY the pending value (E1 branch 5). When a DIFFERENT current exists (I2 R2),
-    /// E1 clears the pending UNAPPLIED at the next decision and control already works with the
-    /// current value: that is configured, never "waiting". Applied-equal and poisoned
-    /// superseded records likewise report pending=false. The E1 decision itself is unchanged;
-    /// this read mutates nothing. configured = the full strict checks, never true while a
-    /// live obligation waits. An unreadable vlcrc throws VlcrcUnreadableException: the route
+    /// decision paths. pending = a LIVE obligation: a non-superseded pending a decision would
+    /// still APPLY - nothing configured on disk (branch 5), a deferral whose staged-over
+    /// current is unchanged (I2Wip10), or an uncertain baseline standing unresolved (I2 D2).
+    /// When the pending's proven baseline was EXTERNALLY replaced, that pending is stale (R2):
+    /// the next decision clears it UNAPPLIED and control already works with the current value -
+    /// configured, never "waiting". Applied-equal and poisoned superseded records likewise
+    /// report pending=false. configured = the full strict checks, never true while a live
+    /// obligation waits. An unreadable vlcrc throws VlcrcUnreadableException: the route
     /// answers 503, never an empty/false attestation.</summary>
     public static (bool configured, bool pending) StatusSnapshot()
     {
         lock (Program.ConfigSaveLock)
         {
-            string? pending; bool superseded;
-            lock (Gate) { pending = _pendingPassword; superseded = _pendingSuperseded; }
+            string? pending; bool superseded; string? stagedOver; bool overUncertain;
+            lock (Gate) { pending = _pendingPassword; superseded = _pendingSuperseded; stagedOver = _pendingStagedOver; overUncertain = _pendingStagedOverUncertain; }
             var snap = ReadVlcrcSnapshotStrict(); // ONE strict read; propagates
-            var liveOwed = !string.IsNullOrEmpty(pending) && !superseded && string.IsNullOrEmpty(snap.Password);
+            // I2Wip10/D1: a live obligation is a non-superseded pending a decision would still
+            // APPLY - nothing on disk (branch 5), OR a deferral whose staged-over current is
+            // unchanged (owed), OR an uncertain baseline standing unresolved (I2 D2 fail-closed).
+            // A pending whose proven baseline was externally replaced is stale (R2): the current
+            // works, the next decision clears it - not a live obligation.
+            var liveOwed = !string.IsNullOrEmpty(pending) && !superseded &&
+                (string.IsNullOrEmpty(snap.Password) ||
+                 (snap.Password != pending && (overUncertain || snap.Password == stagedOver)));
             return (!liveOwed && StrictConfiguredOnDisk(snap), liveOwed);
         }
     }
@@ -289,18 +426,40 @@ internal static class VlcSetup
         public string? Serve;             // the value a caller serves (branches 2-5); null on 6
         public string? StalePending;      // branch 2: clear via E2, never serve/apply
         public bool ClearMatchingPending; // branch 3: clear without rewrite
-        public bool DeferredOwed;         // branch 5: the served pending still owes its apply
+        public bool DeferredOwed;         // branch 5 (or staged-over deferral): the served pending still owes its apply
         public bool SupersededPending;    // branch 6 with a superseded record on file
+        public bool PendingUnresolved;    // I2 D2: uncertain baseline + a different current - the pending STANDS (never cleared, never applied over it)
+        public string? CurrentRead;       // the strict-read current this decision saw (null = proven absent); planning-read provenance for callers that stage
     }
 
     internal static PasswordDecision ResolvePasswordDecision()
     {
-        string? pending; bool superseded;
-        lock (Gate) { pending = _pendingPassword; superseded = _pendingSuperseded; }
+        string? pending; bool superseded; string? stagedOver; bool overUncertain;
+        lock (Gate) { pending = _pendingPassword; superseded = _pendingSuperseded; stagedOver = _pendingStagedOver; overUncertain = _pendingStagedOverUncertain; }
         var current = ReadVlcrcValueStrict("http-password"); // strict; propagates
-        var d = new PasswordDecision();
+        var d = new PasswordDecision { CurrentRead = current };
         if (!string.IsNullOrEmpty(current))
         {
+            // I2Wip10: a DIFFERENT current is the stale signal (R2) ONLY when it is proven not to
+            // be the value the pending was staged over. When it IS the staged-over value, the
+            // write was deferred (VLC running) over exactly this current and the obligation
+            // stands: serve the owed value as deferred; the apply completes when VLC closes.
+            // An UNCERTAIN baseline (I2 D2) fails closed: serve the current truth, but the
+            // pending STANDS - never cleared (could strand a phone holding it), never applied
+            // over an arbitrary current.
+            if (!string.IsNullOrEmpty(pending) && !superseded && pending != current)
+            {
+                if (!overUncertain && current == stagedOver)
+                {
+                    d.Serve = pending; d.DeferredOwed = true;
+                    return d;
+                }
+                if (overUncertain)
+                {
+                    d.Serve = current; d.PendingUnresolved = true;
+                    return d;
+                }
+            }
             d.Serve = current;
             if (!string.IsNullOrEmpty(pending))
             {
@@ -319,15 +478,18 @@ internal static class VlcSetup
     }
 
     /// <summary>Clear the pending record as ONE save unit (E2): mutation + persist under
-    /// ConfigSaveLock. On failure the prior value is restored AND marked superseded - never
-    /// served or applied again. Callers must NOT hold Gate; the pending value is re-verified
+    /// ConfigSaveLock. On failure the record is restored EXACTLY as it stood - value, baseline,
+    /// uncertain flag AND superseded flag (I2 faithful whole-state rollback): the next decision
+    /// re-derives its disposition (a stale/matching record is re-cleared, an unresolved record
+    /// stands for explicit intent, an owed record completes only over its proven baseline).
+    /// Callers must NOT hold Gate; the pending value is re-verified
     /// under Gate inside the lock before clearing. F10: a mismatch is a no-op success that
     /// persists NOTHING, and a failed save's rollback only runs when this call actually
     /// mutated - it can never wipe a different pending another thread staged.</summary>
     internal static bool ClearPending(string expected)
     {
         lock (Gate) { if (_pendingPassword != expected) return true; } // F10: mismatch = no-op success, no persist
-        string? prior = null; bool priorSup = false; var mutated = false;
+        string? prior = null; bool priorSup = false; string? priorOver = null; var priorOverUncertain = false; var mutated = false;
         return Program.MutateAndPersist(
             () =>
             {
@@ -335,37 +497,69 @@ internal static class VlcSetup
                 lock (Gate)
                 {
                     if (_pendingPassword != expected) return; // re-verify: someone changed it
-                    prior = _pendingPassword; priorSup = _pendingSuperseded;
-                    _pendingPassword = null; _pendingSuperseded = false;
+                    prior = _pendingPassword; priorSup = _pendingSuperseded; priorOver = _pendingStagedOver; priorOverUncertain = _pendingStagedOverUncertain;
+                    _pendingPassword = null; _pendingSuperseded = false; _pendingStagedOver = null; _pendingStagedOverUncertain = false;
                     mutated = true;
                 }
                 Program.PendingVlcDurable = null;
+                Program.PendingVlcStagedOverDurable = null;
+                Program.PendingVlcStagedOverUncertainDurable = false;
             },
             () =>
             {
                 if (!mutated) return; // F10: no mutation happened - leave the untouched pending alone
                 Program.PendingVlcDurable = prior;
-                lock (Gate) { _pendingPassword = prior; if (prior != null) _pendingSuperseded = true; else _pendingSuperseded = priorSup; }
+                Program.PendingVlcStagedOverDurable = priorOver;
+                Program.PendingVlcStagedOverUncertainDurable = priorOverUncertain;
+                // Faithful whole-state rollback (I2): the record returns EXACTLY as it stood -
+                // value, baseline, uncertain flag AND the prior superseded flag. Forcing
+                // superseded here would let a later autonomous retry dispose of a restored
+                // UNRESOLVED record as stale, bypassing explicit-only recovery; staleness is
+                // re-derived by every decision, so a faithfully restored stale/matching record
+                // is simply re-cleared on the next pass - never applied (the baseline check
+                // guards every write).
+                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; _pendingStagedOver = priorOver; _pendingStagedOverUncertain = priorOverUncertain; }
             },
             "clearing the deferred VLC password");
+    }
+
+    /// <summary>TEST-ONLY: install the superseded-pending state directly. NO production path
+    /// produces it today (the old failed-clear poison marker was retired with the I2 faithful
+    /// whole-state rollback); the SupersededPending decision branch and the pair save-lock
+    /// clear remain as defense-in-depth, and the hook keeps that guard's contract tested.</summary>
+    internal static void SupersedePendingForTests()
+    {
+        lock (Gate) { if (_pendingPassword != null) _pendingSuperseded = true; }
     }
 
     /// <summary>Stage a deferred vlcrc write as ONE save unit (E2/E8): the durable record and
     /// the Gate mirror move together; a failed persist restores the prior state.</summary>
     internal static bool StagePending(string password)
     {
-        string? prior = null; bool priorSup = false;
+        string? prior = null; bool priorSup = false; string? priorOver = null; string? priorOverMirror = null; var priorOverUncertainMirror = false; var converge = false;
+        var (over, overCertain) = CaptureStagedOverBaseline(); // planning-read provenance with status (I2 D2)
         return Program.MutateAndPersist(
             () =>
             {
                 prior = Program.PendingVlcDurable;
+                priorOver = Program.PendingVlcStagedOverDurable;
                 Program.PendingVlcDurable = password;
-                lock (Gate) { priorSup = _pendingSuperseded; _pendingPassword = password; _pendingSuperseded = false; }
+                lock (Gate)
+                {
+                    // Converging on the SAME owed value keeps its original baseline: re-capturing
+                    // could launder an external change into "still owed" (I2 D2).
+                    converge = _pendingPassword == password && !_pendingSuperseded;
+                    priorSup = _pendingSuperseded; priorOverMirror = _pendingStagedOver; priorOverUncertainMirror = _pendingStagedOverUncertain;
+                    _pendingPassword = password; _pendingSuperseded = false;
+                    if (!converge) { _pendingStagedOver = over; _pendingStagedOverUncertain = !overCertain; Program.PendingVlcStagedOverDurable = over; Program.PendingVlcStagedOverUncertainDurable = !overCertain; }
+                }
             },
             () =>
             {
                 Program.PendingVlcDurable = prior;
-                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; }
+                Program.PendingVlcStagedOverDurable = priorOver;
+                Program.PendingVlcStagedOverUncertainDurable = priorOverUncertainMirror;
+                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; _pendingStagedOver = priorOverMirror; _pendingStagedOverUncertain = priorOverUncertainMirror; }
             },
             "staging the deferred VLC password");
     }
@@ -373,50 +567,101 @@ internal static class VlcSetup
     /// <summary>I2 companion ruling: stage as an ATOMIC compare-and-set on the owed
     /// obligation - the compare and the set are one Gate acquisition inside the one save unit.
     /// A DIFFERENT live (non-superseded) pending is never replaced: "busy" (nothing changed).
-    /// The same value (or none) converges. Returns null on persist success, "busy", or
-    /// "failed" (persist rolled back).</summary>
-    internal static string? StagePendingGuarded(string password)
+    /// The same value (or none) converges and keeps its ORIGINAL baseline (I2 D2). The baseline
+    /// comes from the CALLER's planning read with its read status - never a fresh tolerant
+    /// re-read here, which could capture a later external change as a consent baseline.
+    /// Returns null on persist success, "busy", or "failed" (persist rolled back).</summary>
+    /// <param name="explicitRebaseline">I2 same-value explicit consent: an explicit request
+    /// for the owed value itself re-baselines an uncertain record on the caller's proven
+    /// planning read instead of converging on the unprovable baseline.</param>
+    internal static string? StagePendingGuarded(string password, string? over, bool overCertain, bool explicitRebaseline = false)
     {
-        var busy = false;
-        string? prior = null; bool priorSup = false;
+        var busy = false; var converge = false;
+        string? prior = null; bool priorSup = false; string? priorOver = null; string? priorOverMirror = null; var priorOverUncertainMirror = false;
         var saved = Program.MutateAndPersist(
             () =>
             {
                 lock (Gate)
                 {
                     if (_pendingPassword != null && !_pendingSuperseded && _pendingPassword != password) { busy = true; return; }
-                    priorSup = _pendingSuperseded; _pendingPassword = password; _pendingSuperseded = false;
+                    converge = _pendingPassword == password && !_pendingSuperseded && !explicitRebaseline;
+                    priorSup = _pendingSuperseded; priorOverMirror = _pendingStagedOver; priorOverUncertainMirror = _pendingStagedOverUncertain;
+                    _pendingPassword = password; _pendingSuperseded = false;
+                    if (!converge) { _pendingStagedOver = over; _pendingStagedOverUncertain = !overCertain; }
                 }
                 prior = Program.PendingVlcDurable;
+                priorOver = Program.PendingVlcStagedOverDurable;
                 Program.PendingVlcDurable = password;
+                if (!converge) { Program.PendingVlcStagedOverDurable = over; Program.PendingVlcStagedOverUncertainDurable = !overCertain; }
             },
             () =>
             {
                 if (busy) return; // nothing was changed: leave the owed pending alone
                 Program.PendingVlcDurable = prior;
-                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; }
+                Program.PendingVlcStagedOverDurable = priorOver;
+                Program.PendingVlcStagedOverUncertainDurable = priorOverUncertainMirror;
+                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; _pendingStagedOver = priorOverMirror; _pendingStagedOverUncertain = priorOverUncertainMirror; }
             },
             "staging the deferred VLC password");
         if (busy) return "busy";
         return saved ? null : "failed";
     }
 
+    /// <summary>I2 N1: replace an UNRESOLVABLE pending with a new owed value in ONE save
+    /// unit - the compare (the standing record is still the exact unresolved record the
+    /// caller resolved) and the replace are one Gate acquisition inside the unit, and a failed
+    /// persist restores the old record whole (value + baseline + flag): the old and new
+    /// obligations are never both absent. Returns null on persist success, "busy" when the
+    /// standing record changed under the caller (re-decide next request), "failed" when the
+    /// persist rolled back.</summary>
+    internal static string? StagePendingReplacingUnresolved(string password, string? over, bool overCertain, string expectedUnresolved)
+    {
+        var mismatch = false;
+        string? prior = null; bool priorSup = false; string? priorOver = null; string? priorOverMirror = null; var priorOverUncertainMirror = false;
+        var saved = Program.MutateAndPersist(
+            () =>
+            {
+                lock (Gate)
+                {
+                    if (_pendingPassword != expectedUnresolved || _pendingSuperseded || !_pendingStagedOverUncertain) { mismatch = true; return; }
+                    priorSup = _pendingSuperseded; priorOverMirror = _pendingStagedOver; priorOverUncertainMirror = _pendingStagedOverUncertain;
+                    _pendingPassword = password; _pendingSuperseded = false; _pendingStagedOver = over; _pendingStagedOverUncertain = !overCertain;
+                }
+                prior = Program.PendingVlcDurable;
+                priorOver = Program.PendingVlcStagedOverDurable;
+                Program.PendingVlcDurable = password;
+                Program.PendingVlcStagedOverDurable = over;
+                Program.PendingVlcStagedOverUncertainDurable = !overCertain;
+            },
+            () =>
+            {
+                if (mismatch) return;
+                Program.PendingVlcDurable = prior;
+                Program.PendingVlcStagedOverDurable = priorOver;
+                Program.PendingVlcStagedOverUncertainDurable = priorOverUncertainMirror;
+                lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; _pendingStagedOver = priorOverMirror; _pendingStagedOverUncertain = priorOverUncertainMirror; }
+            },
+            "replacing the unresolvable deferred VLC password");
+        if (mismatch) return "busy";
+        return saved ? null : "failed";
+    }
+
     /// <summary>E2: called inside the pair transaction's save lock - a superseded pending
     /// record is cleared in the SAME save as the new phone record (no separate restage).
     /// Returns the prior state for the pair save's rollback path.</summary>
-    internal static (string? prior, bool priorSup) ClearSupersededPendingWithinSaveLock()
+    internal static (string? prior, bool priorSup, string? priorOver, bool priorOverUncertain) ClearSupersededPendingWithinSaveLock()
     {
         lock (Gate)
         {
-            var prior = _pendingPassword; var priorSup = _pendingSuperseded;
-            if (_pendingSuperseded) { _pendingPassword = null; _pendingSuperseded = false; Program.PendingVlcDurable = null; }
-            return (prior, priorSup);
+            var prior = _pendingPassword; var priorSup = _pendingSuperseded; var priorOver = _pendingStagedOver; var priorOverUncertain = _pendingStagedOverUncertain;
+            if (_pendingSuperseded) { _pendingPassword = null; _pendingSuperseded = false; _pendingStagedOver = null; _pendingStagedOverUncertain = false; Program.PendingVlcDurable = null; Program.PendingVlcStagedOverDurable = null; Program.PendingVlcStagedOverUncertainDurable = false; }
+            return (prior, priorSup, priorOver, priorOverUncertain);
         }
     }
 
-    internal static void RestorePendingSnapshotWithinSaveLock(string? prior, bool priorSup)
+    internal static void RestorePendingSnapshotWithinSaveLock(string? prior, bool priorSup, string? priorOver, bool priorOverUncertain)
     {
-        lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; Program.PendingVlcDurable = prior; }
+        lock (Gate) { _pendingPassword = prior; _pendingSuperseded = priorSup; _pendingStagedOver = priorOver; _pendingStagedOverUncertain = priorOverUncertain; Program.PendingVlcDurable = prior; Program.PendingVlcStagedOverDurable = priorOver; Program.PendingVlcStagedOverUncertainDurable = priorOverUncertain; }
     }
 
     /// <summary>F12/D1: raw Gate-level stage inside an already-held save lock - no persist of
@@ -428,7 +673,8 @@ internal static class VlcSetup
     /// compare-guard - so the test is defense-in-depth for the rollback contract).</summary>
     internal static void StagePendingWithinSaveLock(string password)
     {
-        lock (Gate) { _pendingPassword = password; _pendingSuperseded = false; Program.PendingVlcDurable = password; }
+        var (over, overCertain) = CaptureStagedOverBaseline(); // planning-read provenance with status (I2 D2)
+        lock (Gate) { _pendingPassword = password; _pendingSuperseded = false; _pendingStagedOver = over; _pendingStagedOverUncertain = !overCertain; Program.PendingVlcDurable = password; Program.PendingVlcStagedOverDurable = over; Program.PendingVlcStagedOverUncertainDurable = !overCertain; }
     }
 
     /// <summary>I2-3: inside the pair save lock - stage a fresh candidate ONLY when no live
@@ -440,6 +686,10 @@ internal static class VlcSetup
         lock (Gate)
         {
             if (_pendingPassword != null && !_pendingSuperseded && _pendingPassword != candidate) return false;
+            // A fresh candidate stands over NOTHING configured (branch 6, certain) - but only
+            // reset the marker when this call actually changes the record: a converge on the
+            // same owed value keeps the staged-over its apply still expects (I2 D2).
+            if (_pendingPassword != candidate || _pendingSuperseded) { _pendingStagedOver = null; _pendingStagedOverUncertain = false; Program.PendingVlcStagedOverDurable = null; Program.PendingVlcStagedOverUncertainDurable = false; }
             _pendingPassword = candidate; _pendingSuperseded = false; Program.PendingVlcDurable = candidate;
             return true;
         }
@@ -458,15 +708,15 @@ internal static class VlcSetup
     /// <summary>Re-arm a deferred write after a helper restart: decide via E1 BEFORE any
     /// write - a stale or already-applied pending is cleared instead of written; only a live
     /// deferred value proceeds (when VLC is closed).</summary>
-    public static void RestorePending(string password)
+    public static void RestorePending(string password, string? stagedOver, bool stagedOverUncertain)
     {
-        lock (Gate) { _pendingPassword = password; _pendingSuperseded = false; }
+        lock (Gate) { _pendingPassword = password; _pendingSuperseded = false; _pendingStagedOver = stagedOver; _pendingStagedOverUncertain = stagedOverUncertain; }
         try
         {
             var d = ResolvePasswordDecision();
             if (d.StalePending != null) { ClearPending(d.StalePending); return; }
             if (d.ClearMatchingPending) { ClearPending(d.Serve!); return; }
-            if (!d.DeferredOwed) { ClearPending(password); return; } // superseded: never applied
+            if (!d.DeferredOwed) { if (!d.PendingUnresolved) ClearPending(password); return; } // unresolved (uncertain baseline): stand; the retry timer re-decides
             if (VlcRunning())
             {
                 Program.SaveConfig(); // the deferred write must survive a helper restart
@@ -474,7 +724,7 @@ internal static class VlcSetup
                 return;
             }
             Program.Log("VLC closed while BingeMote was off - completing the deferred vlcrc write now.");
-            WriteVlcrc(password);
+            WriteVlcrcInternal(password, d.CurrentRead); // the decision's baseline carried into the write (I2 baseline window)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -497,10 +747,16 @@ internal static class VlcSetup
             var d = ResolvePasswordDecision();
             if (d.StalePending != null) { ClearPending(d.StalePending); return false; }
             if (d.ClearMatchingPending) { ClearPending(d.Serve!); return false; }
-            if (!d.DeferredOwed) { ClearPending(pw); return false; }
+            if (!d.DeferredOwed)
+            {
+                // I2 D2: an UNCERTAIN staged-over baseline fails closed - the pending stands
+                // (never cleared, never applied over an arbitrary current); keep waiting.
+                if (d.PendingUnresolved) return true;
+                ClearPending(pw); return false;
+            }
             if (VlcRunning()) return true;
             Program.Log("VLC closed - writing the skipped vlcrc web-remote setup now.");
-            using var doc = JsonDocument.Parse(WriteVlcrc(pw));
+            using var doc = JsonDocument.Parse(WriteVlcrcInternal(pw, d.CurrentRead)); // the decision's baseline carried into the write (I2 baseline window)
             return doc.RootElement.GetProperty("ok").GetBoolean() == false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -512,15 +768,23 @@ internal static class VlcSetup
     }
 
     /// <summary>The password the phone must use right now: the read-only wrapper over the E1
-    /// decision (branches 2-5 serve semantics). A deferred write wins over vlcrc (it becomes
-    /// vlcrc the moment VLC closes); a stale or applied pending is cleared as it is seen. The
-    /// strict read propagates VlcrcUnreadableException - a control call fails instead of
-    /// serving a stale value. null when nothing is configured.</summary>
+    /// decision (branches 2-5 serve semantics), with IN-EFFECT separation (I2): a deferred write
+    /// becomes vlcrc the moment VLC closes, but UNTIL it does VLC still accepts the current on
+    /// disk - so while a deferral stands over an existing current, this serves the current (the
+    /// owed value is attested via Pending/StatusSnapshot, and becomes effective at the apply).
+    /// A deferred write over NOTHING configured still serves the owed value. A stale or applied
+    /// pending is cleared as it is seen. The strict read propagates VlcrcUnreadableException -
+    /// a control call fails instead of serving a stale value. null when nothing is configured.</summary>
     public static string? EffectivePassword()
     {
         var d = ResolvePasswordDecision();
         if (d.StalePending != null) { ClearPending(d.StalePending); return d.Serve; }
         if (d.ClearMatchingPending) { ClearPending(d.Serve!); return d.Serve; }
+        // I2 in-effect separation: while an owed write is DEFERRED over an existing current,
+        // VLC still accepts the CURRENT value - serving the owed one would 401 every control
+        // call until the apply lands. Control serves the value actually in effect; the owed
+        // value stays attested via Pending/StatusSnapshot and becomes effective at the apply.
+        if (d.DeferredOwed && d.CurrentRead != null) return d.CurrentRead;
         return d.Serve;
     }
 
@@ -540,6 +804,19 @@ internal static class VlcSetup
     {
         var path = Path.Combine(VlcDir, "vlcrc");
         try { return FindValue(File.ReadAllLines(path).ToList(), key); }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new VlcrcUnreadableException(); }
+    }
+
+    /// <summary>Strict live vlcrc LINE read (I2 D4): null ONLY when the file is proven absent
+    /// (FileNotFound/DirectoryNotFound). Anything else unreadable - including a path File.Exists
+    /// would report as missing - throws VlcrcUnreadableException. The WriteVlcrc planning read
+    /// uses this so a null staged-over baseline is always PROVEN, never an access fault in
+    /// disguise.</summary>
+    private static List<string>? ReadVlcrcLinesStrict()
+    {
+        var path = Path.Combine(VlcDir, "vlcrc");
+        try { return File.ReadAllLines(path).ToList(); }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new VlcrcUnreadableException(); }
     }
@@ -585,7 +862,19 @@ internal static class VlcSetup
     /// and its failure rollback restores it. Every class that can stage a pending calls this in
     /// ctor AND Dispose. The statics are process-global by design (single-instance helper); the
     /// suite owns isolating them.</summary>
-    internal static void ResetPendingForTests() { lock (Gate) { _pendingPassword = null; _pendingSuperseded = false; } }
+    internal static void ResetPendingForTests()
+    {
+        // Lock order is the documented ConfigSaveLock -> Gate. Also clears the durable MARKER
+        // fields (I2Wip10): they are new process-global state and would otherwise leak into the
+        // next class exactly like the mirror residue this method exists for. PendingVlcDurable
+        // itself stays with the fixtures, as documented above.
+        lock (Program.ConfigSaveLock)
+            lock (Gate)
+            {
+                _pendingPassword = null; _pendingSuperseded = false; _pendingStagedOver = null; _pendingStagedOverUncertain = false;
+                Program.PendingVlcStagedOverDurable = null; Program.PendingVlcStagedOverUncertainDurable = false;
+            }
+    }
 
     /// <summary>Carry out a plan after the phone is durably saved, via the E1 decision:
     /// a live current that appeared since the plan is served back and never rewritten
@@ -601,14 +890,52 @@ internal static class VlcSetup
     /// applied): an unverified password must never read as "ready".</summary>
     internal static (string value, bool verifiedInEffect) ApplyPlannedPassword(string planned)
     {
+        string? decisionBaseline = null; var decisionRead = false; // planning-read provenance for any emergency stage (I2 D2)
+        var plannedProvenStale = false; // I2 D5: set when THIS call clears the planned value as a stale pending
         try
         {
             var d = ResolvePasswordDecision();
-            if (d.StalePending != null) { ClearPending(d.StalePending); return (d.Serve!, true); }
-            if (d.ClearMatchingPending) { ClearPending(d.Serve!); return (d.Serve!, true); }
+            decisionBaseline = d.CurrentRead; decisionRead = true;
+            // point. A change between the decision read and the reply (external writer, VLC
+            // rewrite) is discovered and the discovered truth is served instead - the pair
+            // reply's verifiedInEffect=true must never attest a stale snapshot value.
+            (string value, bool verifiedInEffect) VerifiedServe(string expected)
+            {
+                BeforeReplaceGuardForTests?.Invoke();
+                var nowValue = ReadVlcrcValueStrict("http-password"); // strict; propagates
+                if (nowValue == expected) return (expected, true);
+                var d2 = ResolvePasswordDecision();
+                if (d2.StalePending != null) { if (d2.StalePending == planned) plannedProvenStale = true; ClearPending(d2.StalePending); }
+                else if (d2.ClearMatchingPending) ClearPending(d2.Serve!);
+                if (d2.Serve != null) return (d2.Serve, !d2.DeferredOwed);
+                // Nothing serves: the planned value is owed and must be durable before it is served.
+                // I2: a plan ALREADY PROVEN STALE in this call is never staged here - the
+                // staleness proof stands, so the only truthful outcome is explicit failure
+                // (the outer catch's stale branch re-decides, then fails with a retryable 503):
+                // a reply must never carry a credential that is neither on disk nor owed.
+                if (plannedProvenStale) throw new VlcrcUnreadableException();
+                var st = StagePendingGuarded(planned, null, true); // the strict re-decide just proved nothing serves (certain)
+                if (st == "busy")
+                {
+                    try
+                    {
+                        var d3 = ResolvePasswordDecision();
+                        // Mirror the d2 handling: a served decision's pending bookkeeping is
+                        // reconciled exactly the same way before serving (I2 review finding 3).
+                        if (d3.StalePending != null) { if (d3.StalePending == planned) plannedProvenStale = true; ClearPending(d3.StalePending); }
+                        else if (d3.ClearMatchingPending) ClearPending(d3.Serve!);
+                        if (d3.Serve != null) return (d3.Serve, false);
+                    }
+                    catch (IOException) { }
+                }
+                else if (st == "failed") Program.Log("the pending stage after a discovered change could not be persisted - the served value is owed but not durable.");
+                return (planned, false);
+            }
+            if (d.StalePending != null) { if (d.StalePending == planned) plannedProvenStale = true; ClearPending(d.StalePending); return VerifiedServe(d.Serve!); }
+            if (d.ClearMatchingPending) { ClearPending(d.Serve!); return VerifiedServe(d.Serve!); }
             if (d.Serve != null)
             {
-                if (!d.DeferredOwed) { lock (Gate) { if (_candidate == planned) _candidate = null; } return (d.Serve, true); }
+                if (!d.DeferredOwed) { lock (Gate) { if (_candidate == planned) _candidate = null; } return VerifiedServe(d.Serve); }
                 // R3: branch 5 - a deferred write is still owed. When the owed value IS the
                 // planned one and VLC is closed, complete it NOW through the same E5-guarded
                 // write instead of always waiting for the retry timer (the F12 same-save stage
@@ -619,7 +946,7 @@ internal static class VlcSetup
             }
             // Branch 6 (or R3 branch 5: the planned value is owed and VLC is closed) - apply
             // the planned value via the E5-guarded write.
-            var result = JsonDocument.Parse(WriteVlcrc(planned)).RootElement;
+            var result = JsonDocument.Parse(WriteVlcrcInternal(planned, d.CurrentRead)).RootElement; // the decision's baseline carried into the write (I2 baseline window)
             lock (Gate) { if (_candidate == planned) _candidate = null; }
             var wrote = result.TryGetProperty("ok", out var okEl) && okEl.GetBoolean();
             if (!wrote && result.TryGetProperty("reason", out var rs) && rs.GetString() == "changed")
@@ -627,6 +954,8 @@ internal static class VlcSetup
                 // The file changed under the write: re-decide on the discovered state and serve
                 // that truth (discovered current, or the pending the abort staged).
                 var d2 = ResolvePasswordDecision();
+                if (d2.StalePending != null) { if (d2.StalePending == planned) plannedProvenStale = true; ClearPending(d2.StalePending); }
+                else if (d2.ClearMatchingPending) ClearPending(d2.Serve!);
                 if (d2.Serve != null) return (d2.Serve, !d2.DeferredOwed);
                 return (planned, false);
             }
@@ -640,11 +969,38 @@ internal static class VlcSetup
             // vlcPending, never a bare 500 that strands the phone without its token.
             // I2 companion: the emergency stage is compare-guarded - a different owed pending
             // stands and is served instead.
-            var stage = StagePendingGuarded(planned);
+            // I2 D5: a plan THIS call already proved stale (cleared as StalePending above) is
+            // never re-staged: its only available baseline is the external current that replaced
+            // it, which would launder proven-stale into owed-over-that-current (a later apply
+            // would overwrite it). The value is served unverified; a fresh request re-plans with
+            // a fresh strict read.
+            if (plannedProvenStale)
+            {
+                // I2 N2: never hand the phone a credential that is neither on disk nor owed.
+                // Serve the discovered current when it verifies NOW; on a read error an
+                // explicit failure (the route maps it to a retryable 503) - never the stale plan.
+                Program.Log("the planned VLC password was discovered stale during the apply - it is not re-staged over the discovered current.");
+                try
+                {
+                    var dS = ResolvePasswordDecision();
+                    if (dS.StalePending != null) ClearPending(dS.StalePending);
+                    else if (dS.ClearMatchingPending) ClearPending(dS.Serve!);
+                    if (dS.Serve != null) return (dS.Serve, !dS.DeferredOwed);
+                }
+                catch (IOException) { }
+                throw new VlcrcUnreadableException();
+            }
+            var stage = StagePendingGuarded(planned, decisionBaseline, decisionRead);
             if (stage == "busy")
             {
                 // A different owed pending stands; serve THAT truth, never the plan.
-                try { var d2 = ResolvePasswordDecision(); if (d2.Serve != null) return (d2.Serve, false); }
+                try
+                {
+                    var d2 = ResolvePasswordDecision();
+                    if (d2.StalePending != null) { if (d2.StalePending == planned) plannedProvenStale = true; ClearPending(d2.StalePending); }
+                    else if (d2.ClearMatchingPending) ClearPending(d2.Serve!);
+                    if (d2.Serve != null) return (d2.Serve, false);
+                }
                 catch (IOException) { }
             }
             else if (stage == "failed")
@@ -676,11 +1032,12 @@ internal static class VlcSetup
         }
         // A vlcrc can carry a password with the web interface itself off: the idempotent write
         // also ensures extraintf=http and http-host, not just the password. Defers to the
-        // pending write when VLC is running; EffectivePassword still serves it. F13/I2-1: the
+        // pending write when VLC is running; EffectivePassword serves the in-effect current
+        // until the owed write lands (I2 in-effect separation). F13/I2-1: the
         // write result is authoritative - ok:true means the REQUESTED value is in effect;
         // anything else re-decides via E1 and serves the discovered truth, so the phone's
         // one-shot adopt fetch is never spent on a value that is not in effect.
-        var wr = JsonDocument.Parse(WriteVlcrc(requested)).RootElement;
+        var wr = JsonDocument.Parse(WriteVlcrcInternal(requested, d.CurrentRead)).RootElement; // host repair carries the decision baseline, never resolution intent (I2 N1)
         if (wr.TryGetProperty("ok", out var okEl) && okEl.GetBoolean()) return requested;
         var d2 = ResolvePasswordDecision(); // strict; propagates VlcrcUnreadableException
         if (d2.StalePending != null) ClearPending(d2.StalePending);

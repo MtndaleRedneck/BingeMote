@@ -66,7 +66,7 @@ jobs:
               $fail += "$($c.n) leg unclean counters: executed=passed=total and notExecuted=0 required" }
           }
           if ([int]$wt.total -ne 5) { $fail += "WinRuntime leg must run exactly the 5 authored facts" }
-          $names = @($w.TestRun.Results.UnitTestResult | ForEach-Object { $_.testName })
+          $names = @($w.TestRun.Results.UnitTestResult | ForEach-Object { ($_.testName -split '\.')[-1] })
           $expected = @('TW1_UrlAclParsingAgainstRealNetshOutput',
                         'TW2_DefaultRouteProfileIsRealAndClassified',
                         'TW3_RealLoopbackPinnedHttpsRoundTrip',

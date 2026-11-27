@@ -213,6 +213,37 @@ class AutoSetupCheckTest {
     }
 
     @Test
+    fun noPasswordAtPairFinishHealsThroughAdopt() {
+        // I2 pair-recovery: the pair reply carried NO password (the PC could not verify the
+        // vlcrc at the commit boundary - the explicit-null reply) but the PC has one
+        // configured. The check's VLC probe 401s on the blank stored password, the ONE
+        // allowed adopt heal fetches the PC's copy, and the re-probe passes: OK - no re-pair,
+        // no "update your PC".
+        val store = freshStore()
+        val helper = helperServer(configured = true, pending = false, adoptPassword = "pw-9")
+        val vlc = vlcServer("pw-9")
+        try {
+            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = vlc.port
+            store.helperToken = "tok" // NO vlcPassword: the pair finished without one
+            assertEquals(AutoSetupCheck.Outcome.OK, AutoSetupCheck.run(store))
+            assertEquals("pw-9", store.vlcPassword)
+        } finally { helper.stop(); vlc.stop() }
+    }
+
+    @Test
+    fun missingSetupStatusRouteIsUnsupportedNotARetryLoop() {
+        // An old PC helper has no /vlc/setup-status (404 -> MissingRoute): the honest outcome
+        // is UNSUPPORTED (the update card), never a "couldn't reach the PC" retry loop.
+        val store = freshStore()
+        val helper = FakeServer { _, _, _, _ -> 404 to "{}" }.start()
+        try {
+            store.host = "127.0.0.1"; store.helperPort = helper.port; store.vlcPort = helper.port
+            store.helperToken = "tok"; store.vlcPassword = "pw-1"
+            assertEquals(AutoSetupCheck.Outcome.UNSUPPORTED, AutoSetupCheck.run(store))
+        } finally { helper.stop() }
+    }
+
+    @Test
     fun badTokenIsRefused() {
         val store = freshStore()
         val helper = FakeServer { _, _, _, _ -> 401 to """{"error":"bad token"}""" }.start()

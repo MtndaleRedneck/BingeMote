@@ -30,6 +30,20 @@ class PairParseTest {
     }
 
     @Test
+    fun explicitNullPasswordWithPendingIsDistinctFromOldHelper() {
+        // I2 pair-recovery: a NEW helper that could not hand over a verified or durably-owed
+        // password at the pair commit boundary replies with an explicit JSON null AND
+        // vlcPending true - the phone must read that as "finish via the setup check"
+        // (null password, pending true), never crash and never the old-helper card.
+        val r = HelperClient.parsePairJson(
+            """{"token":"abc123","name":"DESKTOP","vlcPassword":null,"vlcPending":true}""",
+        )
+        assertEquals("abc123", r.token)
+        assertNull(r.vlcPassword)
+        assertTrue(r.vlcPending)
+    }
+
+    @Test
     fun blankPasswordCountsAsMissing() {
         val r = HelperClient.parsePairJson("""{"token":"abc123","vlcPassword":"  "}""")
         assertNull(r.vlcPassword)

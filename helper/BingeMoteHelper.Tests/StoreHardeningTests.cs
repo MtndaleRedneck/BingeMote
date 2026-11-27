@@ -398,9 +398,14 @@ public class PasswordDecisionTests : IDisposable
     [Fact]
     public void StalePendingIsClearedAndCurrentServedWithoutRewrite()
     {
+        // R2: the current CHANGED EXTERNALLY after the pending was staged (the pending stood
+        // over pre-pw; current-pw landed since - VLC's exit rewrite or a hand edit). Staging a
+        // value over the current that is still on disk is a DEFERRAL and stands owed (I2Wip10,
+        // TW56); staleness is exactly the case where the current is no longer the staged-over one.
+        WriteVlcrc("extraintf=http", "http-password=pre-pw", "http-host=0.0.0.0");
+        Assert.True(VlcSetup.StagePending("old-pw"));
         WriteVlcrc("extraintf=http", "http-password=current-pw", "http-host=0.0.0.0");
         var bytes = File.ReadAllBytes(VlcrcPath);
-        Assert.True(VlcSetup.StagePending("old-pw"));
         var d = VlcSetup.ResolvePasswordDecision();
         Assert.Equal("current-pw", d.Serve);
         Assert.Equal("old-pw", d.StalePending);
@@ -433,11 +438,11 @@ public class PasswordDecisionTests : IDisposable
     public void SupersededPendingIsNeverServedOrApplied()
     {
         Assert.True(VlcSetup.StagePending("stale-candidate"));
-        // A failed clear restores the value AND marks it superseded (E2).
-        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
-        Directory.CreateDirectory(Program.ConfigPath); // saves now fail
-        Assert.False(VlcSetup.ClearPending("stale-candidate"));
-        Directory.Delete(Program.ConfigPath, true);
+        // Defense-in-depth: NO production path produces a superseded record today (the old
+        // failed-clear poison marker was retired with the I2 faithful whole-state rollback);
+        // the hook installs the state directly so the guard's contract stays tested - this
+        // is a future-defense state, not the failed-clear contract.
+        VlcSetup.SupersedePendingForTests();
         var d = VlcSetup.ResolvePasswordDecision();
         Assert.Null(d.Serve);
         Assert.True(d.SupersededPending);
@@ -865,6 +870,7 @@ public class I2Wip10BlockerTests : IDisposable
     {
         VlcSetup.BeforeReplaceGuardForTests = null;
         VlcSetup.BeforeNewFileMoveForTests = null;
+        VlcSetup.BeforePlanningReadForTests = null;
         VlcSetup.VlcRunningForTests = null;
         VlcSetup.VlcDirOverride = null;
         VlcSetup.ForgetCandidateForTests();
@@ -905,21 +911,27 @@ public class I2Wip10BlockerTests : IDisposable
     }
 
     [Fact]
-    public void IoFailureAfterTheDurablePhoneSaveStagesAndReportsUnverified()
+    public void VlcrcBlockedByDirectoryAfterDurablePairStagesAndReportsUnverified()
     {
-        // The phone commits; THEN the vlcrc write hits an expected access failure (read-only
-        // dir): the apply stages the pending and reports unverified - the pair reply still
-        // carries the token with vlcPending=true, never a stranded 500.
+        // A directory squats on the vlcrc path: a REAL access failure on Windows (a ReadOnly
+        // DIRECTORY attribute is an Explorer hint, never enforced for file IO - run 2 proved it
+        // fails nothing). Whether the failure surfaces at the decision read or at the write
+        // depends on the OS exception mapping; both routes converge on the same contract and
+        // this test asserts the contract, not the branch: the apply stages the pending and
+        // reports unverified - the pair reply still carries the token with vlcPending=true,
+        // never a stranded 500. The staged baseline stays the pair save's (proven absent).
         string? name = "Pixel";
         Assert.True(HttpServer.TrySavePair("tok-io", ref name, "fresh-pw", out _));
-        new DirectoryInfo(VlcDirPath).Attributes = FileAttributes.ReadOnly;
+        Directory.CreateDirectory(VlcrcPath);
         (string value, bool verifiedInEffect) applied = (null!, true);
         try { applied = VlcSetup.ApplyPlannedPassword("fresh-pw"); }
-        finally { new DirectoryInfo(VlcDirPath).Attributes = FileAttributes.Normal; }
+        finally { try { Directory.Delete(VlcrcPath); } catch { } }
         Assert.Equal("fresh-pw", applied.value);
         Assert.False(applied.verifiedInEffect);
         Assert.True(VlcSetup.Pending);
         Assert.Equal("fresh-pw", Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
         lock (Program.PhonesLock) Assert.Contains(Program.Phones, p => p.Token == "tok-io"); // phone stayed durable
     }
 
@@ -1001,6 +1013,555 @@ public class I2Wip10BlockerTests : IDisposable
         Assert.True(applied.verifiedInEffect); // VLC closed: the owed write completed immediately (R3)
         Assert.False(VlcSetup.Pending);
         Assert.Equal("owed-pw", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+    }
+
+    [Fact]
+    public void DeferredOwedOverAnUnchangedCurrentAppliesWhenVlcCloses()
+    {
+        // I2Wip10 marker lifecycle: Y staged over X; X is unchanged at decision time, so the
+        // obligation stands (never stale-cleared) and the retry applies it once VLC closes.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y"));
+        Assert.Equal("X", Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+        VlcSetup.VlcRunningForTests = () => true;
+        try { Assert.True(VlcSetup.RetryPending()); } // still owed while VLC runs
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.False(VlcSetup.RetryPending()); // VLC closed: applied
+        Assert.Equal("Y", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+    }
+
+    [Fact]
+    public void ExternalChangeAfterThePlanningReadIsStaleNeverOwed()
+    {
+        // I2 D2: Z lands AFTER Y was staged over X - Y must never gain Z as a consent baseline.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y"));
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        var d = VlcSetup.ResolvePasswordDecision();
+        Assert.Equal("Z", d.Serve);
+        Assert.Equal("Y", d.StalePending);
+        Assert.False(d.DeferredOwed);
+        Assert.False(VlcSetup.RetryPending()); // clears Y unapplied, never writes over Z
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+    }
+
+    [Fact]
+    public void ConvergeOnTheSameOwedValueKeepsTheOriginalBaseline()
+    {
+        // I2 D2: re-staging the SAME owed value after an external change must not re-baseline.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y")); // staged over X
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y")); // converge: baseline stays X
+        Assert.Equal("X", Program.PendingVlcStagedOverDurable);
+        var d = VlcSetup.ResolvePasswordDecision();
+        Assert.Equal("Y", d.StalePending); // Z != X: stale, never owed over Z
+    }
+
+    [Fact]
+    public void UncertainBaselineNeverStaleClearsAndNeverApplies()
+    {
+        // I2 D2 fail-closed: the baseline read FAILS at stage time (vlcrc held with no sharing:
+        // a sharing violation, deterministic - no OS exception-type guessing). Later an
+        // arbitrary current appears: the pending STANDS - never cleared (could strand the phone
+        // holding it), never applied over that current - and the status reports the obligation.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=locked", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y"));
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        var d = VlcSetup.ResolvePasswordDecision();
+        Assert.Equal("Z", d.Serve); // the truth in effect is served
+        Assert.Null(d.StalePending); // ...but the pending is NOT cleared
+        Assert.False(d.DeferredOwed);
+        Assert.True(d.PendingUnresolved);
+        Assert.True(VlcSetup.RetryPending()); // keeps waiting; no write over Z
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.True(VlcSetup.Pending);
+        Assert.Equal((false, true), VlcSetup.StatusSnapshot()); // the unresolved obligation is reported
+    }
+
+    [Fact]
+    public void FailedSaveStagesNothingAndLeavesNoMarker()
+    {
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
+        Directory.CreateDirectory(Program.ConfigPath); // saves now fail
+        string? stage = null;
+        try { stage = VlcSetup.StagePendingGuarded("Y", "X", true); }
+        finally { Directory.Delete(Program.ConfigPath, true); }
+        Assert.Equal("failed", stage);
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+    }
+
+    [Fact]
+    public void FailedClearRollbackRestoresTheMarkerWithTheValue()
+    {
+        // The marker moves in the SAME E2 unit: a failed clear restores the value AND its
+        // baseline together - never a value with another baseline's provenance.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("W")); // W staged over X
+        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
+        Directory.CreateDirectory(Program.ConfigPath); // saves now fail
+        try { Assert.False(VlcSetup.ClearPending("W")); } // rollback: value + marker restored WHOLE (I2 faithful)
+        finally { Directory.Delete(Program.ConfigPath, true); }
+        Assert.Equal("W", Program.PendingVlcDurable);
+        Assert.Equal("X", Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+        var d = VlcSetup.ResolvePasswordDecision();
+        // The restored record is the SAME live obligation as before the failed clear - never
+        // a manufactured poison state: it re-decides on its PROVEN baseline X (current ==
+        // baseline, so it is owed, not stale, not superseded): the certain-baseline deferral
+        // branch serves the OWED pending W with DeferredOwed (the apply completes over X when
+        // VLC closes; the in-effect split is EffectivePassword's job, not this decision's
+        // serve). It can only ever apply over X - a different current stale-clears it
+        // (OwedPendingProtection coverage), a verified-in-effect W would matching-clear it.
+        Assert.Null(d.StalePending);
+        Assert.False(d.SupersededPending);
+        Assert.True(d.DeferredOwed);
+        Assert.Equal("W", d.Serve);
+    }
+
+    [Fact]
+    public void ReplaceFailureKeepsThePlanningReadBaseline()
+    {
+        // I2 D2 write path: owed == planned with VLC closed applies NOW (R3); the replace fails
+        // (vlcrc held read-share: the planning read succeeds, the replace cannot land). The
+        // emergency re-stage converges on the same value and KEEPS the planning-read baseline -
+        // never a re-captured later state.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=old", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("new-pw")); // staged over "old"
+        using var held = new FileStream(VlcrcPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var applied = VlcSetup.ApplyPlannedPassword("new-pw");
+        Assert.Equal("new-pw", applied.value);
+        Assert.False(applied.verifiedInEffect);
+        Assert.True(VlcSetup.Pending);
+        Assert.Equal("new-pw", Program.PendingVlcDurable);
+        Assert.Equal("old", Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+    }
+
+    [Fact]
+    public void RestartRehydratesTheMarkerAndCompletesTheOwedApply()
+    {
+        // Persistence/rehydration: the durable config carries value + baseline; a restart
+        // re-derives the owed deferral and completes it when VLC is already closed.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y")); // over X, saved durably
+        VlcSetup.ResetPendingForTests(); // simulate the mirror lost to a restart (the config file stands)
+        Program.LoadConfig();
+        Assert.Equal("Y", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+    }
+
+    [Fact]
+    public void PreMarkerConfigMigratesAsUncertainAndFailsClosed()
+    {
+        // Migration: a config written BEFORE the marker existed carries no baseline keys. The
+        // rehydrated pending is fail-closed uncertain - never the old silent stale-clear, never
+        // applied over an arbitrary current. It stands until a later state resolves it.
+        File.WriteAllText(Program.ConfigPath, "{\"phones\":[],\"pendingVlcPassword\":\"Y\"}");
+        VlcSetup.VlcRunningForTests = () => true; // rehydrate re-arms, never applies during load
+        try { Program.LoadConfig(); }
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        var d = VlcSetup.ResolvePasswordDecision();
+        Assert.Null(d.StalePending);
+        Assert.True(d.PendingUnresolved);
+        Assert.True(VlcSetup.RetryPending()); // stands; no write over Z
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.Equal((false, true), VlcSetup.StatusSnapshot());
+    }
+
+    private static bool OkOf(string json) => JsonDocument.Parse(json).RootElement.GetProperty("ok").GetBoolean();
+    private static string? ReasonOf(string json) => JsonDocument.Parse(json).RootElement.TryGetProperty("reason", out var r) ? r.GetString() : null;
+
+    [Fact]
+    public void UnreachableVlcrcIsNeverPlannedAsCertainAbsence()
+    {
+        // I2 D4 production write path: a directory squats on the vlcrc path - File.Exists
+        // reports false for it, but the planning read must NOT launder that into a
+        // certain-absent staged-over baseline (a later decision would stale-clear the owed
+        // write over the file that was really there). The strict planning read refuses the
+        // whole write instead: no stage, no marker, a truthful failure the route maps to 503.
+        Directory.CreateDirectory(VlcrcPath);
+        try { Assert.Throws<VlcSetup.VlcrcUnreadableException>(() => VlcSetup.WriteVlcrc("Z")); }
+        finally { try { Directory.Delete(VlcrcPath); } catch { } }
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+    }
+
+    [Fact]
+    public void ProvenStalePlanFailsExplicitlyOnReadErrorAndIsNeverRestaged()
+    {
+        // I2 D5+N2: C was staged over X; external Z replaced X (C is proven stale). The apply
+        // clears the stale record, then the verified serve's strict read fails. The emergency
+        // path must neither re-stage C (its only baseline would be Z, the value that replaced
+        // it) NOR reply with C (a credential neither on disk nor owed - the phone would hold a
+        // pending=true reply against a PC with no pending): an explicit failure, which the
+        // pair route maps to a retryable 503.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("C"));
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        FileStream? held = null;
+        VlcSetup.BeforeReplaceGuardForTests = () =>
+            held = new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None); // the verified serve's strict read fails
+        try { Assert.Throws<VlcSetup.VlcrcUnreadableException>(() => VlcSetup.ApplyPlannedPassword("C")); }
+        finally { VlcSetup.BeforeReplaceGuardForTests = null; held?.Dispose(); }
+        Assert.False(VlcSetup.Pending); // never re-staged over the discovered current
+        Assert.Null(Program.PendingVlcDurable);
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+        var d = VlcSetup.ResolvePasswordDecision(); // readable again: Z serves, nothing is owed
+        Assert.Equal("Z", d.Serve);
+        Assert.False(d.DeferredOwed);
+    }
+
+    [Fact]
+    public void ProvenStalePlanServesTheVerifiedDiscoveredCurrentWhenReadable()
+    {
+        // I2 N2, transient failure: the verified serve's read fails once; the emergency
+        // re-decide succeeds. The reply carries the VERIFIED discovered current - never the
+        // stale plan - and nothing is staged.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("C"));
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        VlcSetup.BeforeReplaceGuardForTests = () => throw new IOException("simulated transient failure at the verified serve");
+        (string value, bool verifiedInEffect) applied;
+        try { applied = VlcSetup.ApplyPlannedPassword("C"); }
+        finally { VlcSetup.BeforeReplaceGuardForTests = null; }
+        Assert.Equal("Z", applied.value); // the discovered truth, never the stale plan
+        Assert.True(applied.verifiedInEffect); // the strict re-decide just observed it
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void AutonomousRetryNeverWritesOverAChangeThatLandedAfterTheDecision()
+    {
+        // I2 baseline window: Y is owed over X; external Z lands BETWEEN the retry's decision
+        // and the write's planning read. The autonomous apply must not write Y over Z - the
+        // carried decision baseline mismatches the planning read, so it re-decides: Y is stale
+        // over Z and cleared unapplied; Z stands.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y"));
+        VlcSetup.BeforePlanningReadForTests = () =>
+            File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        try { VlcSetup.RetryPending(); }
+        finally { VlcSetup.BeforePlanningReadForTests = null; }
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending); // Y stale-cleared by the re-decide - never written over Z
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void ExplicitFreshWriteStagesOverItsOwnProvenPlanningRead()
+    {
+        // Contrast (I2): an EXPLICIT fresh write carries no prior decision - its own strict
+        // planning read is the consent baseline, so the current it proves is staged-over as
+        // the proven state (never certain-absent, never a stale recapture).
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        VlcSetup.VlcRunningForTests = () => true;
+        string json;
+        try { json = VlcSetup.WriteVlcrc("Q"); }
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.Equal("vlc running", ReasonOf(json));
+        Assert.Equal("Q", Program.PendingVlcDurable);
+        Assert.Equal("Z", Program.PendingVlcStagedOverDurable);
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+    }
+
+    [Fact]
+    public void ResolutionPersistFailureRestoresTheUnresolvedRecordWhole()
+    {
+        // I2 N1 transaction failure: the atomic replace rolls back on a failed save - the OLD
+        // unresolved record comes back whole (value + baseline + uncertain flag); the new
+        // value is nowhere. Old and new obligations are never both absent.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline
+        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
+        Directory.CreateDirectory(Program.ConfigPath); // saves now fail
+        string json;
+        VlcSetup.VlcRunningForTests = () => true;
+        try { json = VlcSetup.WriteVlcrc("Z"); }
+        finally { VlcSetup.VlcRunningForTests = null; Directory.Delete(Program.ConfigPath, true); }
+        Assert.False(OkOf(json));
+        Assert.Equal("stage-failed", ReasonOf(json)); // truthful: nothing durable changed
+        Assert.True(VlcSetup.Pending);
+        Assert.Equal("Y", Program.PendingVlcDurable); // the old record restored whole
+        Assert.Null(Program.PendingVlcStagedOverDurable);
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+    }
+
+    [Fact]
+    public void VerifiedServeNeverStagesAProvenStalePlanWhenTheDiscoveredCurrentDisappears()
+    {
+        // I2 VerifiedServe stale gate: C was staged over X; external Z replaced X (C proven
+        // stale and cleared); then Z DISAPPEARS before the verified serve's re-decide.
+        // Nothing serves - but the proven-stale C is still never re-staged: explicit failure
+        // (the route maps it to a retryable 503), never a nowhere credential.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("C"));
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        VlcSetup.BeforeReplaceGuardForTests = () => File.Delete(VlcrcPath); // the discovered current disappears
+        try { Assert.Throws<VlcSetup.VlcrcUnreadableException>(() => VlcSetup.ApplyPlannedPassword("C")); }
+        finally { VlcSetup.BeforeReplaceGuardForTests = null; }
+        Assert.False(VlcSetup.Pending); // the proven-stale plan was never re-staged
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void FailedClearLeavesTheOldRecordUnresolvedAndNeverAutonomouslyOverwriting()
+    {
+        // I2 resolution-clear failure boundary (commit-first ordering): the explicit
+        // replacement Q writes and VERIFIES; clearing the replaced record Y fails to persist.
+        // The old record stands - UNRESOLVED (uncertain baseline, different from the new
+        // current): autonomous retries never write it over Q; the route's ok stays truthful
+        // (Q IS in effect); the next explicit request resolves the record.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline, saves still working
+        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
+        Directory.CreateDirectory(Program.ConfigPath); // config saves now fail
+        string json;
+        try { json = VlcSetup.WriteVlcrc("Q"); }
+        finally { Directory.Delete(Program.ConfigPath, true); }
+        Assert.True(OkOf(json)); // truthful: Q is verified in effect
+        Assert.Equal("Q", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.Equal("Y", Program.PendingVlcDurable); // the failed clear rolled back: Y stands whole
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+        Assert.True(VlcSetup.Pending); // surfaced as an unresolved pending, not dropped
+        Assert.True(VlcSetup.RetryPending()); // unresolved: still waiting - NEVER writes Y over Q
+        Assert.Equal("Q", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.True(VlcSetup.Pending);
+        var resolved = VlcSetup.WriteVlcrc("Q"); // the next explicit request resolves it
+        Assert.True(OkOf(resolved));
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void PairReplyDeliversTheTokenAndTheOwedPasswordWhenTheApplyCannotVerify()
+    {
+        // I2 route recovery (production pair path): the phone is durable and the code spent;
+        // the apply's write then fails. The apply CONVERGES internally on the durably owed
+        // value (the compare-guarded emergency stage finds the same live record), so the reply
+        // carries the token (the phone never loses its pairing), the DURABLY OWED value, and
+        // vlcPending - and the owed value completes on the next retry pass.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("C")); // C durably owed over X
+        VlcSetup.BeforePlanningReadForTests = () => throw new IOException("simulated planning-read failure after the pair commit");
+        string json;
+        try { json = HttpServer.FinishPairReply("tok-route", "C"); }
+        finally { VlcSetup.BeforePlanningReadForTests = null; }
+        using (var doc = JsonDocument.Parse(json))
+        {
+            Assert.Equal("tok-route", doc.RootElement.GetProperty("token").GetString()); // the token ALWAYS reaches the phone
+            Assert.Equal("C", doc.RootElement.GetProperty("vlcPassword").GetString()); // durably owed - servable (internal convergence)
+            Assert.True(doc.RootElement.GetProperty("vlcPending").GetBoolean());
+        }
+        Assert.True(VlcSetup.Pending); // the obligation stands
+        Assert.Equal("X", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]); // nothing written
+        Assert.False(VlcSetup.RetryPending()); // recovery: the owed write completes on the next pass
+        Assert.Equal("C", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+    }
+
+    [Fact]
+    public void PairReplyServesTheVerifiedCurrentAndNeverTheUncertainRecordsValue()
+    {
+        // I2 in-effect separation at the pair route (production path): with an UNRESOLVED
+        // record (uncertain baseline) standing over a different current, the apply needs no
+        // write - the VERIFIED in-effect current X rides the reply while the unresolved
+        // record's value NEVER does. vlcPending stays true (S10 formula: a live obligation
+        // stands) so the phone confirms through its status check; the record stands for
+        // explicit resolution (I2 N1), never dropped, never applied over the unproven current.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("UNC-owed-value")); // uncertain baseline
+        Assert.True(VlcSetup.ResolvePasswordDecision().PendingUnresolved);
+        var json = HttpServer.FinishPairReply("tok-unc", "UNC-owed-value");
+        using (var doc = JsonDocument.Parse(json))
+        {
+            Assert.Equal("tok-unc", doc.RootElement.GetProperty("token").GetString());
+            Assert.Equal("X", doc.RootElement.GetProperty("vlcPassword").GetString()); // the VERIFIED in-effect truth
+            Assert.True(doc.RootElement.GetProperty("vlcPending").GetBoolean()); // S10: a live obligation still stands
+        }
+        Assert.DoesNotContain("UNC-owed-value", json); // the unresolved record's value never rides
+        Assert.True(VlcSetup.Pending); // the obligation stands unresolved
+        Assert.Equal("X", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]); // untouched
+        Assert.True(OkOf(VlcSetup.WriteVlcrc("X"))); // the next explicit request resolves it (N1)
+        Assert.False(VlcSetup.Pending);
+    }
+
+    [Fact]
+    public void PairReplyNeverServesAPhantomCredentialWhenThePlanIsProvenStale()
+    {
+        // I2 route recovery at the N2 boundary (production pair path): C was staged over X;
+        // external Z replaced X; Z then DISAPPEARS mid-apply. The apply fails explicitly; the
+        // reply still carries the token but NO password (nothing verified, nothing owed) -
+        // vlcPending true sends the phone through its status/adopt checks instead of storing
+        // a nowhere credential.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("C"));
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        VlcSetup.BeforeReplaceGuardForTests = () => File.Delete(VlcrcPath);
+        string json;
+        try { json = HttpServer.FinishPairReply("tok-route2", "C"); }
+        finally { VlcSetup.BeforeReplaceGuardForTests = null; }
+        using (var doc = JsonDocument.Parse(json))
+        {
+            Assert.Equal("tok-route2", doc.RootElement.GetProperty("token").GetString());
+            Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("vlcPassword").ValueKind); // never a phantom
+            Assert.True(doc.RootElement.GetProperty("vlcPending").GetBoolean());
+        }
+        Assert.False(VlcSetup.Pending); // the stale plan was cleared, never re-staged
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void ExplicitNoOpClearsAnUnresolvableRecordOnlyAfterVerifying()
+    {
+        // I2 N1 no-op path: the requested value is ALREADY in effect; the unresolvable record
+        // (uncertain baseline, different from the verified current) is cleared after the
+        // strict verification, and the request reports truthful success.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline
+        Assert.True(VlcSetup.ResolvePasswordDecision().PendingUnresolved);
+        var json = VlcSetup.WriteVlcrc("X"); // explicit request for the value already in effect
+        Assert.True(OkOf(json));
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void HostRepairNeverResolvesAnUnresolvableRecordIncidentally()
+    {
+        // I2 N1 caller intent: ReadOrCreate's idempotent host repair is NOT an explicit phone
+        // request - it must never clear the unresolved record. It serves the in-effect current.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline
+        var served = VlcSetup.ReadOrCreatePassword();
+        Assert.Equal("X", served); // the value actually in effect
+        Assert.True(VlcSetup.Pending); // the unresolved record STANDS - no incidental resolution
+        Assert.Equal("Y", Program.PendingVlcDurable);
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+    }
+
+    [Fact]
+    public void ExplicitSameValueRequestRebaselinesAnUncertainRecordOnItsProvenRead()
+    {
+        // I2 same-value explicit consent: the phone explicitly re-requests the OWED value Y
+        // while its baseline is uncertain and the proven current is X. The defer stage
+        // re-baselines on this request's proven planning read (not the unprovable converge)
+        // - and the owed apply can then complete when VLC closes.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline
+        VlcSetup.VlcRunningForTests = () => true;
+        string json;
+        try { json = VlcSetup.WriteVlcrc("Y"); }
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.Equal("vlc running", ReasonOf(json));
+        Assert.Equal("Y", Program.PendingVlcDurable);
+        Assert.Equal("X", Program.PendingVlcStagedOverDurable); // re-baselined on the proven read
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+        Assert.False(VlcSetup.RetryPending()); // VLC closed: the owed apply lands over the proven baseline
+        Assert.Equal("Y", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+    }
+
+    [Fact]
+    public void UnresolvablePendingYieldsToAnExplicitRequestAndDefersWithProvenBaseline()
+    {
+        // I2 bounded resolution, deferral path (VLC running): Y's baseline is uncertain and
+        // the strict planning read proves a DIFFERENT current X - Y could never resolve and
+        // would busy every later request forever. The explicit request clears the unresolved
+        // record and defers with the planning read's PROVEN baseline - and because that
+        // baseline is proven, the owed apply completes when VLC closes.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline (the stage-time read fails)
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+        VlcSetup.VlcRunningForTests = () => true;
+        string json;
+        try { json = VlcSetup.WriteVlcrc("Z"); }
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.False(OkOf(json));
+        Assert.Equal("vlc running", ReasonOf(json)); // deferred - NOT pending-busy
+        Assert.True(VlcSetup.Pending);
+        Assert.Equal("Z", Program.PendingVlcDurable);
+        Assert.Equal("X", Program.PendingVlcStagedOverDurable); // proven by this request's strict planning read
+        Assert.False(Program.PendingVlcStagedOverUncertainDurable);
+        Assert.False(VlcSetup.RetryPending()); // VLC closed: the owed apply lands over the proven baseline
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+    }
+
+    [Fact]
+    public void DifferentCurrentWithPersistentReadFailuresStandsUntilAnExplicitRequestResolves()
+    {
+        // I2 bounded resolution, immediate path (VLC closed): while the vlcrc stays unreadable
+        // the uncertain pending neither applies nor clears; once reads recover with a different
+        // current it stands unresolved; the explicit new request resolves it and writes.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        using (new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.StagePending("Y")); // uncertain baseline
+        using (var held = new FileStream(VlcrcPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.True(VlcSetup.RetryPending()); // persistent read failure: stands - never applied, never cleared
+        Assert.True(VlcSetup.ResolvePasswordDecision().PendingUnresolved);
+        var json = VlcSetup.WriteVlcrc("Z"); // VLC closed: the explicit request resolves and writes now
+        Assert.True(OkOf(json));
+        Assert.Equal("Z", File.ReadAllLines(VlcrcPath).First(l => l.StartsWith("http-password="))["http-password=".Length..]);
+        Assert.False(VlcSetup.Pending);
+        Assert.Null(Program.PendingVlcDurable);
+    }
+
+    [Fact]
+    public void TornStoreMissingBaselineKeyMigratesUncertain()
+    {
+        // Torn/partial store: the uncertain flag says false but the baseline KEY is absent -
+        // a well-formed atomic save always carries both. Fail closed: the pending rehydrates
+        // uncertain, never a certain-absent baseline parsed out of a malformed record.
+        File.WriteAllText(Program.ConfigPath, "{\"phones\":[],\"pendingVlcPassword\":\"Y\",\"pendingVlcStagedOverUncertain\":false}");
+        VlcSetup.VlcRunningForTests = () => true; // rehydrate re-arms, never applies during load
+        try { Program.LoadConfig(); }
+        finally { VlcSetup.VlcRunningForTests = null; }
+        Assert.True(Program.PendingVlcStagedOverUncertainDurable);
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=Z", "http-host=0.0.0.0" });
+        var d = VlcSetup.ResolvePasswordDecision();
+        Assert.Null(d.StalePending);
+        Assert.True(d.PendingUnresolved);
+        Assert.True(VlcSetup.RetryPending()); // stands; no write over Z
+        Assert.Equal((false, true), VlcSetup.StatusSnapshot());
+    }
+
+    [Fact]
+    public void EffectivePasswordServesTheInEffectCurrentDuringADeferral()
+    {
+        // I2 in-effect separation: Y is owed over the unchanged current X. While the deferral
+        // stands, VLC still accepts X - control serving Y would 401 until the apply. The owed
+        // Y stays attested as pending; after the apply, Y is the value in effect.
+        File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
+        Assert.True(VlcSetup.StagePending("Y"));
+        Assert.Equal("X", VlcSetup.EffectivePassword()); // what VLC accepts right now
+        Assert.Equal((false, true), VlcSetup.StatusSnapshot()); // Y still owed and attested
+        Assert.False(VlcSetup.RetryPending()); // VLC closed: the apply lands
+        Assert.Equal("Y", VlcSetup.EffectivePassword()); // now in effect
     }
 }
 
@@ -1207,12 +1768,12 @@ public class StatusSnapshotTests : IDisposable
     public void PoisonedSupersededPendingReportsNotPending()
     {
         Assert.True(VlcSetup.StagePending("P-owed"));
-        if (File.Exists(Program.ConfigPath)) File.Delete(Program.ConfigPath);
-        Directory.CreateDirectory(Program.ConfigPath); // saves now fail
-        try { Assert.False(VlcSetup.ClearPending("P-owed")); } // rollback restores the mirror SUPERSEDED
-        finally { Directory.Delete(Program.ConfigPath, true); }
+        // Same defense-in-depth note as SupersededPendingIsNeverServedOrApplied: no production
+        // producer exists today; the hook installs the superseded state directly so the
+        // status contract stays tested (pending means a LIVE obligation - DELTA-H).
+        VlcSetup.SupersedePendingForTests();
         var (configured, pending) = VlcSetup.StatusSnapshot();
-        Assert.False(pending); // a poisoned record is not a live obligation
+        Assert.False(pending); // a superseded record is not a live obligation
         Assert.False(configured);
     }
 
@@ -1254,15 +1815,17 @@ public class StatusSnapshotTests : IDisposable
     }
 
     [Fact]
-    public void DifferentCurrentWithPendingIsConfiguredNotPending()
+    public void OwedDeferredPendingOverCurrentReportsPendingNotConfigured()
     {
-        // I2 R2: vlcrc already carries X and a DIFFERENT pending Y is staged - E1 clears Y
-        // UNAPPLIED at the next decision and control already works with X, so the status is
-        // configured, NOT pending. The read mutates nothing: Y's record still awaits its
-        // decision (the next decision clears it, not the read).
+        // I2 D1: vlcrc carries X and a DIFFERENT pending Y is staged over it - a deferral: Y
+        // stands OWED (not stale; staleness begins only when the current is no longer the
+        // staged-over one). A decision would still apply Y when VLC closes, so the status is a
+        // live obligation: pending, NOT configured - configured is never true while a live
+        // obligation waits, even though phones holding X can control VLC right now. The read
+        // mutates nothing: Y's record still awaits its decision.
         File.WriteAllLines(VlcrcPath, new[] { "extraintf=http", "http-password=X", "http-host=0.0.0.0" });
         Assert.True(VlcSetup.StagePending("Y"));
-        Assert.Equal((true, false), VlcSetup.StatusSnapshot());
+        Assert.Equal((false, true), VlcSetup.StatusSnapshot());
         Assert.True(VlcSetup.Pending); // untouched by the read
     }
 }

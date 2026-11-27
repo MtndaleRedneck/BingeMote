@@ -1,0 +1,69 @@
+name: ci-android-runtime-20261127
+on:
+  push:
+    branches: [ci/windows-runtime-20261127]   # same exact ref as the helper runtime workflow, no glob family, no dispatch trigger
+permissions:
+  contents: read                              # read-only token
+
+jobs:
+  android-runtime:
+    if: github.ref == 'refs/heads/ci/windows-runtime-20261127'   # exact-ref guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 (repo-pinned)
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4 (repo-pinned)
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 # v3.5.0
+      - name: JVM unit tests (includes PairParseTest)
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Gate - PairParseTest result XML proves 4/4
+        run: |
+          set -euo pipefail
+          mkdir -p android-runtime
+          xml=app/build/test-results/testDebugUnitTest/TEST-com.bingemote.PairParseTest.xml
+          cp "$xml" android-runtime/
+          grep -q 'tests="4"' "$xml"      # the exact expected count: 3 existing + explicitNullPasswordWithPendingIsDistinctFromOldHelper
+          grep -q 'failures="0"' "$xml"
+          grep -q 'errors="0"' "$xml"
+          grep -q 'skipped="0"' "$xml"     # a skipped test can never masquerade as one of the four passes
+          grep -q 'explicitNullPasswordWithPendingIsDistinctFromOldHelper' "$xml"   # named new test - partial discovery can't pass
+      - name: Assemble app + instrumented tests
+        run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          # am instrument exits 0 even with failures or zero tests discovered: the RAW
+          # runner output is the only verdict. -r (raw mode) emits per-test
+          # INSTRUMENTATION_STATUS: class=/test=/numtests= key lines (AOSP raw-format
+          # reference) and the runner's own OK (N tests) completion line - the same
+          # -w -r combination the repo's proven focused-ui.sh gate uses. The gate below
+          # rejects failure signatures, requires BOTH named new tests in the raw stream
+          # (partial discovery can't pass), and requires the CR-stripped exact OK line
+          # with the full expected count (10 existing + 2 new) - no assertion weakening.
+          script: |
+            set -euo pipefail
+            mkdir -p android-runtime
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w -r -e class com.bingemote.AutoSetupCheckTest com.bingemote.test/androidx.test.runner.AndroidJUnitRunner | tee android-runtime/autosetupcheck-tests.txt || echo "INSTRUMENT DIAG: adb/instrument pipeline failed (rc=$?) - the grep gate below records the failure"
+            if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg|Process crashed' android-runtime/autosetupcheck-tests.txt; then echo 'GATE FAIL: failure signature in raw runner output'; exit 1; fi
+            tr -d '\r' < android-runtime/autosetupcheck-tests.txt | grep -q 'INSTRUMENTATION_STATUS: test=noPasswordAtPairFinishHealsThroughAdopt'
+            tr -d '\r' < android-runtime/autosetupcheck-tests.txt | grep -q 'INSTRUMENTATION_STATUS: test=missingSetupStatusRouteIsUnsupportedNotARetryLoop'
+            tr -d '\r' < android-runtime/autosetupcheck-tests.txt | grep -qx 'OK (12 tests)'   # runner completed, ALL passed, exact count
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4 (repo-pinned)
+        if: always()
+        with:
+          name: ci-android-runtime-20261127
+          path: android-runtime/*
+          retention-days: 1

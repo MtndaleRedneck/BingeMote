@@ -14,6 +14,7 @@ object AutoSetupCheck {
         REFUSED,         // VLC refused after the one allowed heal, or the PC says nothing is configured
         PC_UNREACHABLE,  // the PC itself did not answer: retry
         SETUP_UNKNOWN,   // the PC answered but could not verify VLC settings right now: retry, never re-pair
+        UNSUPPORTED,     // the PC is too old to attest VLC setup (no /vlc/setup-status route): the update card, never a retry loop
     }
 
     fun run(store: Store): Outcome {
@@ -26,6 +27,8 @@ object AutoSetupCheck {
             return Outcome.REFUSED // the pairing itself is broken: re-pair
         } catch (e: HelperClient.PcSetupUnknown) {
             return Outcome.SETUP_UNKNOWN
+        } catch (e: HelperClient.MissingRoute) {
+            return Outcome.UNSUPPORTED // old helper: no setup-status route - the update card, not a retry loop
         } catch (e: Exception) {
             return Outcome.PC_UNREACHABLE
         }

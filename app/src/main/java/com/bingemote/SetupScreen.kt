@@ -165,6 +165,9 @@ fun SetupScreen(
             AutoSetupCheck.Outcome.REFUSED -> autoState = "refused"
             AutoSetupCheck.Outcome.PC_UNREACHABLE -> autoState = "unreachable"
             AutoSetupCheck.Outcome.SETUP_UNKNOWN -> autoState = "unknown"
+            // Old helper (no setup-status route): the same update card the pair-time old-helper
+            // path shows - reached via !autoSetup, so there is ONE rendering of that message.
+            AutoSetupCheck.Outcome.UNSUPPORTED -> { autoSetup = false; autoState = "unsupported" }
         }
     }
 
@@ -213,6 +216,15 @@ fun SetupScreen(
                     // store adapter (flush + read-back verified) before SAVED was returned. autoPending
                     // needs no seed here either: autoState "checking" runs AutoSetupCheck first, and every
                     // outcome that can show the pending note sets autoPending itself.
+                    autoSetup = true
+                    autoState = "checking"
+                } else if (paired.vlcPending) {
+                    // NEW helper, but it could not hand over a verified or durably-owed password
+                    // with the pair (a vlcrc failure at the commit boundary - the explicit-null
+                    // reply, never a phantom). The SAME check finishes setup truthfully:
+                    // setup-status attests the owed write pending (deferred) or the one adopt
+                    // heal fetches the PC's copy - never the "update your PC" card, this helper
+                    // is not old.
                     autoSetup = true
                     autoState = "checking"
                 } else {
@@ -305,7 +317,13 @@ fun SetupScreen(
                                 }
                                 if (store.pairingGeneration != cur.third) { setupPairing = null; pairingCheckRun++; return@launch }
                                 if (sp.third != -1L && cur.third != sp.third) { setupPairing = cur; return@launch }
-                                autoSetup = cur.second
+                                // Paired-but-no-password is NOT "old helper" by itself: a new
+                                // helper can finish a pair without a verified password (the
+                                // explicit-null recovery reply). Run the check and let the LIVE
+                                // PC sort it: the missing status route maps to UNSUPPORTED (the
+                                // update card, as before); a pending write defers; an applied
+                                // password is adopted by the heal.
+                                autoSetup = cur.first
                                 autoState = if (autoSetup) "checking" else "unsupported"
                                 continueVlc = true
                                 checkRun++
