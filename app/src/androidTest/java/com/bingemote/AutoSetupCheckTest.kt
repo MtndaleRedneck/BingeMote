@@ -138,12 +138,12 @@ class AutoSetupCheckTest {
 
     /** VLC's status endpoint behind a fixed password; 401 for anything else. */
     private fun vlcServer(password: String, hits: AtomicInteger? = null): FakeServer =
-        FakeServer { _, path, auth, _ ->
+        FakeServer({ _, path, auth, _ ->
             hits?.incrementAndGet()
             val expected = android.util.Base64.encodeToString(":$password".toByteArray(), android.util.Base64.NO_WRAP)
             if (path.startsWith("/requests/status.json") && auth == "Basic $expected") 200 to "{}"
             else 401 to "{}"
-        }.start()
+        }).start()
 
     private fun helperServer(configured: Boolean, pending: Boolean, adoptPassword: String? = null, adoptCalls: AtomicInteger? = null): FakeServer =
         FakeServer({ _, path, _, body ->
