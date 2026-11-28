@@ -47,13 +47,11 @@ Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 ; and the app never needs a surprise prompt. Idempotent - same-path upgrades never run the
 ; old uninstaller (their log entries merge into the next real uninstall), so this simply
 ; re-verifies Ready or rebinds the existing identity.
-; (Run from [Code] CurStepChanged(ssPostInstall) below, same hidden elevated step, so its distinct exit code 12 "setup finished but VLC's own firewall rules are not all in place" can be shown. Still runs before the watchdog step.)
-; Relaunch task for the installing user only (limited token, admin-only write), new name, create-only.
-; Skips with a log line when the installing account is not the signed-in user.
-Filename: "{app}\BingeMote.exe"; Parameters: "--install-watchdog"; Flags: runhidden waituntilterminated
+; (Run from [Code] CurStepChanged(ssPostInstall) below, same hidden elevated step, so its distinct exit code 12 "setup finished but VLC's own firewall rules are not all in place" can be shown. Setup, then the watchdog step, then the silent relaunch run from this one Code step so the order is fixed.)
+; The relaunch task (--install-watchdog) and the silent-update relaunch are NOT [Run] entries any more: Inno ran [Run] entries
+; BEFORE the CurStepChanged(ssPostInstall) setup below, so the relaunched app started before TLS setup existed
+; (run 46146303386). They run from the same Code step, after setup, in that order.
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
-; After a silent update, reopen the app for him as the signed-in user (not elevated).
-Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delwatchdog"
@@ -86,6 +84,7 @@ var
   Code: Integer;
 begin
   if CurStep = ssPostInstall then
+  begin
     if not Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-firewall', '', SW_HIDE, ewWaitUntilTerminated, Code) then
       SuppressibleMsgBox('Setup could not start BingeMote''s one-time setup step: ' + SysErrorMessage(Code), mbError, MB_OK, IDOK)
     else
@@ -93,4 +92,11 @@ begin
       if Code = 12 then
         SuppressibleMsgBox('Setup finished, but VLC''s own firewall rules are not all in place, so your phone may not reach VLC on this network. The details are in helper.log in %LOCALAPPDATA%\BingeMote. Everything else is set up.', mbInformation, MB_OK, IDOK);
     end;
+    // Relaunch task for the installing user only (limited token, admin-only write), new name, create-only.
+    // Skips with a log line when the installing account is not the signed-in user. Result is read back by the product itself.
+    Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-watchdog', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    // After a silent update, reopen the app for him as the signed-in user (not elevated), now that setup is complete.
+    if WizardSilent then
+      ExecAsOriginalUser(ExpandConstant('{app}\BingeMote.exe'), '', '', SW_SHOWNORMAL, ewNoWait, Code);
+  end;
 end;

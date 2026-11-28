@@ -193,13 +193,28 @@ class AutomaticOnlySetupTest {
         // it again with the same condition loop, pin both facts, then return to the
         // field. Scrolling cannot clear the selection; only the setText below can
         // (SetupScreen.kt address onValueChange clears chosen).
+        // Bounded search in BOTH directions (a swipe can fling past the card, so one-way scrolling cannot be
+        // trusted to reach it), same condition, same 10 s budget; the assert below is unchanged. On failure
+        // capture the real screen and hierarchy so the cause is read from evidence, not guessed (run 46145000387
+        // failed here with no capture).
         val pinBy = System.currentTimeMillis() + 10000
+        var pinTries = 0
         while (!device.hasObject(By.text(PAIR_CODE_LABEL)) && System.currentTimeMillis() < pinBy) {
             device.wait(Until.hasObject(By.text(PAIR_CODE_LABEL)), 700)
             if (!device.hasObject(By.text(PAIR_CODE_LABEL))) {
-                device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-                    device.displayWidth / 2, device.displayHeight / 2, 20)
+                if (pinTries % 3 == 2)
+                    device.swipe(device.displayWidth / 2, device.displayHeight / 2,
+                        device.displayWidth / 2, device.displayHeight * 4 / 5, 40)
+                else
+                    device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
+                        device.displayWidth / 2, device.displayHeight / 2, 40)
+                device.waitForIdle()
+                pinTries++
             }
+        }
+        if (!device.hasObject(By.text(PAIR_CODE_LABEL))) {
+            device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-pin-fail.png"))
+            device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-pin-fail.xml"))
         }
         assertTrue("pair-code entry not present immediately before the address clears the selection",
             device.hasObject(By.text(PAIR_CODE_LABEL)))
