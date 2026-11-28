@@ -205,10 +205,13 @@ function Write-SetupDiagnostics([string]$why) {
         # the OWNED probe entry, then add https. Success supports (does not prove) the
         # migration's delete-then-add premise on this platform; 8488's controlled validation is
         # the migration e2e. Failure means even an owned-delete does not unblock - another cause
-        # class exists. Cleanup is best-effort and probe-owned only (finally): an entry is
-        # deleted only when its readback is exactly the probe grant; an owned-but-unexpected
-        # readback is left in place and logged (fail closed). 8488 never touched; probe errors
-        # logged, never rethrown.
+        # class exists. The finally cleans up ONLY the http entry and only when this run provably
+        # created it ($probeBHttpCreated = own add exit 0 AND exact readback at creation) AND a
+        # fresh readback right before the delete still shows exactly the probe grant - an absent
+        # flag or a foreign/unexpected readback leaves the entry in place and logs it (fail
+        # closed). The https entry is created and cleaned by Invoke-UrlaclProbe itself; this
+        # finally never touches it. 8488 never touched; probe errors logged, never rethrown.
+        $probeBHttpCreated = $false
         try {
             $preC1 = (netsh http show urlacl 'url=http://+:8492/') | Out-String
             $preC2 = (netsh http show urlacl 'url=https://+:8492/') | Out-String
@@ -216,31 +219,33 @@ function Write-SetupDiagnostics([string]$why) {
                 Write-Host "PROBE-B SKIP: 8492 not clean beforehand; untouched"
             } else {
                 netsh http add urlacl 'url=http://+:8492/' 'sddl=D:(A;;GX;;;S-1-5-4)' | Out-Host
+                $addExit = $LASTEXITCODE
                 $rbH = (netsh http show urlacl 'url=http://+:8492/') | Out-String
-                if ($rbH -match 'S-1-5-4|INTERACTIVE' -and $rbH -notmatch 'Everyone|S-1-1-0') {
+                if ($addExit -eq 0 -and $rbH -match 'S-1-5-4|INTERACTIVE' -and $rbH -notmatch 'Everyone|S-1-1-0') {
+                    $probeBHttpCreated = $true
                     netsh http delete urlacl 'url=http://+:8492/' | Out-Host
                     $gone = (netsh http show urlacl 'url=http://+:8492/') | Out-String
-                    if ($gone -match ':8492/') { Write-Host 'PROBE-B ABORT: owned http entry did not delete; https arm skipped' }
+                    if ($gone -match ':8492/') { Write-Host 'PROBE-B ABORT: owned http entry did not delete; https arm skipped (finally retries the owned delete)' }
                     else {
                         Write-Host 'PROBE-B http sibling deleted (owned); adding https'
                         Invoke-UrlaclProbe 'https://+:8492/' 'sddl=D:(A;;GX;;;S-1-5-4)'
                     }
-                } else { Write-Host 'PROBE-B ABORT: probe-created http readback unexpected; leaving untouched (fail closed)' }
+                } else { Write-Host 'PROBE-B ABORT: probe-created http readback unexpected or add failed; leaving untouched (fail closed)' }
                 Write-Host 'PROBE-B note: https exit 0 = delete-then-add unblocks on this platform (supports, not proves, the 8488 migration premise); exit 183 = another cause class exists.'
             }
         } catch {
             Write-Host "PROBE-B error (original failure preserved): $($_.Exception.Message)"
         } finally {
-            foreach ($u in @('https://+:8492/', 'http://+:8492/')) {
+            if ($probeBHttpCreated) {
                 try {
-                    $rb = (netsh http show urlacl "url=$u") | Out-String
-                    if ($rb -match [regex]::Escape($u)) {
+                    $rb = (netsh http show urlacl 'url=http://+:8492/') | Out-String
+                    if ($rb -match [regex]::Escape('http://+:8492/')) {
                         if ($rb -match 'S-1-5-4|INTERACTIVE' -and $rb -notmatch 'Everyone|S-1-1-0') {
-                            Write-Host "removing probe-owned $u (exact readback)"
-                            netsh http delete urlacl "url=$u" | Out-Host
-                        } else { Write-Host "$u readback foreign/unexpected; leaving untouched" }
+                            Write-Host 'removing probe-created http://+:8492/ (creation flag + fresh exact readback)'
+                            netsh http delete urlacl 'url=http://+:8492/' | Out-Host
+                        } else { Write-Host 'http://+:8492/ readback foreign/unexpected; leaving untouched' }
                     }
-                } catch { Write-Host "PROBE-B cleanup check failed for ${u}: $($_.Exception.Message)" }
+                } catch { Write-Host "PROBE-B cleanup check failed for http://+:8492/ : $($_.Exception.Message)" }
             }
         }
     }
