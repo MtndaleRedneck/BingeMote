@@ -355,10 +355,11 @@ if ($leftBindings -match ':8490') { throw "uninstaller left the 8490 TLS port bi
 Assert-BingeRulesAbsent 'after uninstall (journaled rules removed)'
 Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "uninstall left the legacy 'BingeMote Watchdog' task definition identical (inherited delwatchdog skipped)"
 Write-Host ("uninstall log: delwatchdog skip line present = " + [bool]($ulog -match 'Skipping RunOnceId "delwatchdog"') + " (informational: depends on the baseline installer having carried that entry)")
-Assert (-not (Get-TaskSddl $script:WdName)) "uninstall removed the product watchdog task (or none was registered)"
+if ($script:WdState -eq 'REGISTERED') { Assert (-not (Get-TaskSddl $script:WdName)) "uninstall removed the journaled product watchdog task (state was REGISTERED)" }
+else { Assert (-not (Get-TaskSddl $script:WdName)) "no product watchdog task exists after uninstall (state was $($script:WdState); nothing was registered, so nothing was removed: this is NOT a removal proof)" }
 Write-Host "legacy watchdog task survived install, upgrade and uninstall untouched; the harness now removes ITS OWN fixture/baseline task so later phases are deterministic (the product never does)"
 schtasks /Delete /TN 'BingeMote Watchdog' /F | Out-Host
-Write-Host "ok: uninstaller removed the 8490 listen permission, TLS port bindings, journaled rules and watchdog; legacy objects left in place"
+Write-Host "ok: uninstaller removed the 8490 listen permission, TLS port bindings and journaled rules; legacy objects left in place; product watchdog state was $($script:WdState) (removal is proven only when REGISTERED)"
 # The installed-instance pairing above survives the uninstall (config.json is user data);
 # clear it so the standalone runtime tests below pair fresh and see Phone 1.
 Remove-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\config.json') -Force -ErrorAction SilentlyContinue
@@ -465,7 +466,10 @@ try {
     Write-Host "-- admin control status (exit $($ctl.ExitCode)) --"; $ctlLines | ForEach-Object { Write-Host "admin: $_" }
     $child = @'
 $o = 'C:\bmstd\child-result.txt'
-function W($s) { Add-Content -Path $o -Value $s }
+$o2 = 'C:\bmstd\child-logfail.txt'
+# Every record is appended with retries; a record that still cannot be written is kept in a second file instead of being dropped silently.
+function W($s) { for ($i = 0; $i -lt 40; $i++) { try { [IO.File]::AppendAllText($o, $s + "`r`n"); return } catch { $script:lastWErr = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message; Start-Sleep -Milliseconds 50 } }; try { [IO.File]::AppendAllText($o2, 'logWriteFailed|' + $script:lastWErr + '|' + $s + "`r`n") } catch { } }
+function Dt($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return ($x.GetType().FullName + '|0x' + ('{0:X8}' -f [int]$x.HResult) + '|' + (($x.Message -replace '[\r\n]+', ' ').Trim())) }
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 W ('identity|' + $id.Name)
 W ('isAdminRole|' + ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
@@ -479,11 +483,12 @@ $t = $null
 try { $t = $fld.GetTask('bm-dacl-fixture'); W 'daclRead|ok' } catch { W 'daclRead|denied' }
 try { $x = [string]$t.GetSecurityDescriptor(4); W ('daclReadSd|' + [bool]$x) } catch { W 'daclReadSd|denied' }
 function H($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return [int]$x.HResult }
-$fxml = Get-Content 'C:\bmstd\fixture.xml' -Raw
-if ($null -eq $t) { W 'daclNoHandle|True' } else { try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W ('daclDisable|hr' + (H $_)) } }
-try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W ('daclUpdate|hr' + (H $_)) }
-try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W ('daclCreateOrUpdate|hr' + (H $_)) }
-try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W ('daclDelete|hr' + (H $_)) }
+W 'probesBegin|True'
+try { $fxml = Get-Content 'C:\bmstd\fixture.xml' -Raw -ErrorAction Stop; W ('daclFixtureXml|ok|' + $fxml.Length) } catch { W ('daclFixtureXml|' + (Dt $_)); $fxml = '' }
+if ($null -eq $t) { W 'daclNoHandle|True' } else { try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W ('daclDisable|hr' + (H $_)); W ('daclDetail|disable|' + (Dt $_)) } }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W ('daclUpdate|hr' + (H $_)); W ('daclDetail|update|' + (Dt $_)) }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W ('daclCreateOrUpdate|hr' + (H $_)); W ('daclDetail|createOrUpdate|' + (Dt $_)) }
+try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W ('daclDelete|hr' + (H $_)); W ('daclDetail|delete|' + (Dt $_)) }
 $so = (schtasks /Delete /TN 'bm-dacl-fixture' /F 2>&1 | Out-String)
 W ('daclSchtasksDelete|exit' + $LASTEXITCODE + '|accessDeniedText=' + ($so -match 'Access is denied'))
 W 'DONE'
@@ -495,7 +500,7 @@ W 'DONE'
     $cred = New-Object System.Management.Automation.PSCredential(($env:COMPUTERNAME + '\' + $stdName), $sec)
     $startErr = $null
     try {
-        $stdProc = Start-Process -FilePath 'powershell.exe' -Credential $cred -LoadUserProfile -WorkingDirectory $stdDir -WindowStyle Hidden -PassThru `
+        $stdProc = Start-Process -FilePath 'powershell.exe' -Credential $cred -LoadUserProfile -WorkingDirectory $stdDir -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $stdDir 'child-stdout.txt') -RedirectStandardError (Join-Path $stdDir 'child-stderr.txt') `
             -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $stdDir 'child.ps1'))
     } catch { $startErr = $_.Exception.Message }
     if ($stdProc -and -not $stdProc.WaitForExit(120000)) { Stop-Process -Id $stdProc.Id -Force -ErrorAction SilentlyContinue }
@@ -503,6 +508,7 @@ W 'DONE'
     $statusFile = Join-Path $stdDir 'status-std.txt'
     $childLines = if (Test-Path $childFile) { @(Get-Content $childFile) } else { @() }
     $stdLines = if (Test-Path $statusFile) { @(Get-Content $statusFile) } else { @() }
+    foreach ($cf in 'child-stdout.txt', 'child-stderr.txt', 'child-logfail.txt') { $cp = Join-Path $stdDir $cf; if (Test-Path $cp) { Write-Host "-- $cf --"; Get-Content $cp | ForEach-Object { Write-Host "childio: $_" } } else { Write-Host "-- $cf absent --" } }
     Write-Host '-- standard-user identity / child record --'; $childLines | ForEach-Object { Write-Host "child: $_" }
     Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
     # DACL verdict: the standard user (the task's own principal) must be unable to disable, update, replace or delete; admin then proves the task is intact.

@@ -162,7 +162,7 @@ internal static class WatchdogSetup
         catch (Exception ex) { why = "could not recover the target user: " + ex.Message; return false; }
     }
 
-    private enum TaskRead { Absent, Present, Unreadable }
+    internal enum TaskRead { Absent, Present, Unreadable }
 
     private static TaskRead Read(object folderObj, out string sddl)
     {
@@ -174,8 +174,31 @@ internal static class WatchdogSetup
             sddl = (string)t.GetSecurityDescriptor(DaclInfo);
             return TaskRead.Present;
         }
-        catch (COMException ex) when (ex.HResult == unchecked((int)0x80070002) || ex.HResult == unchecked((int)0x80070003)) { return TaskRead.Absent; }
-        catch { return TaskRead.Unreadable; }
+        catch (Exception ex)
+        {
+            var kind = ClassifyTaskException(ex);
+            if (kind == TaskRead.Unreadable) Program.Log("scheduled task read failed (not treated as absent): " + DescribeException(ex));
+            return kind;
+        }
+    }
+
+    /// <summary>Absent only for the "task not found" results (0x80070002 / 0x80070003). A dynamic COM call can surface that HRESULT as a mapped FileNotFoundException/DirectoryNotFoundException rather than a COMException, so the HRESULT is read from the innermost exception whatever its type. A FileNotFoundException that names a file (a missing assembly) is never absence. Everything else is Unreadable.</summary>
+    internal static TaskRead ClassifyTaskException(Exception ex)
+    {
+        var x = ex;
+        while (x.InnerException != null) x = x.InnerException;
+        int hr = x is COMException ce ? ce.ErrorCode : x.HResult;
+        if (hr != unchecked((int)0x80070002) && hr != unchecked((int)0x80070003)) return TaskRead.Unreadable;
+        if (x is COMException || x is DirectoryNotFoundException) return TaskRead.Absent;
+        if (x is FileNotFoundException f && string.IsNullOrEmpty(f.FileName)) return TaskRead.Absent;
+        return TaskRead.Unreadable;
+    }
+
+    private static string DescribeException(Exception ex)
+    {
+        var x = ex;
+        while (x.InnerException != null) x = x.InnerException;
+        return x.GetType().FullName + " hresult=0x" + (x is COMException ce ? ce.ErrorCode : x.HResult).ToString("X8") + " message=" + x.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
     }
 
     /// <summary>Live definition must still be what we registered: one user principal equal to the journaled SID, InteractiveToken, LeastPrivilege, exactly one action running the journaled exe with --ensure-running. Anything unreadable is "no".</summary>

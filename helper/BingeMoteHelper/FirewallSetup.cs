@@ -521,8 +521,11 @@ internal static class FirewallSetup
     /// (the installer's remove-what-you-add contract, docs/details.md); the identity (certificate,
     /// key, marker) is left untouched, matching TlsSetup.Remove's existing transport/identity split.
     /// Every removal is proven first (HttpsReservationCleanupPlanner): the reservation is deleted
-    /// only when the identity marker is present AND the reservation's SDDL is exactly the
-    /// interactive-users grant setup writes AND no interrupted-setup journal is pending or corrupt
+    /// only when the lifecycle journal records that THIS install run added it (add exited 0 and the
+    /// exact read-back was the interactive-users grant) AND the reservation's SDDL is still exactly that
+    /// grant AND no interrupted-setup TLS journal is pending or corrupt. The identity marker is not a
+    /// delete condition; it is only logged. Residual: the reservation is deleted by URL, so an
+    /// administrator who replaced it with the same SDDL after setup is not distinguishable
     /// (the journal holds ALL TLS transport state, bindings and reservation alike, so crash
     /// recovery still sees the whole picture); anything else stays and is logged. Idempotent.</summary>
     public static int RunUninstallCleanup()

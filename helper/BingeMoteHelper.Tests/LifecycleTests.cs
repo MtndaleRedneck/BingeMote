@@ -73,4 +73,23 @@ public class LifecycleTests
         }
         finally { Directory.Delete(dir, true); }
     }
+
+    [Fact]
+    public void TaskNotFoundIsAbsentWhateverExceptionTypeCarriesIt()
+    {
+        Assert.Equal(WatchdogSetup.TaskRead.Absent, WatchdogSetup.ClassifyTaskException(new System.Runtime.InteropServices.COMException("x", unchecked((int)0x80070002))));
+        Assert.Equal(WatchdogSetup.TaskRead.Absent, WatchdogSetup.ClassifyTaskException(new System.Runtime.InteropServices.COMException("x", unchecked((int)0x80070003))));
+        Assert.Equal(WatchdogSetup.TaskRead.Absent, WatchdogSetup.ClassifyTaskException(new System.IO.FileNotFoundException()));       // as mapped from 0x80070002, no file named
+        Assert.Equal(WatchdogSetup.TaskRead.Absent, WatchdogSetup.ClassifyTaskException(new System.IO.DirectoryNotFoundException()));  // as mapped from 0x80070003
+        Assert.Equal(WatchdogSetup.TaskRead.Absent, WatchdogSetup.ClassifyTaskException(new System.Reflection.TargetInvocationException(new System.IO.FileNotFoundException())));
+    }
+
+    [Fact]
+    public void AnythingElseIsUnreadableNeverAbsent()
+    {
+        Assert.Equal(WatchdogSetup.TaskRead.Unreadable, WatchdogSetup.ClassifyTaskException(new System.Runtime.InteropServices.COMException("x", unchecked((int)0x80070005))));   // access denied
+        Assert.Equal(WatchdogSetup.TaskRead.Unreadable, WatchdogSetup.ClassifyTaskException(new System.IO.FileNotFoundException("missing assembly", "Microsoft.CSharp.dll")));      // names a file: not task absence
+        Assert.Equal(WatchdogSetup.TaskRead.Unreadable, WatchdogSetup.ClassifyTaskException(new InvalidOperationException("x")));
+        Assert.Equal(WatchdogSetup.TaskRead.Unreadable, WatchdogSetup.ClassifyTaskException(new UnauthorizedAccessException()));
+    }
 }
