@@ -334,16 +334,16 @@ class AutoSetupCheckTest {
             helperA.stop() // the old address dies
             // A plaintext listener at another address is not the PC: the seam must refuse it.
             FakeServer(pings, requiredToken = helperToken).start().use { plain ->
-                assertEquals(null, applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", plain.port, "rogue"))))
+                assertEquals(null, applySecureRediscovery(store, listOf(DiscoveredHelper("127.0.0.1", plain.port, "rogue"))))
             }
             // The right key with the WRONG token expected by the server is not a proof either.
             FakeServer(pings, HelperTls.context, requiredToken = "ef".repeat(32)).start().use { wrongTok ->
-                assertEquals(null, applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", wrongTok.port, "rogue"))))
+                assertEquals(null, applySecureRediscovery(store, listOf(DiscoveredHelper("127.0.0.1", wrongTok.port, "rogue"))))
             }
             // The same PC at a new address: proof passes, the CAS moves the address, identity stays.
             val helperB = FakeServer(pings, HelperTls.context, requiredToken = helperToken).start()
             try {
-                val r = applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", helperB.port, "FakePC")))
+                val r = applySecureRediscovery(store, listOf(DiscoveredHelper("127.0.0.1", helperB.port, "FakePC")))
                 org.junit.Assert.assertNotNull(r)
                 assertEquals(helperB.port, r!!.port)
                 assertEquals(before.helperToken, r.token)

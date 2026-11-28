@@ -879,7 +879,7 @@ internal class RediscoveredEndpoint(val host: String, val port: Int, val token: 
  *  data only ever picks candidates) and CAS the first proof into the record. Returns the
  *  verified endpoint with the generation captured under the CAS lock, or null when nothing
  *  moved (no proof, record changed underneath, store latched). Never publishes itself. */
-internal fun applySecureRediscovery(store: Store, candidates: List<HelperClient.DiscoveredHelper>): RediscoveredEndpoint? {
+internal fun applySecureRediscovery(store: Store, candidates: List<DiscoveredHelper>): RediscoveredEndpoint? {
     val snap = store.pollSnapshot()
     val expected = if (snap.secure) snap.encode else null
     val cred = expected?.let { PairedCredential.decode(it) } ?: return null

@@ -106,7 +106,7 @@ class RediscoveryTest {
         return s to s.pollSnapshot().encode!!
     }
 
-    private fun candidate(port: Int) = HelperClient.DiscoveredHelper("127.0.0.1", port, "FakePC")
+    private fun candidate(port: Int) = DiscoveredHelper("127.0.0.1", port, "FakePC")
 
     @Test fun samePcAtNewAddressMovesOnlyHostPortAndReturnsTheCasGeneration() {
         KeyChangeState.resetForTests()
