@@ -19,6 +19,8 @@ $ErrorActionPreference = 'Stop'
 $issPath = Join-Path $PSScriptRoot '..\helper\installer.iss'
 $iss = Get-Content $issPath -Raw
 
+$sectionHits = [regex]::Matches($iss, '(?m)^\[UninstallRun\]\s*$')
+if ($sectionHits.Count -gt 1) { throw "iss-lint: $($sectionHits.Count) [UninstallRun] sections found - duplicate sections are rejected (a second section could evade this lint)" }
 $section = [regex]::Match($iss, '(?ms)^\[UninstallRun\]\s*\r?\n(.*?)(?=^\[|\z)')
 if (-not $section.Success) { throw "iss-lint: no [UninstallRun] section found in $issPath" }
 

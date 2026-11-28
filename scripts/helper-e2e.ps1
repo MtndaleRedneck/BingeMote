@@ -28,27 +28,46 @@ if (-not $oldPkg) { throw 'preflight: baseline installer missing in helper/Outpu
 if (-not $newPkg) { throw 'preflight: new installer missing in helper/Output - the job''s installer build step did not produce it' }
 $oldName = [IO.Path]::GetFileName($oldPkg)
 if ($oldName -notmatch '1\.9\.1') { throw "preflight: baseline installer '$oldName' is not the pinned 1.9.1 content build" }
-pwsh -File scripts/iss-supersession-proof.ps1 -OldInstaller $oldPkg -NewInstaller $newPkg
-$proofExit = $LASTEXITCODE
-# Valid-deserialize control for the journal leg: the isolated ACTUAL-reader
-# test seam (known Kind -> Present, unknown Kind -> Corrupt, malformed ->
-# Corrupt). A real Fresh-Kind setup run is NOT the control - it can mutate.
-dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj --filter 'FullyQualifiedName~JournalOldReaderFixture'
-if ($LASTEXITCODE -ne 0) { throw 'journal reader fixture tests failed' }
-# Journal leg needs the fixed build installed; the supersession legs all end
-# uninstalled, so install it here and uninstall after.
-& $newPkg /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-install.log" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "journal-leg install failed ($LASTEXITCODE)" }
-pwsh -File scripts/journal-oldreader-proof.ps1
-$journalExit = $LASTEXITCODE
-$unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
-if (Test-Path $unins) { & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-uninstall.log" | Out-Null }
-Copy-Item helper/supersession-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
-Copy-Item helper/journal-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
+$proofExit = 0; $journalExit = 0; $blockError = $null
+try {
+    pwsh -File scripts/iss-supersession-proof.ps1 -OldInstaller $oldPkg -NewInstaller $newPkg
+    $proofExit = $LASTEXITCODE
+    # Valid-deserialize control for the journal leg: the isolated ACTUAL-reader
+    # test seam (known Kind -> Present, unknown Kind -> Corrupt, malformed ->
+    # Corrupt). A real Fresh-Kind setup run is NOT the control - it can mutate.
+    dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj --filter 'FullyQualifiedName~JournalOldReaderFixture'
+    if ($LASTEXITCODE -ne 0) { throw 'journal reader fixture tests failed' }
+    # Journal leg needs the fixed build installed; the supersession legs all end
+    # uninstalled, so install it here and uninstall after.
+    & $newPkg /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-install.log" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "journal-leg install failed ($LASTEXITCODE)" }
+    pwsh -File scripts/journal-oldreader-proof.ps1
+    $journalExit = $LASTEXITCODE
+} catch {
+    $blockError = $_
+} finally {
+    # Persist EVERYTHING the proofs produced, green or red: proof/uninstall logs
+    # plus BOTH candidate helper.log files (new and legacy data dirs).
+    $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
+    if (Test-Path $unins) { & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-uninstall.log" | Out-Null }
+    Copy-Item helper/supersession-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
+    Copy-Item helper/journal-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
+    Copy-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') helper/e2e-diag/helper.log -ErrorAction SilentlyContinue
+    Copy-Item (Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log') helper/e2e-diag/helper-legacy.log -ErrorAction SilentlyContinue
+}
+if ($blockError) { throw "proof block failed before completion: $blockError" }
 if ($proofExit -ne 0) { throw "supersession proof failed ($proofExit); logs under helper/e2e-diag" }
 if ($journalExit -ne 0) { throw "journal old-reader proof failed ($journalExit); logs under helper/e2e-diag" }
 Write-Host '== isolated proofs green =='
-exit 0
+# GREEN-RUN LOG PERSISTENCE: the workflow uploads the e2e-diag artifact on
+# failure() only, and no green-run upload route exists without a workflow edit
+# (which this branch must not make). So a green proof run exits NONZERO on
+# purpose, with this marker: the red status is the log-collection mechanism,
+# NOT a proof failure. Read the results from the uploaded artifact and the
+# "== isolated proofs green ==" line above. A green-claim run status would
+# require a reviewed workflow change.
+Write-Host 'PROOFS GREEN - intentional nonzero exit so the e2e-diag artifact uploads; this is NOT a proof failure'
+exit 1
 # === END ISOLATED PROOF BRANCH ==============================================
 
 # The plaintext baseline leg speaks http; once the one-time secure setup has run the

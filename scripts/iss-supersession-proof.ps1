@@ -91,8 +91,15 @@ function Test-Sentinel {
     return $read -match [regex]::Escape($SentinelSid)
 }
 function Remove-Sentinel {
+    # Delete only what this harness planted: if the reservation no longer shows
+    # the synthetic test SID, something replaced it mid-leg - leave it and say
+    # so loudly rather than deleting foreign state.
+    $read = (netsh http show urlacl "url=$SentinelUrl") | Out-String
+    if ($read -notmatch 'Reserved URL') { Write-Host 'sentinel already absent (expected after blind-delete legs)'; return }
+    if ($read -notmatch [regex]::Escape($SentinelSid)) { Write-Host "WARNING: $SentinelUrl no longer shows the synthetic test SID - NOT deleting (foreign state?)"; return }
+    if ($read -match 'Everyone|S-1-1-0|S-1-5-4|INTERACTIVE') { Write-Host "WARNING: $SentinelUrl shows a non-test grant alongside the sentinel - NOT deleting"; return }
     netsh http delete urlacl "url=$SentinelUrl" | Out-Null
-    Write-Host 'sentinel cleanup attempted'
+    Write-Host 'sentinel removed (verified synthetic SID before delete)'
 }
 function Install($pkg, $logName) {
     $log = Join-Path $WorkDir $logName
@@ -133,19 +140,33 @@ function Assert-FirewallRemoved {
     if ($rule -match 'BingeMote') { throw 'P5 (separate): BingeMote firewall rule still present after uninstall (delrule failed)' }
     Write-Host 'ok: firewall rule removed (delrule, asserted separately)'
 }
-# P5: owned-HTTPS cleanup, non-vacuous: requires the product's own proven fixture.
+# P5: owned-HTTPS cleanup, non-vacuous: requires the product's own PROVEN-OWNED
+# fixture - IU-scoped https reservation (not Everyone), a 0.0.0.0:8488 binding,
+# and an identity marker passing the product's field shapes. Anything less
+# defers loudly; the after-state asserts reservation AND bindings removed (the
+# identity/marker intentionally survives uninstall by product design).
+$MarkerPath = Join-Path $env:ProgramData 'BingeMote\tls-identity.json'
+function Test-HttpsProvisioned {
+    $acl = (netsh http show urlacl 'url=https://+:8488/') | Out-String
+    if ($acl -notmatch 'Reserved URL' -or $acl -match 'Everyone|S-1-1-0' -or $acl -notmatch 'S-1-5-4|INTERACTIVE') { return $false }
+    $binds = (netsh http show sslcert) | Out-String
+    if ($binds -notmatch '0\.0\.0\.0:8488') { return $false }
+    if (-not (Test-Path $MarkerPath)) { return $false }
+    try {
+        $m = Get-Content $MarkerPath -Raw | ConvertFrom-Json
+        return ($m.Thumbprint -match '^[0-9A-Fa-f]{40}$' -and $m.SpkiSha256Hex -match '^[0-9a-f]{64}$' -and [guid]::TryParse($m.AppId, [ref][guid]::Empty) -and $m.Port -eq 8488)
+    } catch { return $false }
+}
 function Assert-OwnedHttpsCleanup([bool]$wasProvisioned) {
     if (-not $wasProvisioned) {
-        $script:Deferred += 'P5: product install-time setup did not provision an owned HTTPS reservation in this environment; owned-HTTPS cleanup leg DEFERRED to the migration e2e (explicit, non-vacuous)'
+        $script:Deferred += 'P5: no proven-owned HTTPS fixture (reservation + binding + valid marker) in this environment; owned-cleanup leg DEFERRED to the migration e2e (explicit, non-vacuous)'
         return
     }
     $https = (netsh http show urlacl 'url=https://+:8488/') | Out-String
-    if ($https -match '8488') { throw 'P5: owned HTTPS reservation survived uninstall - helper cleanup did not run or refused its own state' }
-    Write-Host 'ok: owned HTTPS reservation removed by the classified helper cleanup'
-}
-function Test-HttpsProvisioned {
-    $https = (netsh http show urlacl 'url=https://+:8488/') | Out-String
-    return $https -match 'S-1-5-4|INTERACTIVE'
+    if ($https -match 'Reserved URL') { throw 'P5: owned HTTPS reservation survived uninstall - helper cleanup did not run or refused its own state' }
+    $binds = (netsh http show sslcert) | Out-String
+    if ($binds -match '0\.0\.0\.0:8488') { throw 'P5: owned TLS binding survived uninstall - TlsSetup.Remove did not remove it' }
+    Write-Host 'ok: proven-owned HTTPS reservation AND TLS binding removed by the classified helper cleanup'
 }
 
 New-Item -ItemType Directory -Force $WorkDir | Out-Null

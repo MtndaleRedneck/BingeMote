@@ -14,7 +14,8 @@
 # deliberately NOT the control: it can recover and mutate.
 #
 # Two surfaces, per I2's P3:
-#   A. Setup surface: --install-firewall with the planted journal must exit 9
+#   A. Setup surface: --install-firewall with the planted journal must exit 8
+#      (TlsSetup 9 mapped to process 8 by RunElevatedCore)
 #      (journal read inside the single mutex acquisition, before any mutation -
 #      HelperTls.cs:582-586), with the exit ATTRIBUTED via the helper.log
 #      "operation journal" line, leaving the journal byte-identical.
@@ -172,17 +173,20 @@ try {
     # --- Surface A: setup fails closed, attributed exit 9, nothing mutated ---
     $before = Get-TransportState
     $logPos = Get-LogPositions
+    # Process exit is 8, not 9: RunElevatedCore maps any nonzero TlsSetup.Run
+    # result to 8 (FirewallSetup.cs), so the journal fail-closed (9) surfaces
+    # as 8 and the helper.log line is what attributes the CAUSE.
     $p = Start-Process $AppExe -ArgumentList '--install-firewall' -Wait -PassThru
-    if ($p.ExitCode -ne 9) { throw "surface A: expected fail-closed exit 9 with an unknown-Kind journal, got $($p.ExitCode)" }
+    if ($p.ExitCode -ne 8) { throw "surface A: expected fail-closed process exit 8 (TlsSetup 9 mapped) with an unknown-Kind journal, got $($p.ExitCode)" }
     $tail = Get-NewLogLines $logPos
-    if ($tail -notmatch 'operation journal') { throw 'surface A: exit 9 not attributed to the journal (expected helper.log "operation journal" line)' }
+    if ($tail -notmatch 'operation journal') { throw 'surface A: exit 8 not attributed to the journal (expected helper.log "operation journal" line)' }
     if ((Get-FileHash $Journal -Algorithm SHA256).Hash -ne $plantedHash) { throw 'surface A: journal bytes changed across the fail-closed run' }
     if ($transportProven) {
         $after = Get-TransportState
         if ($after.HttpsAcl -ne $before.HttpsAcl -or $after.Bindings -ne $before.Bindings) { throw 'surface A: proven-owned transport state changed across a fail-closed run' }
-        Write-Host 'ok surface A: attributed exit 9, journal byte-identical, proven-owned transport unchanged'
+        Write-Host 'ok surface A: attributed exit 8 (journal fail-closed), journal byte-identical, proven-owned transport unchanged'
     } else {
-        Write-Host 'ok surface A: attributed exit 9, journal byte-identical (transport claim DEFERRED above)'
+        Write-Host 'ok surface A: attributed exit 8 (journal fail-closed), journal byte-identical (transport claim DEFERRED above)'
     }
 
     # --- Surface B: uninstall cleanup holds journal-held state, attributed ---
