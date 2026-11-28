@@ -20,7 +20,7 @@ internal sealed record UncertainEntry(string Key, string DisplayName, string Out
 /// <summary>A firewall rule this build created: its actual unique Name (a random key chosen at creation, never reused), the DisplayName, and the full property line read back right after creation.</summary>
 internal sealed record RuleEntry(string Key, string DisplayName, string Props);
 /// <summary>Verified=false: the task was registered but its read-back DACL could not be confirmed. It is journaled so the attempt is on record, but it is never auto-removed or refreshed (orphan cost), and uninstall says so.</summary>
-internal sealed record WatchdogEntry(string Task, string Sid, string Sddl, string Exe, bool Verified);
+internal sealed record WatchdogEntry(string Task, string Sid, string Sddl, string Exe, bool Verified, string? Note = null);
 
 internal static class LifecycleJournalStore
 {
@@ -210,7 +210,11 @@ internal static class WatchdogSetup
             if (after != TaskRead.Present || !SddlEquivalent(afterSddl, sddl))
             {
                 // No blind cleanup of what we just created: journal the attempt as unverified so it is on record, never auto-removed, never refreshed.
-                if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe, false)))
+                // Keep the earlier created-witness fields as history, but mark the CURRENT state uncertain: Verified=false means neither setup nor uninstall will refresh or delete it on the strength of that history.
+                var note = "read-back after " + ((flags & TaskUpdate) != 0 ? "update" : "create") + " was " + (after == TaskRead.Present ? "not the expected access list" : after.ToString()) + " at " + DateTime.UtcNow.ToString("O");
+                var prior = js == MarkerState.Present ? j?.Watchdog : null;
+                var uncertainEntry = prior != null ? prior with { Verified = false, Note = note } : new WatchdogEntry(TaskName, sid, sddl, exe, false, note);
+                if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, uncertainEntry))
                     Program.Log("the unverified watchdog attempt could NOT be journaled; it is recorded only here and will never be removed automatically (task " + TaskName + ", user " + sid + ").");
                 Program.Log("watchdog registered but its read-back access list is " + (after == TaskRead.Present ? "not the expected one" : "unreadable (" + after + ")") + ". Journaled as UNVERIFIED: it is left in place, not removed or refreshed by setup or uninstall (orphan cost: a task that may run after uninstall until an administrator removes it).");
                 return 6;

@@ -174,11 +174,11 @@ $dupType = $null
 try { New-NetFirewallRule -Name $keyProbe -DisplayName 'bm-dup-probe-never-created' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 59999 -ErrorAction Stop | Out-Null }
 catch { $dupErr = $_.Exception.Message; $dupType = $_.Exception.GetType().FullName; Write-Host "same-Name create error: type=$dupType id=$($_.FullyQualifiedErrorId) message=$dupErr" }
 if ($null -eq $dupErr) {
-    # Unexpected success: capture the actual fixture identity, remove ONLY rules carrying this harness-only DisplayName, then fail.
+    # Unexpected success: capture the actual identities and fail; nothing is cleaned up.
     $fx = @(Get-NetFirewallRule -DisplayName 'bm-dup-probe-never-created' -ErrorAction SilentlyContinue | ForEach-Object { 'Name=' + $_.Name })
     Write-Host ("UNEXPECTED SUCCESS of same-Name create; harness-named rules: " + ($fx -join ',') + "; existing key rule now: " + ((Get-NetFirewallRule -Name $keyProbe -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName }) -join ','))
-    Get-NetFirewallRule -DisplayName 'bm-dup-probe-never-created' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
-    throw "ASSERT FAILED: New-NetFirewallRule under an existing Name unexpectedly succeeded (create-only contract not observed)"
+    # No cleanup on purpose: the existing key rule may have been rewritten, so nothing is removed or repaired here (disposable runner); the job fails with the identities above.
+    throw "ASSERT FAILED: New-NetFirewallRule under an existing Name unexpectedly succeeded (create-only contract not observed); no cleanup attempted"
 }
 Assert ($dupType -match 'CimException' -and $dupErr -match 'already exists') "same-Name create failed with the already-exists error (type=$dupType): $dupErr"
 Assert ((Get-RuleObject 'bm-dup-probe-never-created').Count -eq 0) "the failed same-Name create left no new rule"
