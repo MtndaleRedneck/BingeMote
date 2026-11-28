@@ -107,7 +107,7 @@ function Get-Under([string[]]$roots, [string[]]$cmdMarks) {
   foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
     if ([int]$p.ProcessId -eq $PID) { continue }
     $hit = $false
-    if ($p.ExecutablePath) { foreach ($r in $roots) { if ($p.ExecutablePath.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { $hit = $true } } }
+    if ($p.ExecutablePath) { foreach ($r in $roots) { if ($p.ExecutablePath.StartsWith(($r.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) { $hit = $true } } }
     if ($p.CommandLine) { foreach ($m in $cmdMarks) { if ($m -and $p.CommandLine.IndexOf($m, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true } } }
     if ($hit) { $res += $p }
   }
@@ -128,7 +128,7 @@ function Get-State([string]$label, [string]$root, [string]$exePath) {
     $ps = @(Get-Under @($root) @())
     & $emit "PROCS-under-root count=$($ps.Count) (root=$root)"
     foreach ($p in $ps) { & $emit "  pid=$($p.ProcessId) ppid=$($p.ParentProcessId) path=$($p.ExecutablePath) cmd=$($p.CommandLine)" }
-    $other = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -like 'BingeMote*' -and (-not $_.ExecutablePath -or -not $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) })
+    $other = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -like 'BingeMote*' -and (-not $_.ExecutablePath -or -not $_.ExecutablePath.StartsWith(($root.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)) })
     & $emit "PROCS-BingeMote*-outside-root count=$($other.Count) (reported only, never stopped)"
     foreach ($p in $other) { & $emit "  pid=$($p.ProcessId) path=$($p.ExecutablePath)" }
   }
@@ -173,18 +173,40 @@ function Clean-Scoped([string]$label, [string]$root, [string[]]$marks, [int[]]$k
   }
   Write-Host "CLEAN[$label] stopped pids=[$($script:cKilled -join ',')]; final rescan: $($script:cEmpty) consecutive empty scans within ${boundSec}s bound (scope: exe under root or leg /LOG marker; later/other spawns are NOT excluded)"
 }
-# Remove task/Run only when they reference the isolated work root (scoped, never by name alone).
+# Remove task/Run only when the registered executable path is exactly under the isolated root
+# (root + '\' prefix on the parsed Command / first token; no loose substring identity). A delete is a
+# REQUEST: the script re-queries and reports, and does not claim completion (late/pending operations
+# on the ephemeral runner are not excluded).
+function Test-UnderRoot([string]$exe, [string]$root) {
+  if (-not $exe) { return $false }
+  $e = [Environment]::ExpandEnvironmentVariables($exe.Trim().Trim('"'))
+  return $e.StartsWith(($root.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)
+}
 function Clean-Persistence([string]$label, [string]$root) {
-  Try-Cap "$label persist" {
+  Try-Cap "$label persist-task" {
     $x = (& schtasks.exe /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String)
-    if ($LASTEXITCODE -eq 0 -and $x.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      $d = (& schtasks.exe /Delete /TN 'BingeMote Watchdog' /F 2>&1 | Out-String); Write-Host "PERSIST[$label] deleted task (references isolated root): rc=$LASTEXITCODE $d"
-    } else { Write-Host "PERSIST[$label] task not deleted (absent or not referencing isolated root)" }
+    if ($LASTEXITCODE -ne 0) { Write-Host "PERSIST[$label] task absent (rc=$LASTEXITCODE); nothing to delete" }
+    else {
+      $xml = [xml]$x.Substring($x.IndexOf('<'))
+      $cmds = @($xml.GetElementsByTagName('Command') | ForEach-Object { $_.InnerText })
+      Write-Host "PERSIST[$label] task Command value(s): $($cmds -join ' | ')"
+      if (@($cmds | Where-Object { Test-UnderRoot $_ $root }).Count -gt 0) {
+        $d = (& schtasks.exe /Delete /TN 'BingeMote Watchdog' /F 2>&1 | Out-String); Write-Host "PERSIST[$label] delete REQUESTED (Command exactly under isolated root): rc=$LASTEXITCODE $d"
+        $q = (& schtasks.exe /Query /TN 'BingeMote Watchdog' 2>&1 | Out-String); Write-Host "PERSIST[$label] re-query after delete rc=$LASTEXITCODE (completion not claimed; pending ops not excluded)"
+      } else { Write-Host "PERSIST[$label] task NOT deleted (no Command exactly under isolated root)" }
+    }
+  }
+  Try-Cap "$label persist-run" {
     $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction Stop
     $pr = $k.PSObject.Properties['BingeMote']
-    if ($pr -and ([string]$pr.Value).IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-      Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name BingeMote -ErrorAction Stop; Write-Host "PERSIST[$label] removed Run value (references isolated root)"
-    } else { Write-Host "PERSIST[$label] Run value not removed (absent or not referencing isolated root)" }
+    if (-not $pr) { Write-Host "PERSIST[$label] Run value absent" }
+    else {
+      $v = [string]$pr.Value
+      $first = if ($v.TrimStart().StartsWith('"')) { ($v.TrimStart() -split '"')[1] } else { ($v.Trim() -split '\s+')[0] }
+      Write-Host "PERSIST[$label] Run value=$v ; parsed exe=$first"
+      if (Test-UnderRoot $first $root) { Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name BingeMote -ErrorAction Stop; Write-Host "PERSIST[$label] Run value removed (exe exactly under isolated root)" }
+      else { Write-Host "PERSIST[$label] Run value NOT removed (exe not exactly under isolated root)" }
+    }
   }
 }
 function Sha($p) { if (Test-Path $p) { (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() } else { 'ABSENT' } }
