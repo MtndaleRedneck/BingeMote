@@ -32,7 +32,7 @@
 # binding, matching marker), every piece removed/restored in the finally
 # block. If neither is possible (foreign/partial state, or a plant failure),
 # the transport claim is reported DEFERRED - loudly - while the journal-hash
-# and attributed exit-9 assertions still run. Empty==empty is never a pass.
+# and attributed exit-8 assertions still run. Empty==empty is never a pass.
 #
 # Ownership-safe journal fixture: prior state of tls-journal.json (absent or
 # exact bytes) captured and restored in every finally block.
@@ -162,7 +162,7 @@ try {
             Install-OwnedFixture
             $transportProven = $true
         } catch {
-            $script:Deferred += "transport-hold claims DEFERRED: no proven-owned HTTPS reservation + binding + marker available and the disposable fixture could not be planted ($($_.Exception.Message)). Journal-retention and attributed exit-9 assertions still run."
+            $script:Deferred += "transport-hold claims DEFERRED: no proven-owned HTTPS reservation + binding + marker available and the disposable fixture could not be planted ($($_.Exception.Message)). Journal-retention and attributed exit-8 assertions still run."
         }
     }
 
@@ -170,7 +170,7 @@ try {
     $plantedHash = (Get-FileHash $Journal -Algorithm SHA256).Hash
     Write-Host "planted future-Kind journal (sha256 $plantedHash)"
 
-    # --- Surface A: setup fails closed, attributed exit 9, nothing mutated ---
+    # --- Surface A: setup fails closed, attributed exit 8 (TlsSetup 9 mapped), nothing mutated ---
     $before = Get-TransportState
     $logPos = Get-LogPositions
     # Process exit is 8, not 9: RunElevatedCore maps any nonzero TlsSetup.Run
