@@ -14,7 +14,9 @@ namespace BingeMoteHelper;
 /// created by an earlier version, by anyone else, or one whose creation could not be journaled is
 /// never in this file and is never deleted. Admin-vs-admin replacement is NOT prevented: an
 /// administrator can edit this file and the objects alike.</summary>
-internal sealed record LifecycleJournal(int Version, List<string> Rules, bool UrlAcl, WatchdogEntry? Watchdog);
+internal sealed record LifecycleJournal(int Version, List<RuleEntry> Rules, bool UrlAcl, WatchdogEntry? Watchdog);
+/// <summary>A firewall rule this build created: its actual unique Name (a random key chosen at creation, never reused), the DisplayName, and the full property line read back right after creation.</summary>
+internal sealed record RuleEntry(string Key, string DisplayName, string Props);
 internal sealed record WatchdogEntry(string Task, string Sid, string Sddl, string Exe);
 
 internal static class LifecycleJournalStore
@@ -30,7 +32,7 @@ internal static class LifecycleJournalStore
             if (path == null && !ProtectedFile.DirTrusted(ProtectedFile.Dir)) return (MarkerState.Corrupt, null);
             var j = JsonSerializer.Deserialize<LifecycleJournal>(File.ReadAllText(p));
             if (j != null && j.Version == 1 && j.Rules != null
-                && j.Rules.All(n => FirewallSetup.ExpectedRules.Any(r => r.Name == n))
+                && j.Rules.All(e => e != null && Regex.IsMatch(e.Key ?? "", "^BingeMote-[0-9a-f]{32}$") && FirewallSetup.ExpectedRules.Any(r => r.Name == e.DisplayName) && !string.IsNullOrEmpty(e.Props))
                 && (j.Watchdog == null || (WatchdogSetup.SidAcceptable(j.Watchdog.Sid) && j.Watchdog.Task == WatchdogSetup.TaskName)))
                 return (MarkerState.Present, j);
             return (MarkerState.Corrupt, null);
@@ -39,14 +41,14 @@ internal static class LifecycleJournalStore
     }
 
     /// <summary>Merge new entries into the journal. Returns false (and logs) when it could not be written; the objects then stay un-journaled, which means they are never deleted.</summary>
-    internal static bool Merge(IEnumerable<string> rules, bool urlAcl, WatchdogEntry? watchdog)
+    internal static bool Merge(IEnumerable<RuleEntry> rules, bool urlAcl, WatchdogEntry? watchdog)
     {
         try
         {
             var (st, cur) = Read();
             if (st == MarkerState.Corrupt) { Program.Log("lifecycle journal is unreadable or untrusted; not updated. New objects stay un-journaled (never auto-removed)."); return false; }
             var merged = new LifecycleJournal(1,
-                (cur?.Rules ?? new List<string>()).Concat(rules).Distinct().ToList(),
+                (cur?.Rules ?? new List<RuleEntry>()).Concat(rules).DistinctBy(e => e.Key).ToList(),
                 (cur?.UrlAcl ?? false) || urlAcl,
                 watchdog ?? cur?.Watchdog);
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(merged));
@@ -206,7 +208,7 @@ internal static class WatchdogSetup
                 Program.Log("watchdog registered but its read-back access list is not the expected one; NOT journaled, so it will not be auto-removed.");
                 return 6;
             }
-            LifecycleJournalStore.Merge(Array.Empty<string>(), false, new WatchdogEntry(TaskName, sid, sddl, exe));
+            LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe));
             Program.Log("watchdog registered for the installing user (limited token, admin-only write).");
             return 0;
         }

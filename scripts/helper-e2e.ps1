@@ -159,6 +159,17 @@ if ($LASTEXITCODE -ne 0) {
 Assert ((Get-LegacyRuleText) -ceq $script:LegacyRuleBefore) "upgrade left the legacy 'BingeMote' firewall rule(s) byte-identical (name-based readback)"
 Assert ((Get-LegacyHttpBlock) -ceq $script:LegacyHttpBefore) "upgrade left the legacy http://+:8488/ reservation byte-identical"
 Assert-BingeRulesExact 'after upgrade'
+# Explicit unique Name keys, and the documented create-only contract observed on this runner: creating under an existing Name must error and change nothing.
+foreach ($e in $script:BingeRules) {
+    $o = Get-RuleObject $e.Name
+    Assert ($o.Count -eq 1 -and $o[0].Name -cmatch '^BingeMote-[0-9a-f]{32}$') "rule '$($e.Name)' carries a unique key Name (BingeMote-<32 hex>), not its DisplayName"
+}
+$keyProbe = (Get-RuleObject $script:BingeRules[0].Name)[0].Name
+$dupErr = $null
+try { New-NetFirewallRule -Name $keyProbe -DisplayName 'bm-dup-probe-never-created' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 59999 -ErrorAction Stop | Out-Null } catch { $dupErr = $_.Exception.Message }
+Assert ($null -ne $dupErr) "New-NetFirewallRule under an existing Name fails (create-only contract observed): $dupErr"
+Assert ((Get-RuleObject 'bm-dup-probe-never-created').Count -eq 0) "the failed same-Name create left no new rule"
+Assert-BingeRulesExact 'after same-Name create attempt (unchanged)'
 Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "upgrade left the legacy 'BingeMote Watchdog' task definition identical"
 # Product watchdog (installer step --install-watchdog). On a hosted runner the install session may not be a signed-in user session, so either outcome is recorded and only the two valid ones pass.
 $wdLogPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'

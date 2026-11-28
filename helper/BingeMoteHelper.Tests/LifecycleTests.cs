@@ -57,9 +57,10 @@ public class LifecycleTests
         try
         {
             var f = Path.Combine(dir, "lifecycle.json");
-            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[\"BingeMote\"],\"UrlAcl\":false,\"Watchdog\":null}");
-            Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);
-            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[\"" + FirewallSetup.ExpectedRules[0].Name + "\"],\"UrlAcl\":true,\"Watchdog\":null}");
+            var good = "{\"Key\":\"BingeMote-" + new string('a', 32) + "\",\"DisplayName\":\"" + FirewallSetup.ExpectedRules[0].Name + "\",\"Props\":\"True|Inbound\"}";
+            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[{\"Key\":\"BingeMote\",\"DisplayName\":\"BingeMote\",\"Props\":\"x\"}],\"UrlAcl\":false,\"Watchdog\":null}");
+            Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);   // a display name or legacy key is not a journal key
+            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[" + good + "],\"UrlAcl\":true,\"Watchdog\":null}");
             Assert.Equal(MarkerState.Present, LifecycleJournalStore.Read(f).state);
             File.WriteAllText(f, "{\"Version\":1,\"Rules\":[],\"UrlAcl\":false,\"Watchdog\":{\"Task\":\"BingeMote Watchdog\",\"Sid\":\"" + Sid + "\",\"Sddl\":\"x\",\"Exe\":\"x\"}}");
             Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);   // legacy task name is never journal-eligible

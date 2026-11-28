@@ -69,7 +69,7 @@ internal static class FirewallSetup
             }
             TlsStepDone = true;
             // New-named, create-only rules (see EnsureRules); the pre-1.10 "BingeMote"/"BingeMote Helper" rules are neither read nor deleted.
-            var createdRules = new List<string>();
+            var createdRules = new List<RuleEntry>();
             try { EnsureRules(createdRules); }
             finally { if (createdRules.Count > 0) LifecycleJournalStore.Merge(createdRules, false, null); }   // journal what THIS run created, even if a later rule then fails
             // VLC's web remote needs inbound too: one Private-networks-only rule for vlc.exe.
@@ -119,7 +119,7 @@ internal static class FirewallSetup
                     Console.Error.WriteLine("The listen permission could not be added.");
                     return 3;
                 }
-                LifecycleJournalStore.Merge(Array.Empty<string>(), true, null);   // create-only add succeeded and reads back exact
+                LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), true, null);   // create-only add succeeded and reads back exact
             }
             if (!RulesExist())
             {
@@ -222,22 +222,22 @@ internal static class FirewallSetup
     }
 
     /// <summary>Adds each BingeMote rule that is absent. Semantics, exactly: for each of four fixed names the rule is read first; no rule of that name -> add it; exactly one rule that matches the expected parameters -> keep it; anything else (a duplicate, a disabled or differently-scoped rule of that name) -> FAIL setup and change nothing. This is read-then-add, NOT an atomic create-only primitive: two concurrent setups could both add and leave duplicates, which RulesExist then refuses to accept. Nothing is ever deleted or rewritten. Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
-    private static void EnsureRules(List<string> created)
+    private static void EnsureRules(List<RuleEntry> created)
     {
         foreach (var r in ExpectedRules)
         {
             var state = ReadAll()[r.Name];
             if (state == RuleState.Absent)
             {
-                int code;
-                if (r.Profile == "Private")
-                    code = Run("netsh", $"advfirewall firewall add rule name=\"{r.Name}\" dir=in action=allow protocol={r.Protocol} localport={r.Port} profile=private");
-                else
-                    code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
-                        $"New-NetFirewallRule -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile Public -RemoteAddress {r.Remote} -ErrorAction Stop | Out-Null")));
+                // One create path for all four rules: New-NetFirewallRule with an explicit unique -Name key chosen now. Documented contract: only one rule with a given Name can exist in a store, so a
+                // create under an existing Name is an error, not a replacement, and nothing can be adopted. Private rules: remote Any (the default). Public rules: LocalSubnet4.
+                var key = "BingeMote-" + Guid.NewGuid().ToString("N");
+                var remote = r.Remote == "Any" ? "" : " -RemoteAddress " + r.Remote;
+                var code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
+                    $"New-NetFirewallRule -Name '{key}' -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile {r.Profile}{remote} -ErrorAction Stop | Out-Null")));
                 if (code != 0) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}");
                 state = ReadAll()[r.Name];
-                if (state == RuleState.Exact) created.Add(r.Name);   // absent before, our add succeeded, read back exact
+                if (state == RuleState.Exact && ReadByKey(key) is { Found: Found.One } rb && rb.Display == r.Name) created.Add(new RuleEntry(key, r.Name, rb.Props));   // absent before, our create under a fresh key succeeded, read back exact
             }
             if (state != RuleState.Exact)
             {
@@ -536,21 +536,52 @@ internal static class FirewallSetup
         return TlsSetup.Remove(Program.HttpPort);
     }
 
-    /// <summary>Removes only the journaled firewall rules (each while it still reads back Exact: one enabled rule of the expected shape) and the journaled watchdog task (while its access list is unchanged). Everything else, including rules from older versions, stays. Admin-vs-admin: this is read-then-delete, so an administrator editing in between is not excluded.</summary>
+    internal enum Found { Absent, One, Dup, Unreadable }
+    internal sealed record KeyRead(Found Found, string Display, string Props);
+
+    /// <summary>Reads one rule by its actual Name key (not DisplayName): Props is the full property line (enabled, direction, action, profile, protocol, ports, addresses, program, service, edge traversal).</summary>
+    internal static KeyRead ReadByKey(string key)
+    {
+        var bad = new KeyRead(Found.Unreadable, "", "");
+        if (!Regex.IsMatch(key, "^BingeMote-[0-9a-f]{32}$")) return bad;
+        var script =
+            "$ErrorActionPreference='Stop'; try { $all=@(Get-NetFirewallRule) } catch { 'ERR'; exit 0 }; " +
+            "try { $r=@($all | Where-Object { $_.Name -ceq '" + key + "' }); " +
+            "if ($r.Count -eq 0) { 'ABSENT'; exit 0 }; if ($r.Count -ne 1) { 'DUP'; exit 0 }; $x=$r[0]; " +
+            "$p=$x|Get-NetFirewallPortFilter; $a=$x|Get-NetFirewallAddressFilter; $ap=$x|Get-NetFirewallApplicationFilter; $sv=$x|Get-NetFirewallServiceFilter; " +
+            "'ONE|'+$x.DisplayName+'|'+$x.Enabled+'|'+$x.Direction+'|'+$x.Action+'|'+$x.Profile+'|'+$p.Protocol+'|'+($p.LocalPort -join ',')+'|'+($p.RemotePort -join ',')+'|'+($a.RemoteAddress -join ',')+'|'+($a.LocalAddress -join ',')+'|'+$ap.Program+'|'+$sv.Service+'|'+$x.EdgeTraversalPolicy } catch { 'ERR' }";
+        try
+        {
+            var psi = new ProcessStartInfo("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
+            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+            using var p = Process.Start(psi)!;
+            var read = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } return bad; }
+            var line = read.GetAwaiter().GetResult().Trim();
+            if (line == "ABSENT") return new KeyRead(Found.Absent, "", "");
+            if (line == "DUP") return new KeyRead(Found.Dup, "", "");
+            if (!line.StartsWith("ONE|")) return bad;
+            var f = line.Split('|');
+            return f.Length == 14 ? new KeyRead(Found.One, f[1], string.Join("|", f.Skip(2))) : bad;
+        }
+        catch { return bad; }
+    }
+
+    /// <summary>Removes only the firewall rules this build journaled, by their actual unique Name key: the rule must read back as exactly one rule under that key with the journaled DisplayName and the journaled full property line, then Remove-NetFirewallRule -Name key. Anything else (changed, duplicated, unreadable) is left and logged, and stays in the journal. Documented limit: read-then-delete is not atomic, so an administrator changing the rule between the read and the delete is not excluded; this is a provenance check within the administrator boundary, not an identity guarantee and not a race fix. The watchdog task is handled the same way by its journaled DACL.</summary>
     private static void RemoveJournaledObjects(MarkerState ls, LifecycleJournal? lj, bool urlAclGone)
     {
         if (ls == MarkerState.Absent) { Program.Log("uninstall cleanup: no lifecycle journal; firewall rules and watchdog task left as found."); return; }
         if (ls == MarkerState.Corrupt || lj == null) { Program.Log("uninstall cleanup: lifecycle journal unreadable; firewall rules and watchdog task left."); return; }
-        var keepRules = new List<string>();
-        var states = lj.Rules.Count > 0 ? ReadAll() : new Dictionary<string, RuleState>();
-        foreach (var n in lj.Rules)
+        var keepRules = new List<RuleEntry>();
+        foreach (var e in lj.Rules)
         {
-            if (states.TryGetValue(n, out var st) && st == RuleState.Absent) continue;
-            if (states.TryGetValue(n, out st) && st == RuleState.Exact
+            var now = ReadByKey(e.Key);
+            if (now.Found == Found.Absent) continue;   // already gone: nothing to remove
+            if (now.Found == Found.One && now.Display == e.DisplayName && now.Props == e.Props
                 && Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
-                    "$ErrorActionPreference='Stop'; Remove-NetFirewallRule -DisplayName '" + n + "'"))) == 0) continue;
-            Program.Log("uninstall cleanup: firewall rule '" + n + "' left (not provably unchanged, or removal failed).");
-            keepRules.Add(n);
+                    "$ErrorActionPreference='Stop'; Remove-NetFirewallRule -Name '" + e.Key + "'"))) == 0) continue;
+            Program.Log("uninstall cleanup: firewall rule '" + e.DisplayName + "' (key " + e.Key + ") left (" + now.Found + ", not provably unchanged, or removal failed).");
+            keepRules.Add(e);
         }
         var keepWatchdog = lj.Watchdog != null && !WatchdogSetup.RemoveJournaled(lj.Watchdog) ? lj.Watchdog : null;
         LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog));
