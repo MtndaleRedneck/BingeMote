@@ -285,7 +285,7 @@ fun SetupScreen(
                     Spacer(Modifier.height(10.dp))
                     Text("2. Windows may warn about an unrecognized app. Click \"More info\", then \"Run anyway\". BingeMote PC is built by the same project as this app.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("3. The installer asks for Windows permission once during install - that is the only admin prompt, and it only adds firewall rules for BingeMote (and VLC's web control) on your local network.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
+                    Text("3. The installer asks for Windows permission once during install - that is the only admin prompt, and it adds the Windows firewall rules BingeMote and VLC web control need to connect to your phone.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                     Spacer(Modifier.height(10.dp))
                     Text("4. Leave BingeMote running (it sits in the tray, by the clock, and starts with Windows). Open it, type a name under Pair new phone, and tap Pair - it shows a code for the next step.", color = TextC, fontSize = 14.sp, lineHeight = 20.sp)
                 }
