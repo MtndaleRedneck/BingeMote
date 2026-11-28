@@ -254,8 +254,8 @@ class AutomaticOnlySetupTest {
             if (before != null && before.preconditionProblem() == null) {
                 // Run 46154390375: read#0 satisfied the precondition, then the very next read (the final gate) found the
                 // pair-code label gone, and the saved hierarchy mixed scrolled and unscrolled positions, so the page
-                // was still moving or the tree was mid-update. Accept the state only if it holds across a settle
-                // (idle + 400 ms) with the same address-label and pair-code-label bounds on a second fresh read.
+                // was still moving or the tree was mid-update (cause not observed).
+                val b0: SetupView = before
                 // Motion trace: 4 fresh reads 250 ms apart. The state is accepted only if every read satisfies the
                 // precondition with the same address-label and pair-code-label bounds as read#N; each sample's
                 // address-label top and pair-code-label presence is traced so a moving page is visible in the failure.
@@ -266,7 +266,7 @@ class AutomaticOnlySetupTest {
                     Thread.sleep(250)
                     val again = readSetup()
                     val same = again != null && again.preconditionProblem() == null &&
-                        again.f?.rect == before.f?.rect && again.l.firstOrNull()?.rect == before.l.firstOrNull()?.rect
+                        again.f?.rect == b0.f?.rect && again.l.firstOrNull()?.rect == b0.l.firstOrNull()?.rect
                     samples.append(" s").append(k).append("=").append(if (again == null) "none" else "Ftop:" + again.f?.rect?.top + ",L:" + (again.l.firstOrNull() != null) + ",ok:" + same)
                     if (!same) stable = false
                 }
