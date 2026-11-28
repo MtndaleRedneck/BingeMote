@@ -5,6 +5,52 @@ $ErrorActionPreference = 'Stop'
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
+# === ISOLATED SUPERSESSION PROOF BRANCH ONLY - NOT FOR MERGE =================
+# This branch replaces the product e2e with the isolated [UninstallRun] "delacl"
+# supersession proof and the journal old-reader proof (finite/I2 review route:
+# content-only change, NO workflow edits; dispatched via build.yml only=pc-e2e
+# on the existing Windows runner). The product legs below do not run here.
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'preflight: proof requires an elevated runner (netsh urlacl mutations)' }
+netsh http show urlacl | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'preflight: netsh http show urlacl failed' }
+New-Item -ItemType Directory -Force helper/e2e-diag | Out-Null
+pwsh -File scripts/iss-lint.ps1
+if ($LASTEXITCODE -ne 0) { throw 'iss-lint failed' }
+# The baseline is an ACTUAL content build, produced earlier in this same job by
+# the "Build the real 1.9.1 installer (upgrade baseline)" step: the API-verified
+# pinned commit refs/tags/pc-v1.9.1 resolves to, built from its own source with
+# no hooks, copied to helper/Output-old. Verify the producer's output AND the
+# baseline identity here rather than trusting a path.
+$oldPkg = (Get-ChildItem 'helper/Output-old/BingeMote-PC-*.exe' | Select-Object -First 1).FullName
+$newPkg = (Get-ChildItem 'helper/Output/BingeMote-PC-*.exe' | Select-Object -First 1).FullName
+if (-not $oldPkg) { throw 'preflight: baseline installer missing in helper/Output-old - the job''s pinned-1.9.1 baseline build step did not produce it' }
+if (-not $newPkg) { throw 'preflight: new installer missing in helper/Output - the job''s installer build step did not produce it' }
+$oldName = [IO.Path]::GetFileName($oldPkg)
+if ($oldName -notmatch '1\.9\.1') { throw "preflight: baseline installer '$oldName' is not the pinned 1.9.1 content build" }
+pwsh -File scripts/iss-supersession-proof.ps1 -OldInstaller $oldPkg -NewInstaller $newPkg
+$proofExit = $LASTEXITCODE
+# Valid-deserialize control for the journal leg: the isolated ACTUAL-reader
+# test seam (known Kind -> Present, unknown Kind -> Corrupt, malformed ->
+# Corrupt). A real Fresh-Kind setup run is NOT the control - it can mutate.
+dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj --filter 'FullyQualifiedName~JournalOldReaderFixture'
+if ($LASTEXITCODE -ne 0) { throw 'journal reader fixture tests failed' }
+# Journal leg needs the fixed build installed; the supersession legs all end
+# uninstalled, so install it here and uninstall after.
+& $newPkg /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-install.log" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "journal-leg install failed ($LASTEXITCODE)" }
+pwsh -File scripts/journal-oldreader-proof.ps1
+$journalExit = $LASTEXITCODE
+$unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
+if (Test-Path $unins) { & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-uninstall.log" | Out-Null }
+Copy-Item helper/supersession-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
+Copy-Item helper/journal-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
+if ($proofExit -ne 0) { throw "supersession proof failed ($proofExit); logs under helper/e2e-diag" }
+if ($journalExit -ne 0) { throw "journal old-reader proof failed ($journalExit); logs under helper/e2e-diag" }
+Write-Host '== isolated proofs green =='
+exit 0
+# === END ISOLATED PROOF BRANCH ==============================================
+
 # The plaintext baseline leg speaks http; once the one-time secure setup has run the
 # helper serves HTTPS only, and every later call goes over TLS. The identity is the
 # product's self-signed pairing key: on loopback CI checks reachability and auth codes,

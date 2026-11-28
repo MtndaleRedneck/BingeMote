@@ -65,7 +65,15 @@ Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 [UninstallRun]
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
-Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
+; Neutralized inherited cleanup. Every installer since the delacl entry was introduced
+; recorded a blind "netsh http delete urlacl" here under RunOnceId "delacl", and merged
+; uninstall logs execute only the LATEST entry per case-sensitive RunOnceId - so this inert
+; entry supersedes the blind delete on any chain whose latest install is this build or newer.
+; HTTP removal at uninstall is owned by the helper's classified cleanup, never by a blind
+; [UninstallRun] command. The RunOnceId value "delacl" (exact, lowercase) is reserved for
+; this inert entry; scripts/iss-lint.ps1 fails the build if a destructive uninstall command
+; or an un-ID'd [UninstallRun] entry ever returns.
+Filename: "{cmd}"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
 
 [Code]
 // TLS transport cleanup runs as the newest install's own compiled logic, while the exe
