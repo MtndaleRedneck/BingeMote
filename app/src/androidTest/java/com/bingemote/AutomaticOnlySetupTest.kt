@@ -256,12 +256,21 @@ class AutomaticOnlySetupTest {
                 // pair-code label gone, and the saved hierarchy mixed scrolled and unscrolled positions, so the page
                 // was still moving or the tree was mid-update. Accept the state only if it holds across a settle
                 // (idle + 400 ms) with the same address-label and pair-code-label bounds on a second fresh read.
-                device.waitForIdle(); Thread.sleep(400)
-                val again = readSetup()
-                val stable = again != null && again.preconditionProblem() == null &&
-                    again.f?.rect == before.f?.rect && again.l.firstOrNull()?.rect == before.l.firstOrNull()?.rect
-                trace.append("settle-check#").append(nudges).append(": stable=").append(stable).append(' ')
-                    .append(if (again == null) "no snapshot" else again.describe()).append('\n')
+                // Motion trace: 4 fresh reads 250 ms apart. The state is accepted only if every read satisfies the
+                // precondition with the same address-label and pair-code-label bounds as read#N; each sample's
+                // address-label top and pair-code-label presence is traced so a moving page is visible in the failure.
+                device.waitForIdle()
+                var stable = true
+                val samples = StringBuilder()
+                repeat(4) { k ->
+                    Thread.sleep(250)
+                    val again = readSetup()
+                    val same = again != null && again.preconditionProblem() == null &&
+                        again.f?.rect == before.f?.rect && again.l.firstOrNull()?.rect == before.l.firstOrNull()?.rect
+                    samples.append(" s").append(k).append("=").append(if (again == null) "none" else "Ftop:" + again.f?.rect?.top + ",L:" + (again.l.firstOrNull() != null) + ",ok:" + same)
+                    if (!same) stable = false
+                }
+                trace.append("settle-check#").append(nudges).append(": stable=").append(stable).append(samples).append('\n')
                 if (stable) break
                 nudges++; continue
             }
