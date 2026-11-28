@@ -144,7 +144,7 @@ internal static class Movies
 
     /// <summary>VLC's web interface listens on every address, so a phone that reaches the PC
     /// over a different address (VPN off/on, IPv6, a second adapter) still finds it. Guarded by
-    /// the interface password and the Private-networks-only firewall rule for vlc.exe.</summary>
+    /// the interface password and the journaled firewall rules for vlc.exe.</summary>
     private static string BindAddress(IPAddress addr) => "0.0.0.0";
 
     /// <summary>Where is vlc.exe: Windows App Paths first, then the two usual install folders.</summary>

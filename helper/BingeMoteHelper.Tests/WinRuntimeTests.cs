@@ -66,17 +66,6 @@ public sealed class WinRuntimeTests : IDisposable
                      FirewallSetup.UrlAclExists());
     }
 
-    // T-W2: profile detection against the runner's real default route.
-    [Fact]
-    public void TW2_DefaultRouteProfileIsRealAndClassified()
-    {
-        var p = NetworkCheck.DefaultRouteProfile();
-        Assert.NotNull(p);
-        Assert.False(string.IsNullOrWhiteSpace(p!.Name));
-        Assert.Contains(p.Category, new[] { "Public", "Private", "DomainAuthenticated" });
-        Assert.True(p.InterfaceIndex > 0);
-    }
-
     // T-W4: File.Replace preserves destination ACL + metadata on a real Windows file.
     [Fact]
     public void TW4_VlcrcRewritePreservesAclAndCreationTime()

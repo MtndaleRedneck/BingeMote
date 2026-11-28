@@ -25,8 +25,7 @@ internal static class DialogCapture
         using var owner = new Form { Text = "Dialog test owner", Location = new Point(0, 0), StartPosition = FormStartPosition.Manual };
         owner.Show();
         Capture("confirm", () => ConfirmDialog.Ask(owner, "Remove Test phone? It stops controlling this PC right away. You can pair it again any time with a new code.", "Remove"));
-        Capture("note", () => NoteDialog.Show(owner, "This Wi-Fi is now marked as Private."));
-        Capture("wifi", () => { using var dlg = new WifiDialog(new NetProfile { Name = "Test home network", Category = "Public" }); dlg.ShowDialog(owner); });
+        Capture("note", () => NoteDialog.Show(owner, "Test note."));
         CheckKey("enter", "{ENTER}");
         CheckKey("escape", "{ESC}");
         owner.Close();

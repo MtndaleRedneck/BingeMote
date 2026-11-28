@@ -29,8 +29,9 @@ internal static class Program
     internal const string RuleTcpPublic = "BingeMote TLS 8490 Public LocalSubnet";
     internal const string RuleUdpPublic = "BingeMote Discovery 8489 Public LocalSubnet";
 
-    /// <summary>Private-networks-only inbound rule for vlc.exe (the web remote the app sets up).</summary>
-    internal const string VlcFirewallRule = "BingeMote VLC";
+    /// <summary>Journaled inbound rules for vlc.exe (the web remote the phone dials directly): Private = program only, Public = program + TCP + vlcrc http-port + LocalSubnet4.</summary>
+    internal const string RuleVlcPrivate = "BingeMote VLC Private";
+    internal const string RuleVlcPublic = "BingeMote VLC Public LocalSubnet";
     /// <summary>The 1.x rule name, removed by the firewall setup so upgrades do not leave it behind.</summary>
     internal const string LegacyFirewallRule = "BingeMote Helper";
 
@@ -109,11 +110,6 @@ internal static class Program
     internal static string? PendingPhoneName;
     /// <summary>The window re-reads the phone list on the UI thread when this fires (any thread).</summary>
     internal static Action? PhonesChanged;
-    /// <summary>Wi-Fi names where he chose "Not now" on the public-network prompt; not asked again.</summary>
-    internal static readonly List<string> DeclinedNetworks = new();
-    /// <summary>Wi-Fi names he marked as home. A home network is never buried by "Not now":
-    /// if it shows as Public again, it is asked about again.</summary>
-    internal static readonly List<string> HomeNetworks = new();
     /// <summary>More phones than this on one PC is a mistake, not a household.</summary>
     internal const int MaxPhones = 8;
     internal static bool Paired => PhonesCount > 0;
@@ -217,15 +213,7 @@ internal static class Program
             return 0;
         }
 
-        // CI-only, disposable runner only: click the real popup and strip buttons and read the real category back.
-        if (args.Contains("--wifi-click-proof"))
-        {
-            Directory.CreateDirectory(DataDir);
-            LoadConfig();
-            return HelperWindow.ProofClickThrough(Environment.GetEnvironmentVariable("BINGEMOTE_CLICK_PROOF") ?? "wifi-click-proof.log");
-        }
-
-        // CI-only: render the window (Wi-Fi strip + first-run line visible) to a PNG and exit.
+        // CI-only: render the window (first-run line visible) to a PNG and exit.
         if (args.Contains("--window-shot"))
         {
             Directory.CreateDirectory(DataDir);
@@ -552,7 +540,7 @@ internal static class Program
             {
                 StoreBroken = true;
                 StoreBrokenReason = "is damaged";
-                lock (PhonesLock) { Phones.Clear(); DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+                lock (PhonesLock) { Phones.Clear(); MoviesFolder = null; }
                 Log(unreadableName != null
                     ? "A saved phone record (\"" + unreadableName + "\") has no token. The file is left untouched; pairing and saving are off until it is examined."
                     : "A saved phone record is unreadable. The file is left untouched; pairing and saving are off until it is examined.");
@@ -561,21 +549,7 @@ internal static class Program
             lock (PhonesLock)
             {
             Phones.Clear();
-            DeclinedNetworks.Clear();
-            HomeNetworks.Clear();
             Phones.AddRange(parsedPhones);
-            if (doc.RootElement.TryGetProperty("declinedNetworks", out var dn))
-                foreach (var n in dn.EnumerateArray())
-                {
-                    var v = n.GetString();
-                    if (!string.IsNullOrWhiteSpace(v)) DeclinedNetworks.Add(v);
-                }
-            if (doc.RootElement.TryGetProperty("homeNetworks", out var hn))
-                foreach (var n in hn.EnumerateArray())
-                {
-                    var v = n.GetString();
-                    if (!string.IsNullOrWhiteSpace(v)) HomeNetworks.Add(v);
-                }
             MoviesFolder = doc.RootElement.TryGetProperty("moviesFolder", out var mf) ? mf.GetString() : null;
             KeepAwakeEnabled = !doc.RootElement.TryGetProperty("keepAwake", out var ka) || ka.ValueKind != JsonValueKind.False;
             VolumeOsdEnabled = !doc.RootElement.TryGetProperty("volumeOsd", out var vo) || vo.ValueKind != JsonValueKind.False;
@@ -597,7 +571,7 @@ internal static class Program
         {
             StoreBroken = true;
             StoreBrokenReason = ex is System.Text.Json.JsonException ? "is damaged" : "could not be read";
-            lock (PhonesLock) { Phones.Clear(); DeclinedNetworks.Clear(); HomeNetworks.Clear(); MoviesFolder = null; }
+            lock (PhonesLock) { Phones.Clear(); MoviesFolder = null; }
             Log("Saved pairing data could not be read (" + ex.GetType().Name + "). The file is left untouched; pairing and saving are off until it is examined.");
         }
         // A vlcrc write that was waiting for VLC to close survives a helper restart:
@@ -658,8 +632,6 @@ internal static class Program
                     moviesFolder = MoviesFolder,
                     keepAwake = KeepAwakeEnabled,
                     volumeOsd = VolumeOsdEnabled,
-                    declinedNetworks = DeclinedNetworks.ToArray(),
-                    homeNetworks = HomeNetworks.ToArray(),
                     lastRunVersion = LastRunVersion,
                 });
             }

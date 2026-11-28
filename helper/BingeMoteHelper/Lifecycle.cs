@@ -35,7 +35,7 @@ internal static class LifecycleJournalStore
             if (path == null && !ProtectedFile.DirTrusted(ProtectedFile.Dir)) return (MarkerState.Corrupt, null);
             var j = JsonSerializer.Deserialize<LifecycleJournal>(File.ReadAllText(p));
             if (j != null && j.Version == 1 && j.Rules != null && j.Uncertain != null && j.Uncertain.All(u => u != null && Regex.IsMatch(u.Key ?? "", @"\ABingeMote-[0-9a-f]{32}\z") && !string.IsNullOrEmpty(u.Outcome))
-                && j.Rules.All(e => e != null && Regex.IsMatch(e.Key ?? "", @"\ABingeMote-[0-9a-f]{32}\z") && FirewallSetup.ExpectedRules.Any(r => r.Name == e.DisplayName) && !string.IsNullOrEmpty(e.Props))
+                && j.Rules.All(e => e != null && Regex.IsMatch(e.Key ?? "", @"\ABingeMote-[0-9a-f]{32}\z") && FirewallSetup.JournalableNames.Contains(e.DisplayName) && !string.IsNullOrEmpty(e.Props))
                 && (j.Watchdog == null || (WatchdogSetup.SidAcceptable(j.Watchdog.Sid) && j.Watchdog.Task == WatchdogSetup.TaskName)))
                 return (MarkerState.Present, j);
             return (MarkerState.Corrupt, null);

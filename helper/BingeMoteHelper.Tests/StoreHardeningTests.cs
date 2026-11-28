@@ -84,7 +84,6 @@ public class ConfigSaveRollbackTests : IDisposable
         Program.RedirectDataDirForTests(_dir);
         Program.StoreBroken = false;
         lock (Program.PhonesLock) { Program.Phones.Clear(); }
-        Program.DeclinedNetworks.Clear(); Program.HomeNetworks.Clear();
         Program.MoviesFolder = @"C:\Movies"; Program.KeepAwakeEnabled = true; Program.VolumeOsdEnabled = true;
     }
 
@@ -92,7 +91,6 @@ public class ConfigSaveRollbackTests : IDisposable
     {
         Program.StoreBroken = false;
         lock (Program.PhonesLock) { Program.Phones.Clear(); }
-        Program.DeclinedNetworks.Clear(); Program.HomeNetworks.Clear();
         Program.MoviesFolder = null; Program.KeepAwakeEnabled = true; Program.VolumeOsdEnabled = true;
         Program.ResetDataDirForTests();
         try { Directory.Delete(_dir, true); } catch { }

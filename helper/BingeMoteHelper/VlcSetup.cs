@@ -71,7 +71,7 @@ internal static class VlcSetup
         Upsert(lines, "extraintf", MergeValue(FindValue(lines, "extraintf"), "http"));
         Upsert(lines, "http-password", password);
         // Listen on every address (not just localhost) so a hand-opened VLC takes the phone
-        // too; the password and the Private-only firewall rule guard it.
+        // too; the password and the vlc.exe firewall rules (Private; Public subnet-only) guard it.
         Upsert(lines, "http-host", "0.0.0.0");
         // E5.3: the merged state is already on disk - no write and no deferral (a running VLC
         // read exactly this vlcrc at startup, so control already works now). Any pending value

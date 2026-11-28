@@ -60,12 +60,19 @@ release downloads, to tell them apart from the phone app.
 - Input playback is `SendInput`, serialized behind one lock so two phones tapping at the
   same instant cannot interleave a gesture: relative mouse moves, button down/up, wheel
   for scroll, Ctrl+wheel for zoom, unicode key events for typed text.
-- Firewall: the installer (admin) adds the Private-profile rule (TCP 8488, UDP 8489) and
-  the HTTP listen permission during install, and removes both on uninstall; the 1.x rule
-  ("BingeMote Helper") is removed in favor of "BingeMote". Run outside the installer, the
-  exe does the same setup itself on first run with one UAC prompt, verifies both with
-  `netsh`, and writes a marker file so it never asks again. A launch that finds the rule already present just
-  writes the marker - no prompt.
+- Firewall: setup (one UAC prompt, run by the installer or by the exe on first run) adds new,
+  uniquely named inbound allow rules with `New-NetFirewallRule`: TCP 8490 and UDP 8489 for
+  Private networks (any device) and for Public networks (this PC's own subnet only,
+  `LocalSubnet4`). When VLC is installed it also adds a rule for `vlc.exe` on Private networks
+  and a rule for `vlc.exe` + TCP + VLC's web port (vlcrc `http-port`, default 8080) on Public
+  networks, subnet only. BingeMote never changes your Windows network type (Private/Public).
+  Setup never deletes or rewrites a rule it did not create, including rules from older
+  versions (an older "BingeMote VLC" rule is left as it is). Every rule it creates is
+  recorded in a journal, and uninstall removes only those, and only if each still matches
+  what was recorded. Limits: if you install VLC after setup, or change VLC's web port after
+  setup, the VLC rules are not updated; uninstall and reinstall BingeMote to redo them. Both
+  devices must be on the same Wi-Fi, and some guest and hotel networks block device-to-device
+  traffic ("client isolation"); BingeMote cannot change that.
 - Autostart is an `HKCU\...\Run` entry ("BingeMote"; the 1.x "BingeMoteHelper" entry is
   removed); it lives in the tray.
 
@@ -90,4 +97,4 @@ Android and PC release separately: `android-vX.Y.Z` (latest) ships
 
 BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
 
-Uninstalling BingeMote removes the program, its start-with-Windows entry, the firewall rule and the listen permission. If you ran the plain exe instead of the installer, remove the last two by hand as administrator: `netsh advfirewall firewall delete rule name="BingeMote"` (on PCs that had 1.x, also `name="BingeMote Helper"`) and `netsh http delete urlacl url=http://+:8488/`.
+Uninstalling BingeMote removes the program, its start-with-Windows entry, and the firewall rules, listen permission and watchdog task that setup recorded in its journal, each only when it still matches what was recorded. Anything that no longer matches, or that setup did not create (rules or startup entries from older versions), is left in place and noted in the helper log. The plain exe has no uninstaller of its own: if you ran it without the installer, the rules, listen permission and task that setup created stay until the installer's uninstaller runs the same journal-based cleanup.

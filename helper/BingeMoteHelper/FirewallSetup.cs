@@ -80,18 +80,25 @@ internal static class FirewallSetup
                         + ". Uncertain: " + string.Join("; ", uncertainRules.Select(u => u.DisplayName + " key " + u.Key + " (" + u.Outcome + ")"))
                         + ". These are recorded here only; setup and uninstall will never delete them automatically (possible orphan rules).");
             }
-            // VLC's web remote needs inbound too: one Private-networks-only rule for vlc.exe.
+            // VLC's web remote is dialled by the phone directly (VLC's own http port, default 8080, from vlcrc), so it needs inbound too. Two NEW journaled rules, same create-only / Exact-read / journal path as above, never a delete or
+            // rewrite of anything: a Private rule scoped to vlc.exe (any port, as the old rule was) and a Public rule scoped to vlc.exe + TCP + the vlcrc http port + LocalSubnet4. A pre-existing legacy rule named
+            // "BingeMote VLC" (older builds) is neither read, changed nor removed; it stays active and is not removed by uninstall (it never was). A failure here does not fail the main setup.
             var vlc = Movies.FindVlc();
             if (vlc != null)
             {
-                Run("netsh", $"advfirewall firewall delete rule name=\"{Program.VlcFirewallRule}\"");
-                var vcode = Run("netsh", $"advfirewall firewall add rule name=\"{Program.VlcFirewallRule}\" dir=in action=allow program=\"{vlc}\" profile=private");
-                if (vcode != 0) Console.Error.WriteLine("The VLC firewall rule could not be added (the phone may still reach VLC if Windows already allows it).");
+                var vcreated = new List<RuleEntry>();
+                var vuncertain = new List<UncertainEntry>();
+                try { EnsureRules(VlcSpecs(vlc, VlcHttpPort()), vcreated, vuncertain, false); }
+                catch (Exception ex) { Program.Log("VLC firewall rules: " + ex.Message); }
+                if ((vcreated.Count > 0 || vuncertain.Count > 0) && !LifecycleJournalStore.Merge(vcreated, false, null, vuncertain))
+                    Program.Log("lifecycle journal could NOT be written for the VLC rules. Created: " + string.Join("; ", vcreated.Select(e => e.DisplayName + " key " + e.Key))
+                        + ". Uncertain: " + string.Join("; ", vuncertain.Select(u => u.DisplayName + " key " + u.Key + " (" + u.Outcome + ")")) + ". Recorded here only; never deleted automatically.");
+                if (vuncertain.Count > 0 || vcreated.Count < 2 && !VlcRulesAllExact(vlc)) Console.Error.WriteLine("The VLC firewall rules were not all added (the phone may not reach VLC; see the helper log).");
             }
-            else Console.Error.WriteLine("VLC is not installed - its firewall rule was skipped.");
+            else Console.Error.WriteLine("VLC is not installed - its firewall rules were skipped. Install VLC first, then run BingeMote setup again.");
             // Report, never touch: any broad vlc.exe rules from elsewhere (all networks, or
             // all programs) are listed for the helper log. BingeMote only adds its own
-            // Private-only rule above.
+            // two rules above.
             try { File.WriteAllText(VlcInventoryPath(), InventoryVlcRules()); } catch { }
             // Let the helper (a normal, non-admin app) listen on its port, planned from the
             // reservation's classified ownership (HttpsReservationPlanner): absent -> add; already
@@ -170,7 +177,7 @@ internal static class FirewallSetup
         var answer = MessageBox.Show(
             "One Windows permission, then setup is done.\n\n" +
             "BingeMote needs to let your phone reach this PC over Wi-Fi. Windows will now ask for administrator permission once - it is used only to set up the firewall rules, the Windows listen permission and the secure pairing identity. Click Yes.\n\n" +
-            "BingeMote adds one rule for networks Windows calls Private (any device on that network) and one for networks Windows calls Public (only devices on this PC's own subnet). Other Windows firewall rules on this PC may allow more or less, and some Wi-Fi (guest or hotel networks) blocks device-to-device traffic no matter what; BingeMote cannot change that.",
+            "BingeMote adds rules for networks Windows calls Private (any device on that network) and for networks Windows calls Public (only devices on this PC's own subnet), for itself and, if VLC is installed, for VLC's web port. It does not change your network type. Your phone and PC must be on the same Wi-Fi. Other Windows firewall rules on this PC may allow more or less, and some Wi-Fi (guest or hotel networks) blocks device-to-device traffic no matter what; BingeMote cannot change that.",
             "BingeMote setup",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Information);
@@ -238,33 +245,53 @@ internal static class FirewallSetup
     }
 
     /// <summary>Adds each BingeMote rule that is absent. Semantics, exactly: for each of four fixed names the rule is read first; no rule of that name -> add it; exactly one rule that matches the expected parameters -> keep it; anything else (a duplicate, a disabled or differently-scoped rule of that name) -> FAIL setup and change nothing. This is read-then-add, NOT an atomic create-only primitive: two concurrent setups could both add and leave duplicates, which RulesExist then refuses to accept. Nothing is ever deleted or rewritten. Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
-    private static void EnsureRules(List<RuleEntry> created, List<UncertainEntry> uncertain)
+    private static void EnsureRules(List<RuleEntry> created, List<UncertainEntry> uncertain) => EnsureRules(ExpectedRules, created, uncertain, true);
+
+    private static void EnsureRules(RuleSpec[] specs, List<RuleEntry> created, List<UncertainEntry> uncertain, bool failFast)
     {
-        foreach (var r in ExpectedRules)
+        foreach (var r in specs)
         {
-            var state = ReadAll()[r.Name];
+            var state = ReadAll(specs)[r.Name];
             if (state == RuleState.Absent)
             {
                 // One create path for all four rules: New-NetFirewallRule with an explicit unique -Name key chosen now. Documented contract: only one rule with a given Name can exist in a store, so a
                 // create under an existing Name is an error, not a replacement, and nothing can be adopted. Private rules: remote Any (the default). Public rules: LocalSubnet4.
                 var key = "BingeMote-" + Guid.NewGuid().ToString("N");
                 var remote = r.Remote == "Any" ? "" : " -RemoteAddress " + r.Remote;
+                var proto = r.Protocol == "Any" ? "" : " -Protocol " + r.Protocol;
+                var port = r.Port == 0 ? "" : " -LocalPort " + r.Port;
+                var prog = r.Program == null ? "" : " -Program '" + r.Program.Replace("'", "''") + "'";
                 var code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
-                    $"New-NetFirewallRule -Name '{key}' -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile {r.Profile}{remote} -ErrorAction Stop | Out-Null")));
-                if (code != 0) { uncertain.Add(new UncertainEntry(key, r.Name, "create exited " + code)); throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}"); }
-                state = ReadAll()[r.Name];
+                    $"New-NetFirewallRule -Name '{key}' -DisplayName '{r.Name}' -Direction Inbound -Action Allow{proto}{port}{prog} -Profile {r.Profile}{remote} -ErrorAction Stop | Out-Null")));
+                if (code != 0) { uncertain.Add(new UncertainEntry(key, r.Name, "create exited " + code)); if (failFast) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}"); else continue; }
+                state = ReadAll(specs)[r.Name];
                 if (state == RuleState.Exact && ReadByKey(key) is { Found: Found.One } rb && rb.Display == r.Name) created.Add(new RuleEntry(key, r.Name, rb.Props));
                 else uncertain.Add(new UncertainEntry(key, r.Name, "create returned 0 but read-back was " + state + " by display name and not exactly one rule under this key"));   // absent before, our create under a fresh key succeeded, read back exact
             }
             if (state != RuleState.Exact)
             {
-                Program.Log($"firewall setup: rule '{r.Name}' is {state} (expected exactly one enabled inbound allow rule, profile {r.Profile}, {r.Protocol} {r.Port}, remote {r.Remote}, any program/service); left untouched.");
-                throw new InvalidOperationException($"firewall rule '{r.Name}' is {state}; not changed");
+                Program.Log($"firewall setup: rule '{r.Name}' is {state} (expected exactly one enabled inbound allow rule, profile {r.Profile}, {r.Protocol} {(r.Port == 0 ? "any port" : r.Port.ToString())}, remote {r.Remote}, program {r.Program ?? "any"}, any service); left untouched.");
+                if (failFast) throw new InvalidOperationException($"firewall rule '{r.Name}' is {state}; not changed");
+                continue;
             }
         }
     }
 
-    internal sealed record RuleSpec(string Name, string Profile, string Protocol, int Port, string Remote);
+    internal sealed record RuleSpec(string Name, string Profile, string Protocol, int Port, string Remote, string? Program = null);
+
+    /// <summary>VLC's http port as the phone dials it: vlcrc http-port when it is a valid port, else VLC's default 8080 (the same fallback the helper's own VLC calls use). Read once, at setup.</summary>
+    internal static int VlcHttpPort() => int.TryParse(VlcSetup.ReadVlcrcValue("http-port"), out var p) && p is > 0 and <= 65535 ? p : 8080;
+
+    /// <summary>The two VLC rules for one vlc.exe path and port: Private = program only (as the old rule), Public = program + TCP + port + LocalSubnet4 only.</summary>
+    internal static RuleSpec[] VlcSpecs(string vlcPath, int port) => new[]
+    {
+        new RuleSpec(Program.RuleVlcPrivate, "Private", "Any", 0, "Any", vlcPath),
+        new RuleSpec(Program.RuleVlcPublic, "Public", "TCP", port, "LocalSubnet4", vlcPath),
+    };
+
+    internal static readonly string[] JournalableNames = { Program.RuleTcpPrivate, Program.RuleUdpPrivate, Program.RuleTcpPublic, Program.RuleUdpPublic, Program.RuleVlcPrivate, Program.RuleVlcPublic };
+
+    private static bool VlcRulesAllExact(string vlc) => ReadAll(VlcSpecs(vlc, VlcHttpPort())).Values.All(v => v == RuleState.Exact);
     internal enum RuleState { Absent, Exact, Mismatch, Unreadable }
 
     internal static readonly RuleSpec[] ExpectedRules =
@@ -276,10 +303,11 @@ internal static class FirewallSetup
     };
 
     /// <summary>Reads the four expected rules as effective firewall objects (not netsh text) in ONE query. Absent means only this: the full, unfiltered Get-NetFirewallRule enumeration SUCCEEDED and no object has that exact DisplayName (an empty enumeration is not an error; filtering is done in the script, so there is no reliance on the cmdlet's "not found" error id). Any failure of the enumeration or of a per-rule filter read (access denied, service down, timeout, bad output) leaves the rule Unreadable, never Absent. Unreadable is never "current" and never triggers an add.</summary>
-    internal static Dictionary<string, RuleState> ReadAll()
+    internal static Dictionary<string, RuleState> ReadAll(RuleSpec[]? specs = null)
     {
-        var result = ExpectedRules.ToDictionary(r => r.Name, _ => RuleState.Unreadable);
-        var names = string.Join(",", ExpectedRules.Select(r => "'" + r.Name + "'"));
+        specs ??= ExpectedRules;
+        var result = specs.ToDictionary(r => r.Name, _ => RuleState.Unreadable);
+        var names = string.Join(",", specs.Select(r => "'" + r.Name + "'"));
         var script =
             "$ErrorActionPreference='Stop'; try { $all=@(Get-NetFirewallRule) } catch { 'ERR'; exit 0 }; " +
             "foreach ($n in @(" + names + ")) { try { $r=@($all | Where-Object { $_.DisplayName -ceq $n }); " +
@@ -302,7 +330,7 @@ internal static class FirewallSetup
             {
                 var f = raw.Trim().Split('|');
                 if (f.Length < 2) continue;
-                var spec = ExpectedRules.FirstOrDefault(r => r.Name == f[0]);
+                var spec = specs.FirstOrDefault(r => r.Name == f[0]);
                 if (spec == null) continue;
                 if (f[1] == "ABSENT") result[spec.Name] = RuleState.Absent;
                 else if (f[1] == "DUP") result[spec.Name] = RuleState.Mismatch;
@@ -310,7 +338,7 @@ internal static class FirewallSetup
                 {
                     bool Is(string got, string want) => string.Equals(got.Trim(), want, StringComparison.OrdinalIgnoreCase);
                     var ok = Is(f[2], "True") && Is(f[3], "Inbound") && Is(f[4], "Allow") && Is(f[5], spec.Profile) && Is(f[6], spec.Protocol) &&
-                        Is(f[7], spec.Port.ToString()) && Is(f[8], "Any") && Is(f[9], spec.Remote) && Is(f[10], "Any") && Is(f[11], "Any") && Is(f[12], "Any") && Is(f[13], "Block");
+                        Is(f[7], spec.Port == 0 ? "Any" : spec.Port.ToString()) && Is(f[8], "Any") && Is(f[9], spec.Remote) && Is(f[10], "Any") && Is(f[11], spec.Program ?? "Any") && Is(f[12], "Any") && Is(f[13], "Block");
                     result[spec.Name] = ok ? RuleState.Exact : RuleState.Mismatch;
                 }
             }

@@ -76,69 +76,6 @@ internal static class DialogLook
     }
 }
 
-/// <summary>The public-Wi-Fi popup: names the network and offers the one-click Private fix,
-/// the manual Settings route, or Not now (remembered per Wi-Fi name).</summary>
-internal sealed class WifiDialog : DarkDialog
-{
-    public enum Result { None, Home, Settings, NotNow }
-    public Result Answer { get; private set; } = Result.None;
-
-    public WifiDialog(NetProfile profile)
-    {
-        AutoScaleMode = AutoScaleMode.Dpi;
-        var dark = HelperWindow.IsDarkMode();
-        var bg = dark ? HelperWindow.DarkBg : HelperWindow.LightBg;
-        var card = dark ? HelperWindow.DarkCard : HelperWindow.LightCard;
-        var text = dark ? HelperWindow.DarkText : HelperWindow.LightText;
-        var muted = dark ? HelperWindow.DarkMuted : HelperWindow.LightMuted;
-
-        Text = "BingeMote";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false; MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen;
-        TopMost = true; // at login other windows can cover it
-        BackColor = bg;
-        ForeColor = text;
-
-        const int clientW = 500;
-        var m = DialogLook.Margin;
-        var contentW = clientW - 2 * m;
-        var body = DialogLook.Text(
-            "Windows is treating this Wi-Fi (" + profile.Name + ") like a public hotspot, so your phone cannot reach this PC.\n\n" +
-            "If this is your home network, BingeMote can mark it as Private in Windows for you. This also lets Windows use its home-network settings on this Wi-Fi.\n\n" +
-            "On a network you don't know (hotel, cafe), choose Not now.",
-            new Font("Segoe UI", 9.5f), text, m, m, contentW);
-        var small = DialogLook.Text(
-            "This only changes this one Wi-Fi. Windows will ask for permission once.",
-            new Font("Segoe UI", 8f), text, m, body.Bottom + 12, contentW);
-        Button Btn(string label, int width, Result r)
-        {
-            var b = DialogLook.Button(label, new Font("Segoe UI", 8.5f), width, 32, card, text, muted);
-            b.Click += (_, _) => { Answer = r; Close(); };
-            return b;
-        }
-        var home = Btn("This is my home Wi-Fi", 170, Result.Home);
-        HelperWindow.StylePrimary(home);
-        var settings = Btn("Open Settings instead", 150, Result.Settings);
-        var notNow = Btn("Not now", 90, Result.NotNow);
-        CancelButton = notNow; // Esc means Not now
-        DialogLook.RowRight(clientW - m, small.Bottom + 20, home, settings, notNow);
-        ClientSize = new Size(clientW, home.Bottom + m);
-        Controls.Add(body);
-        Controls.Add(small);
-        Controls.Add(home);
-        Controls.Add(settings);
-        Controls.Add(notNow);
-    }
-
-    public new Result ShowDialog(IWin32Window owner)
-    {
-        base.ShowDialog(owner);
-        return Answer;
-    }
-}
-
-
 /// <summary>A small themed box whose confirm button says what it does (MessageBox can't relabel).</summary>
 internal static class ConfirmDialog
 {
@@ -184,7 +121,7 @@ internal static class ConfirmDialog
 }
 
 
-/// <summary>A one-button themed note (the Wi-Fi popup's success line).</summary>
+/// <summary>A one-button themed note (used for short confirmations).</summary>
 internal static class NoteDialog
 {
     public static void Show(IWin32Window owner, string text)
