@@ -208,7 +208,7 @@ internal static class FirewallSetup
     {
         foreach (var r in ExpectedRules)
         {
-            var state = ReadRule(r);
+            var state = ReadAll()[r.Name];
             if (state == RuleState.Absent)
             {
                 int code;
@@ -218,7 +218,7 @@ internal static class FirewallSetup
                     code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
                         $"New-NetFirewallRule -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile Public -RemoteAddress {r.Remote} -ErrorAction Stop | Out-Null")));
                 if (code != 0) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}");
-                state = ReadRule(r);
+                state = ReadAll()[r.Name];
             }
             if (state != RuleState.Exact)
             {
@@ -239,14 +239,17 @@ internal static class FirewallSetup
         new(Program.RuleUdpPublic, "Public", "UDP", Program.DiscoveryPort, "LocalSubnet4"),
     };
 
-    /// <summary>Reads the effective rule object by exact name through the firewall objects (not netsh text).</summary>
-    internal static RuleState ReadRule(RuleSpec r)
+    /// <summary>Reads the four expected rules as effective firewall objects (not netsh text) in ONE query. Absent means only this: the full, unfiltered Get-NetFirewallRule enumeration SUCCEEDED and no object has that exact DisplayName (an empty enumeration is not an error; filtering is done in the script, so there is no reliance on the cmdlet's "not found" error id). Any failure of the enumeration or of a per-rule filter read (access denied, service down, timeout, bad output) leaves the rule Unreadable, never Absent. Unreadable is never "current" and never triggers an add.</summary>
+    internal static Dictionary<string, RuleState> ReadAll()
     {
+        var result = ExpectedRules.ToDictionary(r => r.Name, _ => RuleState.Unreadable);
+        var names = string.Join(",", ExpectedRules.Select(r => "'" + r.Name + "'"));
         var script =
-            "$ErrorActionPreference='Stop'; $r=@(Get-NetFirewallRule -DisplayName '" + r.Name + "' -ErrorAction SilentlyContinue); " +
-            "if ($r.Count -eq 0) { 'ABSENT'; exit 0 }; if ($r.Count -ne 1) { 'DUP'; exit 0 }; $x=$r[0]; " +
+            "$ErrorActionPreference='Stop'; try { $all=@(Get-NetFirewallRule) } catch { 'ERR'; exit 0 }; " +
+            "foreach ($n in @(" + names + ")) { try { $r=@($all | Where-Object { $_.DisplayName -ceq $n }); " +
+            "if ($r.Count -eq 0) { $n+'|ABSENT'; continue }; if ($r.Count -ne 1) { $n+'|DUP'; continue }; $x=$r[0]; " +
             "$p=$x|Get-NetFirewallPortFilter; $a=$x|Get-NetFirewallAddressFilter; $ap=$x|Get-NetFirewallApplicationFilter; $sv=$x|Get-NetFirewallServiceFilter; " +
-            "'ONE|'+$x.Enabled+'|'+$x.Direction+'|'+$x.Action+'|'+$x.Profile+'|'+$p.Protocol+'|'+($p.LocalPort -join ',')+'|'+($p.RemotePort -join ',')+'|'+($a.RemoteAddress -join ',')+'|'+($a.LocalAddress -join ',')+'|'+$ap.Program+'|'+$sv.Service+'|'+$x.EdgeTraversalPolicy";
+            "$n+'|ONE|'+$x.Enabled+'|'+$x.Direction+'|'+$x.Action+'|'+$x.Profile+'|'+$p.Protocol+'|'+($p.LocalPort -join ',')+'|'+($p.RemotePort -join ',')+'|'+($a.RemoteAddress -join ',')+'|'+($a.LocalAddress -join ',')+'|'+$ap.Program+'|'+$sv.Service+'|'+$x.EdgeTraversalPolicy } catch { $n+'|ERR' } }";
         var psi = new ProcessStartInfo("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
         {
             RedirectStandardOutput = true,
@@ -257,19 +260,31 @@ internal static class FirewallSetup
         {
             using var p = Process.Start(psi)!;
             var read = p.StandardOutput.ReadToEndAsync();
-            if (!p.WaitForExit(30000)) { try { p.Kill(); } catch { } return RuleState.Unreadable; }
-            var line = read.GetAwaiter().GetResult().Trim();
-            if (p.ExitCode != 0) return RuleState.Unreadable;
-            if (line == "ABSENT") return RuleState.Absent;
-            var f = line.Split('|');
-            if (f.Length != 13 || f[0] != "ONE") return line == "DUP" ? RuleState.Mismatch : RuleState.Unreadable;
-            bool Is(string got, string want) => string.Equals(got.Trim(), want, StringComparison.OrdinalIgnoreCase);
-            var ok = Is(f[1], "True") && Is(f[2], "Inbound") && Is(f[3], "Allow") && Is(f[4], r.Profile) && Is(f[5], r.Protocol) &&
-                Is(f[6], r.Port.ToString()) && Is(f[7], "Any") && Is(f[8], r.Remote) && Is(f[9], "Any") && Is(f[10], "Any") && Is(f[11], "Any") && Is(f[12], "Block");
-            return ok ? RuleState.Exact : RuleState.Mismatch;
+            if (!p.WaitForExit(60000)) { try { p.Kill(); } catch { } return result; }
+            if (p.ExitCode != 0) return result;
+            foreach (var raw in read.GetAwaiter().GetResult().Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var f = raw.Trim().Split('|');
+                if (f.Length < 2) continue;
+                var spec = ExpectedRules.FirstOrDefault(r => r.Name == f[0]);
+                if (spec == null) continue;
+                if (f[1] == "ABSENT") result[spec.Name] = RuleState.Absent;
+                else if (f[1] == "DUP") result[spec.Name] = RuleState.Mismatch;
+                else if (f[1] == "ONE" && f.Length == 14)
+                {
+                    bool Is(string got, string want) => string.Equals(got.Trim(), want, StringComparison.OrdinalIgnoreCase);
+                    var ok = Is(f[2], "True") && Is(f[3], "Inbound") && Is(f[4], "Allow") && Is(f[5], spec.Profile) && Is(f[6], spec.Protocol) &&
+                        Is(f[7], spec.Port.ToString()) && Is(f[8], "Any") && Is(f[9], spec.Remote) && Is(f[10], "Any") && Is(f[11], "Any") && Is(f[12], "Any") && Is(f[13], "Block");
+                    result[spec.Name] = ok ? RuleState.Exact : RuleState.Mismatch;
+                }
+            }
         }
-        catch { return RuleState.Unreadable; }
+        catch { }
+        return result;
     }
+
+    /// <summary>True only when every expected rule is exactly one rule with exactly the expected scope. Disabled, duplicated, broader, narrower or unreadable is NOT current.</summary>
+    internal static bool RulesExist() => ReadAll().Values.All(v => v == RuleState.Exact);
 
     /// <summary>The exact helper URL must have only the intended interactive-user grant.
     /// A different URL containing the same port, or an Everyone grant, is not sufficient.</summary>
@@ -464,9 +479,6 @@ internal static class FirewallSetup
 
     [System.Runtime.InteropServices.DllImport("httpapi.dll", ExactSpelling = true)]
     private static extern uint HttpTerminate(uint flags, IntPtr reserved);
-
-    /// <summary>True only when every expected rule is exactly one rule with exactly the expected scope. A same-named rule that is disabled, duplicated, broader or narrower is NOT current.</summary>
-    internal static bool RulesExist() => ExpectedRules.All(r => ReadRule(r) == RuleState.Exact);
 
     /// <summary>Elevated uninstall cleanup, invoked by the uninstaller via --uninstall-tls while
     /// the exe still exists: the HTTPS listen permission and the owned TLS transport bindings go
