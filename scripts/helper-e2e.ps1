@@ -38,11 +38,11 @@ function Format-RuleObject($x) {
 function Assert-BingeRulesExact([string]$when) {
     foreach ($e in $script:BingeRules) {
         $rs = Get-RuleObject $e.Name
-        Assert ($rs.Count -eq 1) "$when: exactly one firewall rule named '$($e.Name)' (found $($rs.Count))"
+        Assert ($rs.Count -eq 1) "${when}: exactly one firewall rule named '$($e.Name)' (found $($rs.Count))"
         $line = Format-RuleObject $rs[0]
         Write-Host "readback: $line"
         $want = "enabled=True|Inbound|Allow|profile=$($e.Profile)|$($e.Proto)|lport=$($e.Port)|rport=Any|remote=$($e.Remote)|local=Any|program=Any|service=Any|edge=Block"
-        Assert ($line.ToLower().Contains(('|' + $want).ToLower())) "$when: '$($e.Name)' has exactly the expected scope ($want)"
+        Assert ($line.ToLower().Contains(('|' + $want).ToLower())) "${when}: '$($e.Name)' has exactly the expected scope ($want)"
     }
 }
 # Informational, never deletes: every enabled inbound allow rule that can reach 8489/8490 or is named BingeMote, with its scope.
