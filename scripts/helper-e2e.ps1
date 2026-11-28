@@ -994,10 +994,12 @@ Write-Host "== shipping-bytes smoke =="
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
 
 $ship = Get-ChildItem "helper/Shipping/BingeMote-PC-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+$script:ShippingSkipped = $false
 if (-not $ship) {
     # Source-only push runs publish no installer, so there is nothing to pin yet.
     # The leg runs on dispatch runs that pass shipping_run_id (+ shipping_sha256).
     Write-Host "skipping shipping-bytes leg: helper/Shipping is empty (no publish run pinned)"
+    $script:ShippingSkipped = $true
 } else {
 # Tested-to-distributed identity is an ASSERTION, not an attestation: the workflow
 # downloads the exact artifact of the pinned publish run, and this run proves it is
@@ -1277,8 +1279,11 @@ Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls
 # leave that rule untouched (no journal witness, so no update and no delete), and exit EXACTLY 12 with the exact named-rule reason and the protected notice. Not a blanket accept of 12.
 # When no shipping bytes are pinned the shipping uninstall above never ran, so the journaled rules created by this script's own Part 1 `--install-firewall` are still present.
 # Remove them through the product's own journal-proven cleanup (it deletes only what the lifecycle journal records this setup added; foreign rules stay), then assert absence for real.
-$unPre = Start-Process $exe -ArgumentList '--uninstall-tls' -Wait -PassThru
-Assert ($unPre.ExitCode -eq 0) "journal-proven cleanup of this script's own setup exits 0 before the partial-outcome fixture (got $($unPre.ExitCode))"
+if ($script:ShippingSkipped) {
+    # Only when the shipping leg (and its own post-uninstall absence gates) did not run. When it ran, no cleanup is added here, so a leak from the shipping uninstall still fails the gates below.
+    $unPre = Start-Process $exe -ArgumentList '--uninstall-tls' -Wait -PassThru
+    Assert ($unPre.ExitCode -eq 0) "journal-proven cleanup of this script's own setup exits 0 before the partial-outcome fixture (got $($unPre.ExitCode))"
+}
 Assert-BingeRulesAbsent 'before the partial-outcome fixture'
 Assert ((Get-RuleObject 'BingeMote VLC Private').Count -eq 0 -and (Get-RuleObject 'BingeMote VLC Public LocalSubnet').Count -eq 0) 'journaled VLC rules were removed by the shipping uninstall'
 $vlcExe2 = @("$env:ProgramFiles\VideoLAN\VLC\vlc.exe", "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
