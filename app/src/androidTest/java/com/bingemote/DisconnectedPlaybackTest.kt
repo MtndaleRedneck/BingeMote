@@ -9,6 +9,12 @@ import org.junit.Test
 class DisconnectedPlaybackTest {
     @get:Rule val failureDump = FailureDumpRule()
 
+    // Pairing residue is process- and disk-wide (see HapticTickTest.seedPrefsPaired):
+    // the two polling tests pair for real, so every test starts and ends unpaired,
+    // mirroring DisconnectedHomeUiTest. Order-independent.
+    @org.junit.Before fun resetPairing() = HapticTickTest.clearPairingAndPrefs(InstrumentationRegistry.getInstrumentation().targetContext)
+    @org.junit.After fun clearPairing() = HapticTickTest.clearPairingAndPrefs(InstrumentationRegistry.getInstrumentation().targetContext)
+
     @Test fun appDisconnectedTapKeepsStateAndSendsNothing() = runBlocking {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
         val stub = HapticTickTest.StatusStub(); stub.start()
@@ -31,7 +37,7 @@ class DisconnectedPlaybackTest {
         val stub = HapticTickTest.StatusStub(); stub.start()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             val remote = RemoteState(ctx, Store(ctx), scope)
             remote.pollOnce()
             assertEquals("paused", remote.status?.state)
@@ -54,7 +60,7 @@ class DisconnectedPlaybackTest {
         val stub = HapticTickTest.StatusStub(); stub.start()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             val remote = RemoteState(ctx, Store(ctx), scope)
             remote.pollOnce()
             assertEquals("paused", remote.status?.state)
