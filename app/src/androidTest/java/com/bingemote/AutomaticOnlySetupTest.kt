@@ -482,6 +482,13 @@ class AutomaticOnlySetupTest {
             doneNudges++
         }
         assertTrue("Automatic deferred setup still needs a Done action", foundDone)
+        // The loop ends as soon as Done is found, so when Done is reached by swiping, the negatives above last ran on a page
+        // without Done. Re-assert them now, on the page where Done is present (the tree has just shown it, so it has caught up).
+        device.waitForIdle()
+        assertFalse(device.hasObject(By.text("VLC password")))
+        assertFalse(device.hasObject(By.text("Turn on VLC's web remote")))
+        assertFalse(device.hasObject(By.text("Set the password by hand instead")))
+        assertFalse(device.hasObject(By.text("Hide the manual setup")))
     }
 
     /** Text ink in a screen region, self-calibrating: background = 5th-percentile
