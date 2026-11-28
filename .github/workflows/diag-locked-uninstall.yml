@@ -1,0 +1,30 @@
+# DRAFT - diagnostic only, review delta. No product code change; never a proof of
+# race absence. Invocation: workflow_dispatch (web UI) on an exact branch, same
+# route pattern as build.yml proofs. One bounded run, no retries; diagnostics
+# upload is if:always() so cancellation cannot swallow captures (647 lesson).
+name: Diag locked-uninstall prerequisites
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    if: github.ref == 'refs/heads/tmp/iss-supersession-proof'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2, SHA-pinned (verified live 2026-11-27)
+        with:
+          persist-credentials: false
+      - name: Run locked-uninstall diagnostics
+        shell: pwsh
+        timeout-minutes: 12
+        run: scripts/diag-locked-uninstall.ps1
+      - name: Upload diagnostics (always, cancellation-safe)
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@ea165f0fd8c8f4b2a94286aa620704383695a1fc   # v4, SHA-pinned
+        with:
+          name: diag-locked-uninstall
+          path: ${{ runner.temp }}/diag-artifacts
+          if-no-files-found: warn
