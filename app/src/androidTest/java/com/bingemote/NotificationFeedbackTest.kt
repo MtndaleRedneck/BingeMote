@@ -308,7 +308,7 @@ class ImmediateFlipTest {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         posts.clear()
-        clearPairingAndPrefs(ctx)
+        HapticTickTest.clearPairingAndPrefs(ctx)
         MediaControlsService.postProbe = { playing -> posts += Post(System.currentTimeMillis(), playing) }
     }
 
@@ -326,7 +326,7 @@ class ImmediateFlipTest {
         MediaControlsService.pollCommitted = null
         MediaControlsService.disablePeriodicPoll = false
         MediaControlsService.postProbe = null
-        clearPairingAndPrefs(ctx)
+        HapticTickTest.clearPairingAndPrefs(ctx)
     }
 
     @Test fun glyphFlipsBeforeVlcAnswersAndNeverRevertsOnSuccess() {
