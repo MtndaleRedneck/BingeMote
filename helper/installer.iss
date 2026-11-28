@@ -86,7 +86,9 @@ var
   Code: Integer;
 begin
   if CurStep = ssPostInstall then
-    if Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-firewall', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    if not Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-firewall', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      SuppressibleMsgBox('Setup could not start BingeMote''s one-time setup step: ' + SysErrorMessage(Code), mbError, MB_OK, IDOK)
+    else
     begin
       if Code = 12 then
         SuppressibleMsgBox('Setup finished, but VLC''s own firewall rules are not all in place, so your phone may not reach VLC on this network. The details are in helper.log in %LOCALAPPDATA%\BingeMote. Everything else is set up.', mbInformation, MB_OK, IDOK);

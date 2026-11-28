@@ -374,9 +374,6 @@ internal static class Program
             if (!FirewallSetup.SetupIsCurrent()) return 1;
         }
 
-        // An installer-run setup cannot show its own result (hidden step, exit code ignored): if it left VLC's firewall rules incomplete it wrote a notice file; show it once here, from a normal launch (never the watchdog's).
-        if (!ensureRunning && FirewallSetup.TakeVlcIncompleteNotice(FirewallMarker)) FirewallSetup.ShowVlcIncompleteWarning();
-
         // Resume places must load on every startup, not only on first-time firewall setup.
         ResumeTracker.Start();
 
@@ -405,6 +402,9 @@ internal static class Program
                 "BingeMote", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
+        // An installer-run setup cannot show its own result (hidden step, exit code ignored): if it left VLC's firewall rules incomplete it wrote a notice file; show it once here, from a normal launch, AFTER the service is listening (the warning is non-blocking and never delays serving the phone) (never the watchdog's).
+        if (!ensureRunning && FirewallSetup.TakeVlcIncompleteNotice(FirewallMarker)) FirewallSetup.ShowVlcIncompleteWarning();
+
         // The 5-minute relaunch task is registered only by the elevated installer step (--install-watchdog); the app never registers or edits it.
 
         ApplicationConfiguration.Initialize();

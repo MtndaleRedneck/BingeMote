@@ -399,6 +399,21 @@ Write-BroaderRuleInventory 'after install-firewall'
 $fw2 = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
 Assert ($fw2.ExitCode -eq 0) "second install-firewall run exits 0"
 Assert-BingeRulesExact 'after second install-firewall'
+# --- VLC rule branch, exercised explicitly (this job installs the pinned VLC before this script; absence is a failure here, never a skip) ---
+$vlcExe = @("$env:ProgramFiles\VideoLAN\VLC\vlc.exe", "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+Assert ($null -ne $vlcExe) "VLC is installed on this runner, so the VLC firewall-rule branch runs (not skipped)"
+$vlcPrivName = 'BingeMote VLC Private'; $vlcPubName = 'BingeMote VLC Public LocalSubnet'
+foreach ($n in @($vlcPrivName, $vlcPubName)) {
+    $o = Get-RuleObject $n
+    Assert ($o.Count -eq 1 -and $o[0].Enabled.ToString() -eq 'True') "VLC rule '$n' exists once and enabled after setup"
+    Write-Host ("readback: " + (Format-RuleObject $o[0]))
+    $prog = ($o[0] | Get-NetFirewallApplicationFilter).Program
+    Assert ($prog -ieq $vlcExe) "VLC rule '$n' is scoped to vlc.exe ($prog)"
+}
+Assert (((Get-RuleObject $vlcPrivName)[0].Profile.ToString()) -match 'Private') "VLC Private rule is for the Private profile"
+Assert (((Get-RuleObject $vlcPubName)[0].Profile.ToString()) -match 'Public') "VLC Public rule is for the Public profile"
+$noticeFile = Join-Path $env:ProgramData 'BingeMote\vlc-rules-incomplete.txt'
+Assert (-not (Test-Path $noticeFile)) "no VLC-incomplete notice after a clean setup"
 # Fail-closed on a same-named rule with the wrong state: the harness disables its own fixture; setup must refuse and not repair it.
 $pubTcp = $script:BingeRules[2].Name
 Disable-NetFirewallRule -DisplayName $pubTcp
@@ -1257,6 +1272,31 @@ if ($acl -match ':8490/') { throw "shipping uninstall left the 8490 listen permi
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls, uninstall clean"
 }
+
+# --- Intentional partial outcome (exit 12), after everything above is uninstalled. The fixture is the harness's own NOT-journaled, disabled same-named VLC rule: setup must finish the main setup,
+# leave that rule untouched (no journal witness, so no update and no delete), and exit EXACTLY 12 with the exact named-rule reason and the protected notice. Not a blanket accept of 12.
+Assert-BingeRulesAbsent 'before the partial-outcome fixture'
+Assert ((Get-RuleObject 'BingeMote VLC Private').Count -eq 0 -and (Get-RuleObject 'BingeMote VLC Public LocalSubnet').Count -eq 0) 'journaled VLC rules were removed by the shipping uninstall'
+$vlcExe2 = @("$env:ProgramFiles\VideoLAN\VLC\vlc.exe", "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+Assert ($null -ne $vlcExe2) "VLC is installed for the partial-outcome check (not skipped)"
+$fixName = 'BingeMote VLC Private'
+New-NetFirewallRule -DisplayName $fixName -Direction Inbound -Action Allow -Profile Private -Program $vlcExe2 -Enabled False | Out-Null
+$diagLogP = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+$lbP = if (Test-Path $diagLogP) { (Get-Content $diagLogP -Raw).Length } else { 0 }
+$fwP = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+Assert ($fwP.ExitCode -eq 12) "a foreign disabled same-named VLC rule gives exactly the partial-completion exit 12 (got $($fwP.ExitCode))"
+$logP = (Get-Content $diagLogP -Raw).Substring($lbP)
+Assert ($logP.Contains("rule '$fixName' is Mismatch")) "the partial outcome names the exact VLC rule Mismatch"
+$fixObj = Get-RuleObject $fixName
+Assert ($fixObj.Count -eq 1 -and $fixObj[0].Enabled.ToString() -eq 'False') "partial setup left the foreign disabled VLC rule untouched"
+Assert (Test-Path (Join-Path $env:ProgramData 'BingeMote\vlc-rules-incomplete.txt')) "the VLC-incomplete notice is in the protected machine data directory"
+Assert-BingeRulesExact 'after the partial run: the four main rules are exact'
+Remove-NetFirewallRule -DisplayName $fixName   # the harness's own fixture
+$fwQ = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+Assert ($fwQ.ExitCode -eq 0) "with the fixture removed, setup completes with exit 0"
+Assert (-not (Test-Path (Join-Path $env:ProgramData 'BingeMote\vlc-rules-incomplete.txt'))) "a clean run removes the notice"
+$unQ = Start-Process $exe -ArgumentList '--uninstall-tls' -Wait -PassThru
+Assert-BingeRulesAbsent 'after cleaning up the partial-outcome check (journaled rules removed)'
 
 # Final gate: only a READABLE-CURRENT standard-user verdict is product proof; every other verdict fails the job after all other proof ran.
 if ($script:DaclVerdict -ne 'DENIED-ALL') { throw "TASK DACL DENY NOT PROVEN: $($script:DaclVerdict)" }

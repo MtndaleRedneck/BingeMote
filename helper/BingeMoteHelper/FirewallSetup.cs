@@ -58,18 +58,38 @@ internal static class FirewallSetup
     internal const int VlcIncompleteExit = 12;
     private static bool VlcRulesIncomplete;
 
-    private static string VlcNoticePath(string markerPath) => Path.Combine(Path.GetDirectoryName(markerPath)!, "vlc-rules-incomplete.txt");
+    /// <summary>The notice lives in the admin-written, user-readable machine data directory, so it reaches whichever user opens the app next, not only the profile of the administrator who ran setup.</summary>
+    internal static string VlcNoticePath => Path.Combine(ProtectedFile.Dir, "vlc-rules-incomplete.txt");
+    private static string VlcSeenPath(string markerPath) => Path.Combine(Path.GetDirectoryName(markerPath)!, "vlc-notice-seen.txt");
 
-    /// <summary>True once when setup left the VLC rules incomplete (notice file present); deletes the notice so it is shown once. Cheap file check, no PowerShell.</summary>
-    internal static bool TakeVlcIncompleteNotice(string markerPath)
+    /// <summary>True when an unseen notice is present. Each user records the notice's own stamp in their own profile (a standard user cannot delete the admin-written file), so each user sees a given notice once. The notice counts only when its directory is trusted (admin-owned, not user-writable). Cheap file checks, no PowerShell.</summary>
+    internal static bool TakeVlcIncompleteNotice(string markerPath, string? noticePath = null, Func<bool>? dirTrusted = null)
     {
-        try { var f = VlcNoticePath(markerPath); if (!File.Exists(f)) return false; File.Delete(f); return true; }
+        try
+        {
+            var f = noticePath ?? VlcNoticePath;
+            if (!File.Exists(f)) return false;
+            if (!(dirTrusted ?? (() => ProtectedFile.DirTrusted(Path.GetDirectoryName(f)!)))()) return false;
+            var stamp = File.ReadAllText(f).Trim();
+            var seen = VlcSeenPath(markerPath);
+            if (File.Exists(seen) && File.ReadAllText(seen).Trim() == stamp) return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(seen)!);
+            File.WriteAllText(seen, stamp);
+            return true;
+        }
         catch { return false; }
     }
 
-    internal static void ShowVlcIncompleteWarning() => MessageBox.Show(
+    /// <summary>Non-blocking: the box runs on its own thread so it never holds up serving the phone until dismissed.</summary>
+    internal static void ShowVlcIncompleteWarning()
+    {
+        var t = new System.Threading.Thread(() => MessageBox.Show(
         "Setup finished, but VLC's own firewall rules are not all in place, so the phone may not reach VLC on this network. The details are in helper.log in %LOCALAPPDATA%\\BingeMote. Everything else is set up.",
-        "BingeMote setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        "BingeMote setup", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+        t.SetApartmentState(System.Threading.ApartmentState.STA);
+        t.IsBackground = true;
+        t.Start();
+    }
 
     private static int RunElevatedCore(string markerPath)
     {
@@ -182,9 +202,13 @@ internal static class FirewallSetup
             }
             Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
             File.WriteAllText(markerPath, MarkerVersion + "\n" + DateTime.UtcNow.ToString("O"));
-            // Status for the one place an exit code cannot reach (the installer ignores it): a notice file next to the setup marker, shown once by the next normal launch (TakeVlcIncompleteNotice).
-            var notice = VlcNoticePath(markerPath);
-            try { if (VlcRulesIncomplete) File.WriteAllText(notice, DateTime.UtcNow.ToString("O") + "\nVLC firewall rules not all in place; see helper.log\n"); else File.Delete(notice); } catch { }
+            // Status for the places an exit code cannot reach (a silent installer update): a notice in the protected machine data directory, shown once per user by the next normal launch (TakeVlcIncompleteNotice). Written and removed only by this elevated run.
+            try
+            {
+                if (VlcRulesIncomplete) ProtectedFile.WriteAtomic(VlcNoticePath, DateTime.UtcNow.ToString("O") + "\n");
+                else if (File.Exists(VlcNoticePath)) File.Delete(VlcNoticePath);
+            }
+            catch (Exception nex) { Program.Log("Could not update the VLC-incomplete notice: " + nex.Message); }
             return VlcRulesIncomplete ? VlcIncompleteExit : 0;
         }
         catch (Exception ex)
@@ -230,7 +254,7 @@ internal static class FirewallSetup
             var p = Process.Start(psi);
             if (p == null || !p.WaitForExit(60_000) || (p.ExitCode != 0 && p.ExitCode != VlcIncompleteExit) || !SetupIsCurrent())
                 throw new InvalidOperationException("Setup could not be verified.");
-            if (p.ExitCode == VlcIncompleteExit) { TakeVlcIncompleteNotice(Program.FirewallMarker); ShowVlcIncompleteWarning(); }   // the exit code is the truth here; the notice file may sit in a different administrator's profile
+            if (p.ExitCode == VlcIncompleteExit) { TakeVlcIncompleteNotice(Program.FirewallMarker); ShowVlcIncompleteWarning(); }   // the exit code is the truth here; marking the notice seen avoids a repeat at the next launch
         }
         catch
         {

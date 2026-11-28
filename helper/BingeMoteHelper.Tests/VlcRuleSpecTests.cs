@@ -158,10 +158,15 @@ public class VlcRulePureBranchTests
         try
         {
             var marker = Path.Combine(dir, "firewall.ok");
-            Assert.False(FirewallSetup.TakeVlcIncompleteNotice(marker));
-            File.WriteAllText(Path.Combine(dir, "vlc-rules-incomplete.txt"), "x");
-            Assert.True(FirewallSetup.TakeVlcIncompleteNotice(marker));
-            Assert.False(FirewallSetup.TakeVlcIncompleteNotice(marker));
+            var notice = Path.Combine(dir, "notice.txt");
+            Assert.False(FirewallSetup.TakeVlcIncompleteNotice(marker, notice, () => true));   // absent: nothing to show
+            File.WriteAllText(notice, "2026-01-01T00:00:00Z\n");
+            Assert.False(FirewallSetup.TakeVlcIncompleteNotice(marker, notice, () => false));  // untrusted directory: ignored, not marked seen
+            Assert.True(FirewallSetup.TakeVlcIncompleteNotice(marker, notice, () => true));
+            Assert.False(FirewallSetup.TakeVlcIncompleteNotice(marker, notice, () => true));   // once per notice
+            Assert.True(File.Exists(notice));                                                  // never deleted by the reader
+            File.WriteAllText(notice, "2026-02-02T00:00:00Z\n");                              // a new incomplete run is a new notice
+            Assert.True(FirewallSetup.TakeVlcIncompleteNotice(marker, notice, () => true));
         }
         finally { Directory.Delete(dir, true); }
     }

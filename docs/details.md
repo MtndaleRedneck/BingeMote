@@ -45,8 +45,6 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
 
 ## BingeMote PC (Windows)
 
-## BingeMote PC (Windows)
-
 .NET 10, Windows Forms, single self-contained exe (installed as "BingeMote.exe"; the code
 still calls itself BingeMoteHelper internally). The "BingeMote PC" label lives only on the
 release downloads, to tell them apart from the phone app.
@@ -57,7 +55,7 @@ release downloads, to tell them apart from the phone app.
 - Pairing: the PC window shows a 4-digit code. `/pair` trades it (single use, 10-minute
   expiry, 5 strikes locks until restart) for a random 256-bit token. Each phone gets its
   own token, so several phones can stay paired at once (capped at 8); the tokens live in
-  `%LOCALAPPDATA%\BingeMoteHelper\config.json` (per-user directory), and a 1.x
+  `%LOCALAPPDATA%\BingeMote\config.json` (per-user directory; an older `BingeMoteHelper` folder is moved there on first launch), and a 1.x
   single-token config migrates on first launch.
 - Input playback is `SendInput`, serialized behind one lock so two phones tapping at the
   same instant cannot interleave a gesture: relative mouse moves, button down/up, wheel
