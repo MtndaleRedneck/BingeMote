@@ -14,6 +14,39 @@ VLC's own web interface is plain HTTP (its password is sent with each request), 
 is visible to a device able to observe LAN traffic. The BingeMote PC connection is HTTPS. Use only
 on a trusted private network, and never forward these ports to the internet.
 
+## The Android app
+
+Kotlin + Jetpack Compose, single module, minSdk 31.
+
+- `Vlc.kt` - VLC's built-in HTTP interface client. Polls `status.json` once a second while
+  open; commands are the standard `command=...&val=...` requests. Volume uses VLC's raw
+  scale (256 = 100%). The volume buttons control Windows system volume and mute through BingeMote PC; VLC volume is the fallback when it is unreachable, capped at 100%.
+- `HelperClient.kt` - the BingeMote PC API plus UDP broadcast discovery
+  (`BINGEMOTE_DISCOVER_V1` / `BINGEMOTE_HERE_V1`).
+- `RemoteState.kt` - holds the latest VLC status, fan-out of commands, mute bookkeeping
+  (tap-to-mute restores the previous volume on unmute), and reconnect + rediscovery.
+- `Store.kt` - settings in SharedPreferences; the VLC password and pairing token in
+  EncryptedSharedPreferences.
+- `Updater.kt` - once per open, asks the GitHub releases API for the latest release,
+  compares versions, downloads the APK over HTTPS with a size cap and optional SHA-256
+  check, verifies package name, version bump and the signing certificate, and hands the
+  file to Android's installer. Silent on any network failure; no auto-install.
+- Screens: `MainScreen` (remote), `MoviesScreen` (folder browser + D-pad), `MouseScreen`
+  (touchpad gesture machine), `SettingsScreen`, `SetupScreen` (first-run pairing).
+
+### VLC quirks worth knowing
+
+- Relative seek: `val=+5s` (the `+` must be URL-encoded as `%2B`) or `-5s`.
+- Subtitle selection: `command=subtitle_track&val=N` where N is the "Stream N" number from
+  status.json; `-1` turns subtitles off. VLC does not reliably report the active track, so
+  the app remembers the last pick per title.
+- `browse.json?dir=` lists any folder VLC can read; playing a file is
+  `command=in_play&input=<uri>`.
+
+## BingeMote PC (Windows)
+
+## BingeMote PC (Windows)
+
 .NET 10, Windows Forms, single self-contained exe (installed as "BingeMote.exe"; the code
 still calls itself BingeMoteHelper internally). The "BingeMote PC" label lives only on the
 release downloads, to tell them apart from the phone app.
@@ -38,8 +71,11 @@ release downloads, to tell them apart from the phone app.
   Setup never deletes or rewrites a rule it did not create, including rules from older
   versions (an older "BingeMote VLC" rule is left as it is). Every rule it creates is
   recorded in a journal, and uninstall removes only those, and only if each still matches
-  what was recorded. Limits: if you install VLC after setup, or change VLC's web port after
-  setup, the VLC rules are not updated; uninstall and reinstall BingeMote to redo them. Both
+  what was recorded. Nothing re-runs setup between installs, so if you install VLC or change VLC's web
+  port or location after setup, run the BingeMote installer again: a missing VLC rule is added, and a
+  VLC rule BingeMote created and recorded is updated in place, but only if it is still exactly what
+  was recorded (a rule that changed since is left alone and logged). If any VLC rule is not in
+  place afterwards, a warning says so at the end of setup or at the next normal launch. Both
   devices must be on the same Wi-Fi, and some guest and hotel networks block device-to-device
   traffic ("client isolation"); BingeMote cannot change that.
 - Autostart is an `HKCU\...\Run` entry ("BingeMote"; the 1.x "BingeMoteHelper" entry is

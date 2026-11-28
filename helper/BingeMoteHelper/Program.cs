@@ -73,7 +73,7 @@ internal static class Program
     }
 
     internal static string ConfigPath => Path.Combine(DataDir, "config.json");
-    private static string FirewallMarker => Path.Combine(DataDir, "firewall.ok");
+    internal static string FirewallMarker => Path.Combine(DataDir, "firewall.ok");
     private static string QuitMarkerPath => Path.Combine(DataDir, "quit-on-purpose");
     /// <summary>Fresh while an update installer runs: the watchdog skips its round so it cannot
     /// start a copy mid-install. Any normal start deletes it.</summary>
@@ -373,6 +373,9 @@ internal static class Program
             // Cancellation or failed verification must not proceed under a broader legacy ACL.
             if (!FirewallSetup.SetupIsCurrent()) return 1;
         }
+
+        // An installer-run setup cannot show its own result (hidden step, exit code ignored): if it left VLC's firewall rules incomplete it wrote a notice file; show it once here, from a normal launch (never the watchdog's).
+        if (!ensureRunning && FirewallSetup.TakeVlcIncompleteNotice(FirewallMarker)) FirewallSetup.ShowVlcIncompleteWarning();
 
         // Resume places must load on every startup, not only on first-time firewall setup.
         ResumeTracker.Start();

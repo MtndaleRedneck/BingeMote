@@ -63,14 +63,15 @@ internal static class LifecycleJournalStore
     }
 
     /// <summary>Rewrite with the given remainder; an empty journal is deleted.</summary>
-    internal static void Replace(LifecycleJournal j)
+    internal static bool Replace(LifecycleJournal j)
     {
         try
         {
-            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null && j.Uncertain.Count == 0 && j.UrlAclUncertain == null) { File.Delete(FilePath); return; }
+            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null && j.Uncertain.Count == 0 && j.UrlAclUncertain == null) { File.Delete(FilePath); return true; }
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(j));
+            return true;
         }
-        catch (Exception ex) { Program.Log("lifecycle journal not updated: " + ex.Message); }
+        catch (Exception ex) { Program.Log("lifecycle journal not updated: " + ex.Message); return false; }
     }
 }
 

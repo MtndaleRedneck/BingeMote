@@ -6,7 +6,7 @@ Pairs with BingeMote Android v1.18.0 - update both sides.
 
 **Changed**
 - BingeMote no longer asks you to mark your Wi-Fi as Private and never changes your Windows network type. Setup adds firewall rules for Private networks and for Public networks (your own subnet only), including VLC's web port. Your phone and PC must be on the same Wi-Fi; some guest or hotel Wi-Fi blocks device-to-device traffic and nothing here can change that.
-- If you install VLC or change VLC's web port after setup, uninstall and reinstall BingeMote to update the VLC rules.
+- If you install VLC or change VLC's web port after setup, run the BingeMote installer again to add or update the VLC rules. If any VLC rule is not in place, BingeMote warns you once.
 
 ## v1.9.1 - November 26, 2026
 
