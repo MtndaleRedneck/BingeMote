@@ -52,6 +52,12 @@ Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: r
 ; port is unaffected. INTERACTIVE, not the installing account's SID, because a standard
 ; user elevating with admin credentials still runs the helper as themselves.
 Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-5-4)"; Flags: runhidden waituntilterminated
+; One-time secure setup (TLS identity, port bindings, HTTPS listen permission): the same
+; elevated product step the first-run prompt would launch, so install asks for admin once
+; and the app never needs a surprise prompt. Idempotent - same-path upgrades never run the
+; old uninstaller (their log entries merge into the next real uninstall), so this simply
+; re-verifies Ready or rebinds the existing identity.
+Filename: "{app}\BingeMote.exe"; Parameters: "--install-firewall"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
@@ -60,3 +66,16 @@ Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
 Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
 Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
+
+[Code]
+// TLS transport cleanup runs as the newest install's own compiled logic, while the exe
+// still exists. A merged-log [UninstallRun] entry would instead be inherited from every
+// appended install and fire unordered against the newest state.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Code: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+    if FileExists(ExpandConstant('{app}\BingeMote.exe')) then
+      Exec(ExpandConstant('{app}\BingeMote.exe'), '--uninstall-tls', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;

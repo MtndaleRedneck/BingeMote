@@ -418,6 +418,33 @@ internal static class FirewallSetup
         return output.Contains(Program.FirewallRule) && !output.Contains("No rules match");
     }
 
+    /// <summary>Elevated uninstall cleanup, invoked by the uninstaller via --uninstall-tls while
+    /// the exe still exists: the HTTPS listen permission and the owned TLS transport bindings go
+    /// (the installer's remove-what-you-add contract, docs/details.md); the identity (certificate,
+    /// key, marker) is left untouched, matching TlsSetup.Remove's existing transport/identity split.
+    /// Every removal is proven first: the reservation is deleted only when the identity marker is
+    /// present AND the reservation's SDDL is exactly the interactive-users grant setup writes;
+    /// absent, unreadable or unexpected state stays and is logged. Idempotent.</summary>
+    public static int RunUninstallCleanup()
+    {
+        var (ms, _) = TlsMarkerStore.Read();
+        var (found, sddl) = QueryUrlAcl("https://+:" + Program.HttpPort + "/");
+        if (!found)
+        {
+            Program.Log("uninstall cleanup: no HTTPS reservation present.");
+        }
+        else if (ms == MarkerState.Present && ClassifySddl(sddl, InteractiveSid) == AclOwnership.Ours)
+        {
+            if (Run("netsh", "http delete urlacl url=https://+:" + Program.HttpPort + "/") != 0)
+                Program.Log("uninstall cleanup: the owned HTTPS listen permission could not be deleted; left in place.");
+        }
+        else
+        {
+            Program.Log("uninstall cleanup: HTTPS reservation left (marker " + ms + ", class " + ClassifySddl(sddl, InteractiveSid) + "): not provably ours.");
+        }
+        return TlsSetup.Remove(Program.HttpPort);
+    }
+
     private static int Run(string file, string args)
     {
         var psi = new ProcessStartInfo(file, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };

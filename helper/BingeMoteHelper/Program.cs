@@ -166,6 +166,11 @@ internal static class Program
             return FirewallSetup.RunElevated(FirewallMarker);
         }
 
+        if (args.Contains("--uninstall-tls"))
+        {
+            return FirewallSetup.RunUninstallCleanup();
+        }
+
 #if WINDOW_SHOT_HOOK
         if (args.Contains("--dialog-shots"))
         {
