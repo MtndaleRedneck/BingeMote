@@ -15,7 +15,7 @@ jobs:
   round0:
     if: github.ref == 'refs/heads/tmp/round0-diag-20261128'
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2, SHA-pinned (same pin as diag-locked-uninstall.yml)
         with:
@@ -32,7 +32,7 @@ jobs:
           Get-ChildItem "$env:RUNNER_TEMP/r0dl" | ForEach-Object { "$($_.Name) $($_.Length)" }
       - name: Round0 diagnostics
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           ROUND0_INSTALLER: ${{ runner.temp }}\r0dl\BingeMote-PC-1.9.1.exe
         run: |

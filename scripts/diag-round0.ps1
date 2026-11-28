@@ -25,6 +25,9 @@
 # Task/Run entries are removed only if they reference the isolated root; nothing else is deleted.
 # No claim of zero descendants beyond the bounded scan is made. Capture errors are recorded and fail
 # the job. A timed-out leg is labeled HARNESS-KILLED: its final files are not a natural installer result.
+# RETAINED STATE: HKLM uninstall registration, shortcuts and firewall rules persist between legs, so
+# legs after the control are install-over-existing-registration, not clean-first installs. Observations
+# are annotated, not reset. A taskkill failure or an unverified scoped cleanup marks the harness invalid.
 # Every installer run uses an isolated /DIR target and a bounded wait; on timeout the whole
 # process tree is killed (taskkill /T /F) and survivors are enumerated. Per run: exit code,
 # elapsed, tree snapshot, final target listing and SHA-256, Setup log. All artifacts go to
@@ -180,11 +183,12 @@ function Clean-Scoped([string]$label, [string]$root, [string[]]$marks, [int[]]$k
       $ps = @(Get-Under @($root) $marks | Where-Object { $keepPids -notcontains [int]$_.ProcessId })
       if ($ps.Count -eq 0) { $script:cEmpty++ } else {
         $script:cEmpty = 0
-        foreach ($p in $ps) { Write-Host "  CLEAN[$label] stop pid=$($p.ProcessId) path=$($p.ExecutablePath)"; $script:cKilled += [int]$p.ProcessId; & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | ForEach-Object { Write-Host "    taskkill: $_" } }
+        foreach ($p in $ps) { Write-Host "  CLEAN[$label] stop pid=$($p.ProcessId) path=$($p.ExecutablePath)"; $script:cKilled += [int]$p.ProcessId; & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | ForEach-Object { Write-Host "    taskkill: $_" }; if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: $label taskkill rc=$LASTEXITCODE for pid $($p.ProcessId)" } }
       }
       Start-Sleep -Seconds 1
     }
   }
+  Need ($script:cEmpty -ge 3) "$label final rescan reached 3 consecutive empty scans (else harness invalid: scoped processes may remain; no clean claim)"
   Write-Host "CLEAN[$label] stopped pids=[$($script:cKilled -join ',')]; final rescan: $($script:cEmpty) consecutive empty scans within ${boundSec}s bound (scope: exe under root or leg /LOG marker; later/other spawns are NOT excluded)"
 }
 # Remove task/Run only when the registered executable path is exactly under the isolated root
@@ -255,6 +259,7 @@ function Run-Installer($label, $argsLine, $boundSec, [bool]$captureWindows) {
     Write-Host (Snap-Tree $rootPid "$label pre-kill")
     [int[]]$treeIds = Get-Tree $rootPid
     & taskkill.exe /T /F /PID $rootPid 2>&1 | ForEach-Object { Write-Host "  taskkill: $_" }
+    if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: $label installer-tree taskkill rc=$LASTEXITCODE" }
     Start-Sleep -Seconds 3
     $surv = @($treeIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
     Write-Host "HARNESS-KILLED: TIMED OUT after ${boundSec}s; pre-kill tree ids=$($treeIds -join ','); survivors of that snapshot after kill+3s=$($surv -join ',')"
@@ -306,7 +311,11 @@ function Start-Lock($dir, $mode) {
   if (-not $alive) { return $null }
   return $p
 }
-function Stop-Lock($p) { if ($p -and -not $p.HasExited) { & taskkill.exe /T /F /PID $p.Id | Out-Null }; Start-Sleep -Seconds 1 }
+function Stop-Lock($p) {
+  if ($p -and -not $p.HasExited) { & taskkill.exe /T /F /PID $p.Id | Out-Null; if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: lock holder taskkill rc=$LASTEXITCODE pid=$($p.Id)" } }
+  Start-Sleep -Seconds 1
+  if ($p) { $p.Refresh(); Need $p.HasExited "lock holder pid=$($p.Id) verified exited after stop (else harness invalid)" }
+}
 
 "ACCOUNT/SESSION: whoami=$(whoami) sid=$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) sessionId=$((Get-Process -Id $PID).SessionId) userInteractive=$([Environment]::UserInteractive) admin=$(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
 "OS: $([Environment]::OSVersion.VersionString)  $((Get-CimInstance Win32_OperatingSystem).Caption)"
@@ -351,6 +360,7 @@ foreach ($l in $legs) {
   if (-not $controlValid) { Need $false "$($l.n) SKIPPED: control invalid"; continue }
   $dir = New-Target ($l.n -replace '-', '')
   Get-State "$($l.n).pre" $dir (Join-Path $dir 'BingeMote.exe')
+  Write-Host "NOTE[$($l.n)]: install-over-existing-registration (control/prior legs left uninstall key, shortcuts, firewall rules); not a clean-first install"
   $lock = Start-Lock $dir $l.mode
   if (-not $lock) {
     Need $false "$($l.n) SKIPPED: lock holder not alive, installer NOT run"
