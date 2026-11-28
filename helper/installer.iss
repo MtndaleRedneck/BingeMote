@@ -262,7 +262,8 @@ begin
   // each branch uses the literal expanded path inline. Mirrors Program.PickDataDir:
   // the new folder once it exists, else the 1.x folder while it still exists, else
   // the new folder (created here).
-  cmd := '/c (if exist "%LOCALAPPDATA%\BingeMote" (> "%LOCALAPPDATA%\BingeMote\updating" echo updating) '
+  // /d /v:off: immune to machine cmd AutoRun and delayed-expansion configuration.
+  cmd := '/d /v:off /c (if exist "%LOCALAPPDATA%\BingeMote" (> "%LOCALAPPDATA%\BingeMote\updating" echo updating) '
     + 'else (if exist "%LOCALAPPDATA%\BingeMoteHelper" (> "%LOCALAPPDATA%\BingeMoteHelper\updating" echo updating) '
     + 'else (mkdir "%LOCALAPPDATA%\BingeMote" & > "%LOCALAPPDATA%\BingeMote\updating" echo updating)))';
   if ExecAsOriginalUser(ExpandConstant('{sys}\cmd.exe'), cmd, '', SW_HIDE, ewWaitUntilTerminated, rc) and (rc = 0) then
