@@ -32,7 +32,7 @@ Kotlin + Jetpack Compose, single module, minSdk 31.
   check, verifies package name, version bump and the signing certificate, and hands the
   file to Android's installer. Silent on any network failure; no auto-install.
 - Screens: `MainScreen` (remote), `MoviesScreen` (folder browser + D-pad), `MouseScreen`
-  (touchpad gesture machine), `SettingsScreen`, `SetupScreen` (first-run pairing).
+  (touchpad gesture machine), `SettingsScreen`, `SetupScreen` (first-run pairing), `YourPCScreen`.
 
 ### VLC quirks worth knowing
 

@@ -47,7 +47,7 @@ Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 ; and the app never needs a surprise prompt. Idempotent - same-path upgrades never run the
 ; old uninstaller (their log entries merge into the next real uninstall), so this simply
 ; re-verifies Ready or rebinds the existing identity.
-Filename: "{app}\BingeMote.exe"; Parameters: "--install-firewall"; Flags: runhidden waituntilterminated
+; (Run from [Code] CurStepChanged(ssPostInstall) below, same hidden elevated step, so its distinct exit code 12 "setup finished but VLC's own firewall rules are not all in place" can be shown. Still runs before the watchdog step.)
 ; Relaunch task for the installing user only (limited token, admin-only write), new name, create-only.
 ; Skips with a log line when the installing account is not the signed-in user.
 Filename: "{app}\BingeMote.exe"; Parameters: "--install-watchdog"; Flags: runhidden waituntilterminated
@@ -75,4 +75,20 @@ begin
   if CurUninstallStep = usUninstall then
     if FileExists(ExpandConstant('{app}\BingeMote.exe')) then
       Exec(ExpandConstant('{app}\BingeMote.exe'), '--uninstall-tls', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+// The product's elevated one-time setup. Exit 0 = done. Exit 12 = the main setup finished but VLC is
+// installed and its own firewall rules are not all in place: say so here (suppressed in a silent
+// install; then the product also leaves a notice that the next normal launch shows once, and the
+// details are always in helper.log). Other results keep the old behavior: nothing is shown here.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Code: Integer;
+begin
+  if CurStep = ssPostInstall then
+    if Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-firewall', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    begin
+      if Code = 12 then
+        SuppressibleMsgBox('Setup finished, but VLC''s own firewall rules are not all in place, so your phone may not reach VLC on this network. The details are in helper.log in %LOCALAPPDATA%\BingeMote. Everything else is set up.', mbInformation, MB_OK, IDOK);
+    end;
 end;
