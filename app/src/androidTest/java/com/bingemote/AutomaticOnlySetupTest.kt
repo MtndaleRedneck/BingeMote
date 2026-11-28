@@ -83,9 +83,11 @@ class AutomaticOnlySetupTest {
             }
             Thread.sleep(250)
         }
-        assertTrue("'You're up to date.' must expire from the screen within 7s", gone)
-        assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
+        // The expired baseline is painted BEFORE the proof asserts: on a failure the
+        // frame is exactly the evidence needed, so it must exist either way.
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-expired.png"))
+        assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
+        assertTrue("'You're up to date.' must expire from the screen within 7s", gone)
     }
 
     @Test fun cancelReturnsToSettingsAndBottomBackIsAbsent() {
