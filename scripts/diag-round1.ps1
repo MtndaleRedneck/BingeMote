@@ -11,8 +11,13 @@
 #                 PIDs; the payload hash cannot show it (same payload both times, [Files] has ignoreversion).
 #  R1-A2 forced   /FORCECLOSEAPPLICATIONS install-over. RUNS ONLY IF R1-A was not clean (H1 survived, install
 #                 failed/timed out, or exe entry not logged installed); otherwise printed as SKIPPED (redundant).
-#  HELD OUT (separate decisions, NOT in this script): R1-W (clock-aligned real-watchdog timing intervention) and
-#                 R1-U (shipped uninstall with the real helper running). Neither is implied by this script.
+#  R1-U uninstall shipped unins000.exe /VERYSILENT /NORESTART with the real helper still RUNNING (no helper is started
+#                 or restarted by the harness; the leg is skipped if none is alive). The shipped installer has
+#                 CloseApplications for install only; whether the shipped uninstaller closes, outlives or is blocked
+#                 by the helper is the question. Records helper PID/ExitCode, bounded wait on the direct process PLUS a
+#                 bounded wait (60s) for self-relaunched uninstaller children carrying the leg's unique /LOG path,
+#                 file residue in the target dir, task/Run/firewall/uninstall-key state before and after.
+#  HELD OUT (separate decision, NOT in this script): R1-W (clock-aligned deliberate real-watchdog timing intervention).
 #  Plain legs here are seconds long; they do NOT exercise the 5-minute watchdog race and a task left registered is
 #  not proof it fired. Task LastRunTime/NextRunTime/LastTaskResult and UTC timestamps are recorded before/after
 #  each leg so a natural firing inside a leg window would at least be visible (not expected, not evidence if absent).
@@ -291,7 +296,7 @@ function Run-Installer($label, $argsLine, $boundSec, [bool]$captureWindows, $exe
   if ($script:winDump) { Set-Content -Path (Join-Path $out "$label.windows.txt") -Value $script:winDump }
   if (Test-Path $log) {
     Write-Host "SETUPLOG[$label] lines=$((Get-Content $log).Count); relevant:"
-    Get-Content $log | Select-String -Pattern 'Shutting down|Successfully installed|Installing the file|Dest filename|Restart ?Manager|CloseApplications|close the application|in use|Retry|Abort|Ignore|Failed|Exception|Installation process|exit code|Application.*running|locked' |
+    Get-Content $log | Select-String -Pattern 'Deleting|Removed|Will delete|Shutting down|Successfully installed|Installing the file|Dest filename|Restart ?Manager|CloseApplications|close the application|in use|Retry|Abort|Ignore|Failed|Exception|Installation process|exit code|Application.*running|locked' |
       Select-Object -First 80 | ForEach-Object { Write-Host "  $($_.Line)" }
   } else { Write-Host "SETUPLOG[$label]: ABSENT (no log written)" }
   return [pscustomobject]@{ Exit = $rc; TimedOut = $timedOut; Log = $log }
@@ -431,6 +436,28 @@ if ($h1 -and (-not $h1.HasExited)) {
     else { Need $false "R1-A2 SKIPPED: no live helper to install over after R1-A (observation: helper absent after R1-A)" }
   }
 } else { Need $false "R1-A SKIPPED: no valid control/helper" }
+
+# ---- R1-U shipped uninstall with the real helper still running ----
+$unins = Join-Path $dir 'unins000.exe'
+$hu = $null
+Try-Cap 'R1-U helper' { $script:hutmp = Wait-Helper $dir 10 @() }
+$huw = $script:hutmp
+if ($controlValid -and $huw -and (Test-Path $unins)) {
+  $hu = Rec-Helper 'R1-U.H' $huw
+  Get-State 'R1-U.pre' $dir $exe
+  $u0 = Utc
+  Write-Host "UNINST[R1-U] startUtc=$u0 helper pid=$($hu.Id) aliveBefore=$(-not $hu.HasExited) exeHeldBefore=$(Test-HeldOpen $exe)"
+  $ru = Run-Installer 'R1-U' '/VERYSILENT /NORESTART' 90 $false $unins
+  $wEnd = (Get-Date).AddSeconds(60); $kids = @()
+  Try-Cap 'R1-U kids' {
+    do { $kids = @(Get-Under @() @($ru.Log)); if ($kids.Count -eq 0) { break }; Start-Sleep -Seconds 1 } while ((Get-Date) -lt $wEnd)
+  }
+  $hu.Refresh()
+  Write-Host "UNINST[R1-U] endUtc=$(Utc) directExit=$($ru.Exit) timedOut=$($ru.TimedOut) uninstallerChildrenStillRunningAfterWait=$($kids.Count) helperExited=$($hu.HasExited) helperExitCode=$(if ($hu.HasExited) { $hu.ExitCode } else { 'n/a' }) exeExists=$(Test-Path $exe) exeHeld=$(Test-HeldOpen $exe) dirExists=$(Test-Path $dir)"
+  Write-Host "UNINST[R1-U] target dir residue:"
+  Get-ChildItem $dir -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
+  Get-State 'R1-U.post' $dir $exe
+} else { Need $false "R1-U SKIPPED: no valid control, no live helper to uninstall under, or unins000.exe absent (nothing was started by the harness)" }
 
 # ---- final scoped cleanup AFTER all legs (helper and task intentionally retained until here) ----
 Post-Leg 'R1-final' $dir $null ''
