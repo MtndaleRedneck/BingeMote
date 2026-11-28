@@ -101,6 +101,43 @@ function Remove-Sentinel {
     netsh http delete urlacl "url=$SentinelUrl" | Out-Null
     Write-Host 'sentinel removed (verified synthetic SID before delete)'
 }
+# Every silent install auto-launches the helper ([Run] skipifnotsilent
+# runasoriginaluser), so an over-install hits Inno RestartManager with
+# /SUPPRESSMSGBOXES and Abort-defaults (observed: run 46109790484 exit 5).
+# Stop ONLY the helper this harness installed: the image path must EQUAL
+# $HelperExe (ordinal-ignore-case, no prefix match - a BingeMote2 sibling
+# or any other image is foreign state: refuse, never kill it).
+$HelperExe = Join-Path $AppDir 'BingeMote.exe'
+function Stop-InstalledHelper([bool]$waitForLaunch) {
+    $tries = 1; if ($waitForLaunch) { $tries = 10 }  # the [Run] nowait auto-launch can lag installer exit
+    $procs = @()
+    foreach ($i in 1..$tries) {
+        $procs = @(Get-CimInstance Win32_Process -Filter "Name='BingeMote.exe'" -ErrorAction SilentlyContinue)
+        if ($procs.Count -gt 0) { break }
+        if ($waitForLaunch) { Start-Sleep -Milliseconds 500 }
+    }
+    if ($procs.Count -eq 0) { Write-Host 'no helper process running (nothing to stop)'; return }
+    foreach ($p in $procs) {
+        if (-not [string]::Equals($p.ExecutablePath, $HelperExe, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "BingeMote.exe pid $($p.ProcessId) image '$($p.ExecutablePath)' is not exactly $HelperExe - foreign state, refusing to stop"
+        }
+    }
+    foreach ($p in $procs) {
+        # kill-time identity recheck: re-read the live image before terminating
+        $now = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ProcessId)" -ErrorAction SilentlyContinue
+        if (-not $now) { continue }  # exited on its own
+        if (-not [string]::Equals($now.ExecutablePath, $HelperExe, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "BingeMote.exe pid $($p.ProcessId) image changed before stop - foreign state, refusing"
+        }
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds(15)
+    foreach ($p in $procs) {
+        while ((Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 200 }
+        if (Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue) { throw "installed helper pid $($p.ProcessId) did not exit within 15s" }
+    }
+    Write-Host "stopped $($procs.Count) harness-installed helper process(es): exact image $HelperExe"
+}
 function Install($pkg, $logName) {
     $log = Join-Path $WorkDir $logName
     & $pkg /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$log" | Out-Null
@@ -183,7 +220,9 @@ function Assert-SameCompilerVersion($logA, $logB) {
 # ---- P1/P4/P5/P6: FIXED chain (old 1.9.1 -> new inert build) ----
 Write-Host '== FIXED leg: 1.9.1 -> inert-delacl build =='
 try {
+    Stop-InstalledHelper $false  # leg start: clear any helper a prior leg's uninstall left running
     Install $OldInstaller 'fixed-install-old.log'
+    Stop-InstalledHelper $true   # baseline auto-launched its helper; over-install would Abort in RestartManager
     Install $NewInstaller 'fixed-install-new.log'
     Assert-SameCompilerVersion 'fixed-install-old.log' 'fixed-install-new.log'
     $provisioned = Test-HttpsProvisioned
@@ -201,7 +240,9 @@ try {
 # ---- P2: OLD-CONTROL (merged duplicate delacl entries fire exactly once) ----
 Write-Host '== OLD-CONTROL leg: 1.9.1 -> 1.9.1 (merged log) =='
 try {
+    Stop-InstalledHelper $false  # leg start cleanup
     Install $OldInstaller 'old-install-1.log'
+    Stop-InstalledHelper $true   # same over-install hazard on the 1.9.1 -> 1.9.1 transition
     Install $OldInstaller 'old-install-2.log'
     Add-Sentinel
     $log = Uninstall 'old-uninstall.log'
@@ -215,7 +256,9 @@ try {
 # ---- P7: DOWNGRADE (fixed -> old re-arms the blind delete; scope boundary) ----
 Write-Host '== DOWNGRADE leg: inert build -> 1.9.1 over it =='
 try {
+    Stop-InstalledHelper $false  # leg start cleanup
     Install $NewInstaller 'down-install-new.log'
+    Stop-InstalledHelper $true   # same over-install hazard on the downgrade transition
     Install $OldInstaller 'down-install-old.log'
     Assert-SameCompilerVersion 'down-install-new.log' 'down-install-old.log'
     Add-Sentinel
