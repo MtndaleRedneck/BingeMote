@@ -52,7 +52,17 @@ class AutomaticOnlySetupTest {
         assertEquals(version.visibleBounds.centerY(), success.visibleBounds.centerY())
         assertTrue(success.visibleBounds.left > version.visibleBounds.right)
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-success.png"))
-        assertTrue(device.wait(Until.gone(By.text("You're up to date.")), 7000))
+        // Fresh-query gone: re-read the node every poll so a stale cached
+        // accessibility node cannot hold the wait; waitForIdle lets semantics settle.
+        // Same 7s budget, same meaning: the message must actually leave the live tree.
+        val goneBy = System.currentTimeMillis() + 7000
+        var gone = false
+        while (System.currentTimeMillis() < goneBy) {
+            device.waitForIdle()
+            if (device.findObject(By.text("You're up to date.")) == null) { gone = true; break }
+            Thread.sleep(150)
+        }
+        assertTrue("'You're up to date.' must expire from the live tree within 7s", gone)
         assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-expired.png"))
     }

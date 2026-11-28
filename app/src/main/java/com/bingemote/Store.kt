@@ -273,6 +273,32 @@ class Store internal constructor(
     val isConfigured: Boolean
         get() = setupDone && helperPairing() is PairedCredential.State.Secure && host.isNotBlank() && vlcPassword.isNotBlank()
 
+    /** Rediscovery write: CAS the stored PC's address (updateAddress copies pcId/pin/token from
+     *  the record the probe used and writes nothing when the record moved on) AND capture the
+     *  post-CAS generation under the SAME lock - an intervening repair can no longer lend this
+     *  address move its generation. Null = refused; the next unreachable cycle retries. */
+    internal fun updateSecureAddressAndGeneration(expectedRecord: String, host: String, port: Int): Long? =
+        synchronized(pairingLock) {
+            if (SecurePairSave.updateAddress(securePairStore, expectedRecord, host, port)) pairingMutationGeneration else null
+        }
+
+    /** Pair save with its outcome and post-bump generation captured under the SAME lock: the
+     *  returned generation belongs to THIS save, so a mutation landing before a later publish
+     *  can never let it pass with a stale tuple the way a blind post-save generation read can.
+     *  The generation is null unless the outcome is SAVED. */
+    internal fun savePairingAndGeneration(host: String, port: Int, pcName: String, vlcPassword: String?, proof: SecureHttp.BoundPin, pcId: String): Pair<SecurePairSave.Outcome, Long?> =
+        synchronized(pairingLock) {
+            val r = SecurePairSave.save(securePairStore, host, port, pcName, vlcPassword, proof, pcId)
+            r to (if (r == SecurePairSave.Outcome.SAVED) pairingMutationGeneration else null)
+        }
+
+    /** Atomic check+run gate for live-state publishes: [block] runs only while the pairing
+     *  generation is still [gen], inside the SAME lock every pairing mutation takes, so a
+     *  repair or forget can never slip between the check and the publish. [block] must be
+     *  pure in-memory state assignment - no IO and no suspension under the lock. */
+    internal fun <T> runIfPairingCurrent(gen: Long, block: () -> T): T? =
+        synchronized(pairingLock) { if (pairingMutationGeneration == gen) block() else null }
+
     /** An old plain-HTTP pairing, an interrupted save or an unreadable store: shown as "pair again", never as paired. */
     val pairingNeedsRepair: Boolean
         get() = setupDone && helperPairing().let { it is PairedCredential.State.NeedsRepair || it is PairedCredential.State.Blocked }

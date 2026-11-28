@@ -203,12 +203,19 @@ fun SetupScreen(
             try {
                 val sp = withContext(Dispatchers.IO) { HelperClient.pairSecure(target.host, target.port, code) }
                 val paired = sp.result
-                val saveOutcome = withContext(Dispatchers.IO) { SecurePairSave.save(store.securePairStore, target.host, target.port,
-                    paired.name.ifBlank { target.name }, paired.vlcPassword, sp.proof, sp.pcId) }
-                if (saveOutcome != SecurePairSave.Outcome.SAVED) {
+                // The save's outcome and its post-bump generation come from the SAME locked
+                // section: the generation is bound to THIS save, never a blind later read.
+                val (saveOutcome, savedGen) = withContext(Dispatchers.IO) {
+                    store.savePairingAndGeneration(target.host, target.port,
+                        paired.name.ifBlank { target.name }, paired.vlcPassword, sp.proof, sp.pcId)
+                }
+                if (saveOutcome != SecurePairSave.Outcome.SAVED || savedGen == null) {
                     pairing = false; say(saveOutcome.userMessage, true); return@launch
                 }
-                remote.publishAddress(target.host, target.port, paired.token)
+                // The same atomic publish gate as the other live-address sites: a mutation
+                // landing before or after the save drops this publish instead of letting the
+                // old tuple through.
+                store.runIfPairingCurrent(savedGen) { remote.publishAddress(target.host, target.port, paired.token) }
                 // Automatic-first: the PC generated the VLC password and handed it over with
                 // the pair. Older helpers need an update before automatic setup can finish.
                 if (paired.vlcPassword != null) {

@@ -246,14 +246,20 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" helper/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
-      # The real previous release, built from its own source with no hooks: the e2e
-      # installs it first and then upgrades, so the upgrade path under test is the
-      # actual 1.7.12 -> 1.7.13 one, not simulated leftovers. The baseline is the
-      # tmp/pc-1712 commit, an ancestor of this branch (pinned sha; the branch
-      # itself is not kept on the remote).
-      - name: Build the real 1.7.12 installer (upgrade baseline)
+      # The real prior-live PC release line, built from its own source with no hooks:
+      # the e2e installs it first and then upgrades, so the upgrade path under test is
+      # the actual prior-live (1.9.1) -> staged one, not simulated leftovers. The
+      # baseline is the immutable commit refs/tags/pc-v1.9.1 resolves to (tag target
+      # verified via the GitHub API), fetched EXPLICITLY first: a full clone carries
+      # only ref-reachable objects, and the old bare-sha pin rotted when its branch
+      # moved (dangling object -> "fatal: invalid reference"). This pins the released
+      # source line; it says nothing about what is installed on any particular PC.
+      - name: Build the real 1.9.1 installer (upgrade baseline)
         run: |
-          git worktree add old 2d3b54e9eb66dda5c1870331e76e342fde2f8d2a
+          $base = "ae3c9b7b2fdf6ad9c8a71e26ca559204864a6f2a"  # refs/tags/pc-v1.9.1, API-verified
+          git fetch origin $base
+          if ((git cat-file -t $base) -ne "commit") { throw "baseline pin did not resolve to a commit" }
+          git worktree add old $base
           dotnet publish old/helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o old/helper/out
           $v = Select-String -Path old/helper/BingeMoteHelper/BingeMoteHelper.csproj -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value -replace '\.0$','' }
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" old/helper/installer.iss

@@ -337,24 +337,43 @@ class RemoteState(
                     return@launch
                 }
                 val found = HelperClient.discover(3000)
-                // The pairing token is the PC's identity; its name is only a label.
-                val match = found.firstOrNull { HelperClient.ping(it.host, it.port, seq?.snapshot?.helperToken ?: "") }
-                if (match != null) {
-                    // Storage writes on IO (the locked setters do disk IO and wait on pairingLock);
-                    // the token read rides the SAME locked section, so (writes, token, generation)
-                    // are one atomic unit. Main receives only the in-memory state publish, gated by
-                    // the storage-free generation captured with it: a newer mutation drops the publish.
-                    val applied = withContext(Dispatchers.IO) {
-                        synchronized(pairingLock) {
-                            store.host = match.host
-                            store.helperPort = match.port
-                            store.pairingGeneration to store.helperToken
+                // A SECURE pairing moves only to an address that proves the stored key and
+                // answers with the stored token (applySecureRediscovery); the record is the
+                // identity, never the discovery data. The plain ping below runs only for
+                // legacy records, which read as "pair again" anyway - their behavior is
+                // unchanged.
+                if (store.pollSnapshot().secure) {
+                    val r = applySecureRediscovery(store, found)
+                    if (r != null) {
+                        withContext(Dispatchers.Main) {
+                            // Check+publish are ONE atomic section under pairingLock (the CAS
+                            // captured the generation under that same lock): a repair or forget
+                            // can never slip between them and lend the old address and token to
+                            // the new pairing.
+                            if (store.runIfPairingCurrent(r.generation) { publishAddress(r.host, r.port, r.token) } != null) {
+                                failures = 0
+                            }
                         }
                     }
-                    withContext(Dispatchers.Main) {
-                        if (store.pairingGeneration == applied.first) {
-                            publishAddress(match.host, match.port, applied.second)
-                            failures = 0
+                } else {
+                    // The pairing token is the legacy PC's identity; its name is only a label.
+                    val match = found.firstOrNull { HelperClient.ping(it.host, it.port, seq?.snapshot?.helperToken ?: "") }
+                    if (match != null) {
+                        // Storage writes on IO (the locked setters do disk IO and wait on pairingLock);
+                        // the token read rides the SAME locked section, so (writes, token, generation)
+                        // are one atomic unit. Main receives only the in-memory state publish, gated by
+                        // the storage-free generation captured with it: a newer mutation drops the publish.
+                        val applied = withContext(Dispatchers.IO) {
+                            synchronized(pairingLock) {
+                                store.host = match.host
+                                store.helperPort = match.port
+                                store.pairingGeneration to store.helperToken
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            if (store.runIfPairingCurrent(applied.first) { publishAddress(match.host, match.port, applied.second) } != null) {
+                                failures = 0
+                            }
                         }
                     }
                 }
@@ -383,7 +402,7 @@ class RemoteState(
     @Volatile private var pushback: Cmd? = null // one non-volume command held while volume folds
     init {
         // B2: the stored address publishes from ONE locked snapshot+generation capture; the
-        // Main publish lands only while the generation still matches that capture, so a
+        // generation check and the Main publish are ONE atomic section under pairingLock, so a
         // re-pair during startup never shows the old pairing's address as current. On drift
         // the capture repeats on IO (bounded, 3 recaptures): a single mid-startup heal write
         // is absorbed. On persistent drift the address stays blank - LiveWs already fails
@@ -396,7 +415,7 @@ class RemoteState(
                 val (snap, gen) = capture
                 if (snap == null) return@launch
                 val published = withContext(Dispatchers.Main) {
-                    if (store.pairingGeneration == gen) { publishAddress(snap.host, snap.helperPort, snap.helperToken); true } else false
+                    store.runIfPairingCurrent(gen) { publishAddress(snap.host, snap.helperPort, snap.helperToken) } != null
                 }
                 if (published || attempts >= 3) return@launch
                 attempts++
@@ -848,4 +867,23 @@ class RemoteState(
             }
         })
     }
+}
+
+
+/** The verified result of a secure rediscovery: the endpoint that proved the stored identity
+ *  plus the post-CAS pairing generation for the publish gate. */
+internal class RediscoveredEndpoint(val host: String, val port: Int, val token: String, val generation: Long)
+
+/** One seam for the whole secure-rediscovery decision, used by RemoteState.rediscover and by
+ *  tests: probe each discovered candidate against the STORED identity (pin + token; discovery
+ *  data only ever picks candidates) and CAS the first proof into the record. Returns the
+ *  verified endpoint with the generation captured under the CAS lock, or null when nothing
+ *  moved (no proof, record changed underneath, store latched). Never publishes itself. */
+internal fun applySecureRediscovery(store: Store, candidates: List<HelperClient.DiscoveredHelper>): RediscoveredEndpoint? {
+    val snap = store.pollSnapshot()
+    val expected = if (snap.secure) snap.encode else null
+    val cred = expected?.let { PairedCredential.decode(it) } ?: return null
+    val match = candidates.firstOrNull { HelperClient.probePaired(cred, it.host, it.port) } ?: return null
+    val gen = store.updateSecureAddressAndGeneration(expected, match.host, match.port) ?: return null
+    return RediscoveredEndpoint(match.host, match.port, cred.token, gen)
 }

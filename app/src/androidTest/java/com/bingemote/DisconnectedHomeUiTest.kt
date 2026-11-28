@@ -28,6 +28,9 @@ class DisconnectedHomeUiTest {
     private fun shot(name: String) =
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-$name.png"))
     private fun has(text: String) = device.hasObject(By.text(text))
+
+    @org.junit.Before fun resetPairing() = HapticTickTest.clearPairingAndPrefs(ctx)
+    @org.junit.After fun clearPairing() = HapticTickTest.clearPairingAndPrefs(ctx)
     private fun waitText(text: String, ms: Long = 20000) = assertTrue("expected '$text'", device.wait(Until.hasObject(By.text(text)), ms))
     private fun waitGone(text: String, ms: Long = 20000) = assertTrue("'$text' still shown", device.wait(Until.gone(By.text(text)), ms))
 
@@ -66,7 +69,7 @@ class DisconnectedHomeUiTest {
     @Test fun connectedThenDropReadsZeroThenReconnects() {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             stub.state = "playing"
             stub.mark("launch")
             launch()
@@ -151,8 +154,7 @@ class DisconnectedHomeUiTest {
     @Test fun vlcClosedReadsZero() {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
-            Store(ctx).apply { helperToken = "x"; helperPort = stub.port }
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             stub.state = "playing"
             launch()
             waitText("1:00:00 total")
@@ -160,13 +162,13 @@ class DisconnectedHomeUiTest {
             waitText("VLC isn't open", 30000)
             assertZero()
             shot("vlcclosed-zero")
-        } finally { stub.stop(); Store(ctx).apply { helperToken = ""; helperPort = 8488 } }
+        } finally { stub.stop() }
     }
 
     @Test fun vlcRefusedReadsZero() {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             stub.state = "playing"
             launch()
             waitText("1:00:00 total")

@@ -51,13 +51,15 @@ class HapticTickTest {
         device.executeShellCommand("settings put system haptic_feedback_enabled 1")
         originalTick = MediaControlsService.performTick
         MediaControlsService.performTick = { hits.incrementAndGet() }
-        seedPrefs(ctx, haptics = true, port = deadPort())
+        clearPairingAndPrefs(ctx)
+        seedPrefsPaired(ctx, haptics = true, port = deadPort())
     }
 
     @After fun tearDown() {
         device.executeShellCommand("settings put system haptic_feedback_enabled 1")
         ctx.stopService(Intent(ctx, MediaControlsService::class.java))
         MediaControlsService.performTick = originalTick
+        clearPairingAndPrefs(ctx)
     }
 
     @Test fun actionFiresTick() {
@@ -68,7 +70,7 @@ class HapticTickTest {
     }
 
     @Test fun appSettingOffSuppressesTick() {
-        seedPrefs(ctx, haptics = false, port = deadPort())
+        seedPrefsPaired(ctx, haptics = false, port = deadPort())
         ctx.startService(Intent(ctx, MediaControlsService::class.java).setAction(ACTION_VOL_UP))
         Thread.sleep(3000)
         assertEquals(0, hits.get())
@@ -88,7 +90,7 @@ class HapticTickTest {
     @Test fun pollNeverTicks() {
         val stub = StatusStub(); stub.start()
         try {
-            seedPrefs(ctx, haptics = true, port = stub.port)
+            seedPrefsPaired(ctx, haptics = true, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java)) // no action: pure polling
             Thread.sleep(5500) // first poll immediately, then every 2 s
             assertTrue("expected the poll to have run, saw ${stub.polls.get()} polls", stub.polls.get() >= 2)
@@ -122,6 +124,57 @@ class HapticTickTest {
             Store(ctx).vlcPassword = "x"
             Store(ctx).helperToken = ""
         }
+
+        /** 64 lowercase hex, the helper-issued token shape PairedCredential requires. */
+        private val pairToken = "cd".repeat(32)
+
+        /** Pair the test store with the fake helper through the REAL secure save path
+         *  (same fixture shape as AutoSetupCheckTest): a genuine PairedCredential record
+         *  bound to the fake server's key pin. A fresh pcId per call keeps the
+         *  process-wide key-change state out of the tests. Fails loudly, never
+         *  silently unpaired. */
+        internal fun pairWithHelper(store: Store, helperPort: Int, vlcPassword: String?) {
+            val pin = AutoSetupCheckTest.HelperTls.pinHex
+            val c = PairedCredential.of(PairedCredential.newPcId(), pin, "127.0.0.1", helperPort, pairToken)!!
+            val outcome = SecurePairSave.save(
+                store.securePairStore, c.host, c.port, "FakePC", vlcPassword,
+                SecureHttp.BoundPin(pin, pairToken), c.pcId,
+            )
+            org.junit.Assert.assertEquals(
+                "the fixture must pair through the real secure save path",
+                SecurePairSave.Outcome.SAVED, outcome,
+            )
+        }
+
+        /** One process-wide TLS helper for the paired fixtures: stateless /ping 200 +
+         *  /volume/get answers on the real pinned-HTTPS path; dies with the test
+         *  process. VLC stays on each class's own plaintext stub (its request counts,
+         *  polls and assertions are per-class): production polls VLC's plaintext web
+         *  remote directly; only the helper channel is TLS-pinned. */
+        internal val sharedTlsHelper by lazy {
+            StatusStub(AutoSetupCheckTest.HelperTls.context).apply { start() }
+        }
+
+        /** seedPrefs PLUS a real secure pairing (production SecurePairSave path) bound
+         *  to the shared TLS helper: the app gates polling and commands on a Secure
+         *  pairing record, so fixtures exercising connected behavior must pair for
+         *  real. Only the red suites use this; the 34 green seedPrefs callers are
+         *  untouched on purpose - a pairing record changes rendered paired/unpaired
+         *  UI state. */
+        internal fun seedPrefsPaired(ctx: Context, haptics: Boolean, port: Int) {
+            seedPrefs(ctx, haptics, port)
+            pairWithHelper(Store(ctx), sharedTlsHelper.port, "x")
+        }
+
+        /** Pairing residue is process- and disk-wide: a record left by one class
+         *  changes later classes' rendered and polled state. Forget through the
+         *  production path and clear the same two prefs files
+         *  AutoSetupCheckTest.freshStore() clears. */
+        internal fun clearPairingAndPrefs(ctx: Context) {
+            SecurePairSave.forget(Store(ctx).securePairStore)
+            ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
+            ctx.getSharedPreferences("secrets", Context.MODE_PRIVATE).edit().clear().commit()
+        }
     }
 
     /**
@@ -130,7 +183,7 @@ class HapticTickTest {
      * (commandDelayMs); a status request snapshots state at ARRIVAL and can answer
      * late (statusDelayMs), which is how a stale in-flight poll is reproduced.
      */
-    class StatusStub {
+    class StatusStub(tls: javax.net.ssl.SSLContext? = null) {
         val polls = AtomicInteger(0)
         val commands = CopyOnWriteArrayList<String>()
         /** Diagnostic only: wall-clock request/response log (ms epoch), read by tests that opt in. */
@@ -147,7 +200,8 @@ class HapticTickTest {
         @Volatile var beforeStatusResponse: (() -> Unit)? = null
         @Volatile var beforeCommandResponse: (() -> Unit)? = null
         private val running = AtomicBoolean(true)
-        private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        private val server = tls?.serverSocketFactory?.createServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+            ?: ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val port = server.localPort
 
         fun start() {
@@ -254,6 +308,7 @@ class ImmediateFlipTest {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.executeShellCommand("pm grant com.bingemote android.permission.POST_NOTIFICATIONS")
         posts.clear()
+        clearPairingAndPrefs(ctx)
         MediaControlsService.postProbe = { playing -> posts += Post(System.currentTimeMillis(), playing) }
     }
 
@@ -271,12 +326,13 @@ class ImmediateFlipTest {
         MediaControlsService.pollCommitted = null
         MediaControlsService.disablePeriodicPoll = false
         MediaControlsService.postProbe = null
+        clearPairingAndPrefs(ctx)
     }
 
     @Test fun glyphFlipsBeforeVlcAnswersAndNeverRevertsOnSuccess() {
         val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.commandDelayMs = 2500; stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             Thread.sleep(3000) // initial post + first title poll settle; steady-state polls dedup
             posts.clear()
@@ -298,7 +354,7 @@ class ImmediateFlipTest {
     }
 
     @Test fun disconnectedPlayIsTappableNoOp() {
-        HapticTickTest.seedPrefs(ctx, haptics = false, port = HapticTickTest.deadPort())
+        HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = HapticTickTest.deadPort())
         ctx.startService(Intent(ctx, MediaControlsService::class.java))
         Thread.sleep(3000)
         posts.clear()
@@ -310,7 +366,7 @@ class ImmediateFlipTest {
     @Test fun knownLostConnectionDoesNotFlip() {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             Thread.sleep(3000)
             stub.stop()
@@ -325,7 +381,7 @@ class ImmediateFlipTest {
     @Test fun rapidDoubleTapEndsConsistentWithPc() {
         val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             Thread.sleep(3000)
             posts.clear()
@@ -342,7 +398,7 @@ class ImmediateFlipTest {
     @Test fun staleInflightPollDoesNotUndoFlip() {
         val stub = HapticTickTest.StatusStub(); stub.state = "paused"; stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val connectedBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < connectedBy) Thread.sleep(50)
@@ -363,7 +419,7 @@ class ImmediateFlipTest {
         val release = java.util.concurrent.CountDownLatch(1)
         val completed = java.util.concurrent.CountDownLatch(1)
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -396,7 +452,7 @@ class ImmediateFlipTest {
         val reached = java.util.concurrent.CountDownLatch(1)
         val release = java.util.concurrent.CountDownLatch(1)
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -433,7 +489,7 @@ class ImmediateFlipTest {
         val done = java.util.concurrent.CountDownLatch(1)
         val allowRecoveryCommit = java.util.concurrent.CountDownLatch(1)
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -526,7 +582,7 @@ class ImmediateFlipTest {
         val releaseFirst = java.util.concurrent.CountDownLatch(1)
         val deliveries = java.util.concurrent.atomic.AtomicInteger()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -576,7 +632,7 @@ class ImmediateFlipTest {
     private fun checkPreStartCleanup(throwPost: Boolean) {
         val stub = HapticTickTest.StatusStub(); stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -620,7 +676,7 @@ class ImmediateFlipTest {
         val returned = java.util.concurrent.CountDownLatch(1)
         try {
             MediaControlsService.disablePeriodicPoll = true
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val startedBy = System.currentTimeMillis() + 3000
             while (!MediaControlsService.testServiceAlive && System.currentTimeMillis() < startedBy) Thread.sleep(20)
@@ -665,7 +721,7 @@ class ImmediateFlipTest {
         val release = java.util.concurrent.CountDownLatch(1)
         val completed = java.util.concurrent.CountDownLatch(1)
         try {
-            HapticTickTest.seedPrefs(ctx, false, stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, false, stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             val readyBy = System.currentTimeMillis() + 8000
             while (posts.count { !it.playing } < 2 && System.currentTimeMillis() < readyBy) Thread.sleep(30)
@@ -695,7 +751,7 @@ class ImmediateFlipTest {
         stub.commandDelayMs = 1500; stub.failCommands = 1 // press 1's command fails LATE
         stub.start()
         try {
-            HapticTickTest.seedPrefs(ctx, haptics = false, port = stub.port)
+            HapticTickTest.seedPrefsPaired(ctx, haptics = false, port = stub.port)
             ctx.startService(Intent(ctx, MediaControlsService::class.java))
             Thread.sleep(3000)
             posts.clear()

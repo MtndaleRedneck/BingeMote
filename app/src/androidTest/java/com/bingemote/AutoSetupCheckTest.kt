@@ -34,6 +34,9 @@ class AutoSetupCheckTest {
     private class FakeServer(
         private val handler: (String, String, String?, String) -> Pair<Int, String>,
         tls: SSLContext? = null,
+        /** When set, a request without exactly this X-BingeMote-Token header gets 401 before the
+         *  handler runs: the fake helper proves the token check, not just the TLS key. */
+        private val requiredToken: String? = null,
     ) {
         private val socket: ServerSocket = tls?.serverSocketFactory?.createServerSocket(0) ?: ServerSocket(0)
         val port: Int = socket.localPort
@@ -47,16 +50,19 @@ class AutoSetupCheckTest {
                         val r = BufferedReader(InputStreamReader(s.getInputStream()))
                         val parts = (r.readLine() ?: "").split(" ")
                         var auth: String? = null
+                        var token: String? = null
                         var length = 0
                         while (true) {
                             val line = r.readLine() ?: break
                             if (line.isEmpty()) break
                             if (line.startsWith("Authorization:", ignoreCase = true)) auth = line.substringAfter(':').trim()
+                            if (line.startsWith("X-BingeMote-Token:", ignoreCase = true)) token = line.substringAfter(':').trim()
                             if (line.startsWith("Content-Length:", ignoreCase = true)) length = line.substringAfter(':').trim().toInt()
                         }
                         val chars = CharArray(length)
                         if (length > 0) r.read(chars)
-                        val (code, body) = handler(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" }, auth, String(chars))
+                        val (code, body) = if (requiredToken != null && token != requiredToken) 401 to "{\"error\":\"bad token\"}"
+                        else handler(parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" }, auth, String(chars))
                         val bytes = body.toByteArray(Charsets.UTF_8)
                         s.getOutputStream().apply {
                             write("HTTP/1.1 $code X\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
@@ -79,7 +85,7 @@ class AutoSetupCheckTest {
      *  fakehelper-test.crt/.key), NOT a real credential. The secure transport pins this
      *  exact key, so instrumentation drives the real pinned-HTTPS path. PEM assets +
      *  pure JCA loading: no PKCS12/keystore-format risk on-device. */
-    private object HelperTls {
+    internal object HelperTls {
         private const val ALIAS_PASSWORD = "test-only"
         private fun loadCertAndKey(): Pair<X509Certificate, PrivateKey> {
             val assets = InstrumentationRegistry.getInstrumentation().context.assets
@@ -308,5 +314,50 @@ class AutoSetupCheckTest {
             store.vlcPort = helper.port; pairWithHelper(store, helper.port, "pw-1")
             assertEquals(AutoSetupCheck.Outcome.REFUSED, AutoSetupCheck.run(store))
         } finally { helper.stop() }
+    }
+
+    @Test
+    fun dhcpMoveProbesKeyAndTokenThenMovesStoredAddress() {
+        // The PC's address changes (DHCP / new network): the old address is dead and the same
+        // PC (same HelperTls key) answers at a new one. Goes through the PRODUCTION seam
+        // (applySecureRediscovery): the probe must prove key + token, the CAS must move only
+        // host/port, and the gate must then flow requests to the new address.
+        val store = freshStore()
+        val pings = { _: String, path: String, _: String?, _: String ->
+            if (path == "/ping") 200 to "{}" else 404 to "{}"
+        }
+        val helperA = FakeServer(pings, HelperTls.context, requiredToken = helperToken).start()
+        try {
+            pairWithHelper(store, helperA.port, "pw-1")
+            val before = store.pollSnapshot()
+            assertEquals(helperA.port, before.helperPort)
+            helperA.stop() // the old address dies
+            // A plaintext listener at another address is not the PC: the seam must refuse it.
+            FakeServer(pings, requiredToken = helperToken).start().use { plain ->
+                assertEquals(null, applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", plain.port, "rogue"))))
+            }
+            // The right key with the WRONG token expected by the server is not a proof either.
+            FakeServer(pings, HelperTls.context, requiredToken = "ef".repeat(32)).start().use { wrongTok ->
+                assertEquals(null, applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", wrongTok.port, "rogue"))))
+            }
+            // The same PC at a new address: proof passes, the CAS moves the address, identity stays.
+            val helperB = FakeServer(pings, HelperTls.context, requiredToken = helperToken).start()
+            try {
+                val r = applySecureRediscovery(store, listOf(HelperClient.DiscoveredHelper("127.0.0.1", helperB.port, "FakePC")))
+                org.junit.Assert.assertNotNull(r)
+                assertEquals(helperB.port, r!!.port)
+                assertEquals(before.helperToken, r.token)
+                val after = store.pollSnapshot()
+                assertEquals(helperB.port, after.helperPort)
+                assertEquals(before.pcId, after.pcId)
+                assertEquals(before.helperToken, after.helperToken)
+                assertTrue(HelperClient.ping("127.0.0.1", helperB.port, after.helperToken))
+            } finally { helperB.stop() }
+        } finally { runCatching { helperA.stop() } }
+    }
+
+    /** FakeServer has no Closeable; small scope helper so refusal-case servers always stop. */
+    private fun <T : FakeServer, R> T.use(block: (T) -> R): R {
+        try { return block(this) } finally { stop() }
     }
 }

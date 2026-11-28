@@ -3,8 +3,6 @@ package com.bingemote
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -48,6 +46,9 @@ import kotlin.concurrent.thread
  * request), and times every /mouse/move.
  */
 class MouseCadenceTest {
+
+    @org.junit.After
+    fun clearPairing() = HapticTickTest.clearPairingAndPrefs(InstrumentationRegistry.getInstrumentation().targetContext)
     data class Frame(val atNanos: Long, val dx: Double, val dy: Double)
 
     private val frames = Collections.synchronizedList(mutableListOf<Frame>())
@@ -59,23 +60,20 @@ class MouseCadenceTest {
         val ctx = instrumentation.targetContext
         val port = 18499
 
-        // Pair the app against the fake helper before launch (same process/UID:
-        // the encrypted store opens with the same master key).
+        // Pair the app against the fake helper before launch through the REAL secure
+        // save path (same process/UID: the encrypted store opens with the same master
+        // key). VLC points at a dead port: this test exercises the mouse/helper path,
+        // and the helper channel is TLS-pinned, so the fake helper serves TLS.
+        HapticTickTest.clearPairingAndPrefs(ctx)
         ctx.getSharedPreferences("settings", 0).edit()
             .putString("host", "127.0.0.1")
-            .putInt("helperPort", port)
-            .putInt("vlcPort", port)
+            .putInt("vlcPort", HapticTickTest.deadPort())
             .putBoolean("setupDone", true)
             .apply()
-        val secrets = EncryptedSharedPreferences.create(
-            ctx, "secrets",
-            MasterKey.Builder(ctx).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-        secrets.edit().putString("vlcPassword", "rig").putString("helperToken", "rigtoken").apply()
+        HapticTickTest.pairWithHelper(Store(ctx), port, "rig")
 
-        val server = ServerSocket(port, 50, InetAddress.getByName("127.0.0.1"))
+        val server = AutoSetupCheckTest.HelperTls.context.serverSocketFactory
+            .createServerSocket(port, 50, InetAddress.getByName("127.0.0.1"))
         val serverThread = thread { serveLoop(server) }
 
         val device = UiDevice.getInstance(instrumentation)

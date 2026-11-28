@@ -338,7 +338,7 @@ grep -q '^OK (' screenshots/automatic-setup-instrument.txt || { echo 'ASSERT FAI
 # Named setup captures via the same verified pull: a missing/failed/error pull is
 # logged and NOT kept (never an empty stub), and never aborts the run before the
 # failure-evidence pull below; the instrument grep assert keeps the exit semantics.
-for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings; do
+for capture in setup-before-selection setup-selected-pc setup-selected-address setup-cancel-settings updates-success updates-expired; do
   pull_device_file "bm-$capture.png" screenshots
 done
 # FailureDumpRule evidence (screenshot + window hierarchy + logcat, plus the paired

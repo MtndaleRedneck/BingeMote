@@ -110,6 +110,37 @@ object HelperClient {
         post(host, port, "/ping", JSONObject(), token, 1500); true
     } catch (e: Exception) { false }
 
+    /**
+     * DHCP rediscovery probe for a SECURE pairing: the candidate address must first prove the
+     * stored key with a handshake-only probe (no application bytes ever cross an unproven
+     * address, and a mismatch there never marks the PC key-changed), then answer /ping on a
+     * pinned connection with the stored token. RequestGate is deliberately not consulted: its
+     * same-address check exists to catch stale callers on ordinary requests, and here the
+     * address move is the whole point. Identity comes only from the stored record, never from
+     * discovery data.
+     */
+    fun probePaired(c: PairedCredential, host: String, port: Int): Boolean {
+        if (KeyChangeState.isChanged(c.pcId)) return false
+        if (SecureHttp.probe(c.policy(), c.pcId, host, port, 1500) != SecureHttp.ProbeResult.MATCH) return false
+        // The second connection must not latch the saved pcId either: the address is still
+        // unverified, so a key flip between probe and ping means this was never the saved PC.
+        // (PinningTrustManager's markOnMismatch defaults to true - right for verified
+        // endpoints, wrong here.)
+        val tm = PinningTrustManager(c.policy(), c.pcId, false, markOnMismatch = false)
+        val link = try { SecureHttp.open(c.policy(), c.pcId, host, port, "/ping", false, tm, 1500, 1500) }
+            catch (e: Exception) { return false }
+        val conn = link.connection
+        return try {
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("X-BingeMote-Token", c.token)
+            conn.outputStream.use { os: OutputStream -> os.write("{}".toByteArray(Charsets.UTF_8)) }
+            link.responseCode() in 200..299
+        } catch (e: Exception) { false }
+        finally { releaseQuietly(conn) }
+    }
+
     private fun get(host: String, port: Int, path: String, token: String, timeoutMs: Int = 5000): JSONObject {
         val c = secureOpen(host, port, path, token, timeoutMs, timeoutMs)
         try {
