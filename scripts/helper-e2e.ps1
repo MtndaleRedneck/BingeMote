@@ -188,12 +188,18 @@ Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "upgrade left the l
 $wdLogPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
 $wdLog = if (Test-Path $wdLogPath) { Get-Content $wdLogPath -Raw } else { '' }
 $wdSddl = Get-TaskSddl $script:WdName
+Write-Host '-- helper.log watchdog / scheduled task lines --'; ($wdLog -split "`n" | Where-Object { $_ -match 'watchdog|scheduled task' }) | ForEach-Object { Write-Host ("wdlog: " + $_.TrimEnd()) }
 if ($wdSddl) {
     Write-Host "watchdog product state: REGISTERED sddl=$wdSddl"
     Assert ($wdLog.Contains('watchdog registered for the installing user')) "log says the watchdog was registered"
-    $wdAces = [regex]::Matches($wdSddl, '\(([^)]*)\)') | ForEach-Object { $_.Groups[1].Value }
-    Assert (@($wdAces | Where-Object { $_ -match '^A;;(FA|0x1f01ff);;;(SY|BA)$' }).Count -eq 2) "task DACL has exactly SYSTEM and Administrators full control"
-    Assert (@($wdAces | Where-Object { $_ -match '^A;;(FR|0x120089);;;S-1-5-21-' }).Count -eq 1 -and $wdAces.Count -eq 3) "task DACL has exactly one other ACE: read-only for the target user SID"
+    # Parse the descriptor instead of matching SDDL text: SDDL renders well-known account SIDs as aliases (the built-in Administrator account's SID prints as "LA"), so a text match on "S-1-5-21-" is not a SID check.
+    $wdMe = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $wdRsd = New-Object Security.AccessControl.RawSecurityDescriptor($wdSddl)
+    $wdAcl = @($wdRsd.DiscretionaryAcl | ForEach-Object { [pscustomobject]@{ Type = [string]$_.AceType; Sid = $_.SecurityIdentifier.Value; Mask = [int]$_.AccessMask } })
+    Write-Host ("watchdog task ACEs: " + (($wdAcl | ForEach-Object { $_.Type + ':' + $_.Sid + ':0x' + ('{0:X}' -f $_.Mask) }) -join ' ; ') + " ; elevated account SID=" + $wdMe)
+    Assert ($wdAcl.Count -eq 3 -and @($wdAcl | Where-Object { $_.Type -eq 'AccessAllowed' }).Count -eq 3) "task DACL has exactly three allow ACEs"
+    Assert (@($wdAcl | Where-Object { $_.Mask -eq 0x1f01ff -and ($_.Sid -eq 'S-1-5-18' -or $_.Sid -eq 'S-1-5-32-544') }).Count -eq 2) "task DACL has exactly SYSTEM and Administrators full control"
+    Assert (@($wdAcl | Where-Object { $_.Mask -eq 0x120089 -and $_.Sid -eq $wdMe }).Count -eq 1) "task DACL has exactly one other ACE: read-only for the target user SID (the elevated account)"
     $script:WdState = 'REGISTERED'
 } else {
     Write-Host "watchdog product state: NOT REGISTERED"
