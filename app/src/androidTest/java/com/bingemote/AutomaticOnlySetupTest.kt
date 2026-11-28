@@ -274,7 +274,11 @@ class AutomaticOnlySetupTest {
                 if (stable) break
                 nudges++; continue
             }
-            if (before == null || before.ve == null || before.ve.isEmpty) {
+            // Run 46156779127: read#0 came ~0.5 s after the swipe back to the top; the Compose tree was mid-update
+            // (logcat "Null child 10/11", saved hierarchy mixes two scroll positions), so complete=false. An incomplete
+            // walk proves nothing, so re-read (bounded by the same 10-pass budget); acceptance below still needs a
+            // complete walk, the 4-sample check and the unchanged final gate.
+            if (before == null || !before.complete || before.ve == null || before.ve.isEmpty) {
                 device.waitForIdle(); Thread.sleep(300); nudges++; continue
             }
             val vr = before.ve
