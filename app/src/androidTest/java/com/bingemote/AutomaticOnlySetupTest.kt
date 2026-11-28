@@ -474,8 +474,11 @@ class AutomaticOnlySetupTest {
             device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                 device.displayWidth / 2, device.displayHeight / 4, 25)
             device.waitForIdle()
-            Thread.sleep(300)
-            if (device.hasObject(By.text("Done"))) foundDone = true
+            // Run 46159588834: after 12 back-to-back swipes the failure-time hierarchy still showed the top of the page
+            // (no Done) while the same-moment screenshot showed Done on screen, and the paired capture 4177 ms later
+            // listed Done. The tree lags a scroll and converges once input stops, so poll for it (returns as soon as
+            // it is present) instead of one 300 ms look followed by the next swipe. Still fails if Done never appears.
+            if (device.wait(Until.hasObject(By.text("Done")), 5000)) foundDone = true
             doneNudges++
         }
         assertTrue("Automatic deferred setup still needs a Done action", foundDone)
