@@ -5,10 +5,17 @@ $ErrorActionPreference = 'Stop'
 $exe = "helper/out/BingeMote.exe"
 if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 
+# The plaintext baseline leg speaks http; once the one-time secure setup has run the
+# helper serves HTTPS only, and every later call goes over TLS. The identity is the
+# product's self-signed pairing key: on loopback CI checks reachability and auth codes,
+# not certificate trust (the Android side pins the key; that is what the app tests prove).
+$script:Scheme = 'http'
 function Invoke-Helper($path, $body, $token) {
     $headers = @{}
     if ($token) { $headers['X-BingeMote-Token'] = $token }
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+    $tls = @{}
+    if ($script:Scheme -eq 'https') { $tls['SkipCertificateCheck'] = $true }
+    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
@@ -23,21 +30,23 @@ function Redact-Secrets([string]$text) {
 function Invoke-HelperGet($path, $token) {
     $headers = @{}
     if ($token) { $headers['X-BingeMote-Token'] = $token }
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck
+    $tls = @{}
+    if ($script:Scheme -eq 'https') { $tls['SkipCertificateCheck'] = $true }
+    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 
 if ($env:BINGEMOTE_SHIPPING_ONLY -ne '1') {
-# --- Part 0: the real upgrade path: install the actual 1.7.12 build (already scoped
+# --- Part 0: the real upgrade path: install the actual 1.9.1 build (already scoped
 # to interactive users), silent-upgrade to this build, pair the instance the installer
 # launches, run the blocked-input notice checks on that installed instance, then
 # uninstall and verify ---
-Write-Host "== real 1.7.12 -> 1.7.13 upgrade =="
+Write-Host "== real 1.9.1 -> this-build upgrade =="
 # Set before any install so the app the installer relaunches inherits the fixed pair
 # code (the pair-code hook exists only in this CI build, never in shipping bytes).
 $env:BINGEMOTE_PAIR_CODE = '4242'
 $old = Get-ChildItem "helper/Output-old/BingeMote-PC-*.exe" | Select-Object -First 1
-if (-not $old) { throw "1.7.12 baseline installer missing in helper/Output-old" }
+if (-not $old) { throw "1.9.1 baseline installer missing in helper/Output-old" }
 New-Item -ItemType Directory -Force helper/e2e-diag | Out-Null
 # Capture Inno's own install log for both legs: a bare exit code (e.g. 5) does
 # not say WHY setup aborted, and the log is the only record of that.
@@ -45,14 +54,14 @@ New-Item -ItemType Directory -Force helper/e2e-diag | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "--- install-baseline.log (tail) ---"
     if (Test-Path helper/e2e-diag/install-baseline.log) { Get-Content helper/e2e-diag/install-baseline.log -Tail 80 }
-    throw "1.7.12 baseline install failed with exit $LASTEXITCODE"
+    throw "1.9.1 baseline install failed with exit $LASTEXITCODE"
 }
 $acl = (netsh http show urlacl) | Out-String
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
-if (-not $aclBlock) { throw "1.7.12 did not add its listen permission" }
-if ($aclBlock -match 'Everyone|S-1-1-0') { throw "1.7.12 baseline grants Everyone (expected interactive-users): $aclBlock" }
-if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "1.7.12 baseline not scoped to interactive users: $aclBlock" }
-Write-Host "ok: 1.7.12 baseline installed with the interactive-users grant"
+if (-not $aclBlock) { throw "1.9.1 did not add its listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { throw "1.9.1 baseline grants Everyone (expected interactive-users): $aclBlock" }
+if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "1.9.1 baseline not scoped to interactive users: $aclBlock" }
+Write-Host "ok: 1.9.1 baseline installed with the interactive-users grant"
 
 # The silent postinstall relaunch is NOWAIT, so the baseline app is still cold-starting
 # (single-file unpack, WinForms init, listener) when this script continues. Inno's
@@ -85,23 +94,38 @@ if ($LASTEXITCODE -ne 0) {
 }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
+# Install-time secure setup (installer [Run] --install-firewall) must leave the upgraded
+# helper fully provisioned on its own: the HTTPS reservation with the interactive-users
+# scope, the TLS port binding, and a live authenticated HTTPS surface from the instance
+# the installer relaunched. The harness observes all of it and repairs NOTHING on the
+# success path: a broken install-time path is a product regression to catch, not fix quietly.
 $acl = (netsh http show urlacl) | Out-String
 # The grant lives on the SDDL/User lines under the Reserved URL line; match the whole block.
-$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
-if (-not $aclBlock) { throw "upgrade did not add the listen permission" }
-if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission still grants Everyone after the real upgrade: $aclBlock" }
+$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+if (-not $aclBlock) { throw "upgrade did not provision the HTTPS listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission grants Everyone after the real upgrade: $aclBlock" }
 if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
-Write-Host "ok: real upgrade kept the interactive-users grant"
-
+$bindings = (netsh http show sslcert) | Out-String
+if ($bindings -notmatch '0\.0\.0\.0:8488') { throw "upgrade did not provision the TLS port binding" }
+Write-Host "ok: real upgrade provisioned the HTTPS interactive-users grant and TLS binding"
+$script:Scheme = 'https'
 # Pair the instance the installer relaunched, under the retained installer-created state.
 $up = $false
-foreach ($i in 1..40) {
+foreach ($i in 1..60) {
     try {
-        $c = New-Object Net.Sockets.TcpClient
-        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
-    } catch { Start-Sleep -Milliseconds 500 }
+        $probe = Invoke-Helper '/ping' '{}' $null
+        if ($probe.code -eq 401) { $up = $true; break }
+    } catch { }
+    Start-Sleep -Milliseconds 500
 }
-if (-not $up) { throw "installer-launched helper did not start listening on 8488" }
+if (-not $up) {
+    # Diagnostics only: the product elevated step's exit code and the helper's own log.
+    $prov = Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') -ArgumentList '--install-firewall' -Wait -PassThru
+    Write-Host "diagnostic --install-firewall exit: $($prov.ExitCode)"
+    $diagLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    if (Test-Path $diagLog) { Get-Content $diagLog -Tail 30 | ForEach-Object { Redact-Secrets $_ } }
+    throw "installer-launched helper did not answer HTTPS /ping with 401 on 8488 after install-time secure setup"
+}
 $r = Invoke-Helper '/ping' '{}' $null
 Assert ($r.code -eq 401) "installed instance: ping without token is 401"
 $r = Invoke-Helper '/pair' '{"code":"0000"}' $null
@@ -171,7 +195,9 @@ try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Ou
 if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind" }
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8488/') { throw "uninstaller left the listen permission behind" }
-Write-Host "ok: uninstaller removed the firewall rule and listen permission"
+try { $leftBindings = netsh http show sslcert 2>$null | Out-String } catch { $leftBindings = '' }
+if ($leftBindings -match ':8488') { throw "uninstaller left the TLS port bindings behind" }
+Write-Host "ok: uninstaller removed the firewall rule, listen permission and TLS port bindings"
 # The installed-instance pairing above survives the uninstall (config.json is user data);
 # clear it so the standalone runtime tests below pair fresh and see Phone 1.
 Remove-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\config.json') -Force -ErrorAction SilentlyContinue
@@ -194,11 +220,14 @@ $aclOut | Select-String '8488'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
 if (-not ($aclOut | Select-String ':8488/')) { throw "URL ACL for port 8488 missing after setup" }
 $aclText2 = ($aclOut | Out-String)
-$aclBlock2 = [regex]::Match($aclText2, '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value
+# The elevated step reserves the HTTPS URL (and migration-deletes an old http one it owns).
+$aclBlock2 = [regex]::Match($aclText2, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+if (-not $aclBlock2) { throw "helper setup did not add the HTTPS listen permission" }
 if ($aclBlock2 -match 'Everyone|S-1-1-0') { throw "helper setup still grants Everyone: $aclBlock2" }
 if ($aclBlock2 -notmatch 'S-1-5-4|INTERACTIVE') { throw "helper setup did not scope the listen permission to interactive users: $aclBlock2" }
+$script:Scheme = 'https'
 
-# --- Part 2: run the helper and drive its HTTP API over loopback ---
+# --- Part 2: run the helper and drive its HTTPS API over loopback ---
 Write-Host "== helper runtime =="
 $env:BINGEMOTE_PAIR_CODE = '4242'
 $p = Start-Process $exe -PassThru
