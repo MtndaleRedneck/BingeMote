@@ -367,6 +367,9 @@ function Post-Leg($label, $dir, $lockProc, $log) {
   Clean-Scoped "$label.cleanup" $dir @($log) $keep 20
   Get-State "$label.post-cleanup(pre-persistence-clean)" $dir (Join-Path $dir 'BingeMote.exe')
   Clean-Persistence $label $dir
+  # Final scoped scan AFTER persistence cleanup: a watchdog/Run entry could have respawned the helper during the earlier scans.
+  Clean-Scoped "$label.final" $dir @($log) $keep 10
+  Get-State "$label.final" $dir (Join-Path $dir 'BingeMote.exe')
 }
 
 # ---- T6-0 control ----
