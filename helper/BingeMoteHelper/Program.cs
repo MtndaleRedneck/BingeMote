@@ -188,9 +188,8 @@ internal static class Program
             try
             {
                 foreach (var kv in FirewallSetup.ReadAll()) sb.AppendLine("rule|" + kv.Key + "|" + kv.Value);
-                FirewallSetup.LastReadFailed = false;
+                // false means absent OR unreadable (UrlAclExists does not distinguish); it is not proof of a denied read.
                 sb.AppendLine("urlacl|" + FirewallSetup.UrlAclExists());
-                sb.AppendLine("urlaclReadFailed|" + FirewallSetup.LastReadFailed);
                 var tlsReady = HelperTls.RuntimeReady(HttpPort, out var tlsWhy);
                 var why = new string((tlsWhy ?? "").Where(c => c >= ' ' && c != '|').Take(200).ToArray());
                 sb.AppendLine("tlsReady|" + tlsReady + "|" + why);

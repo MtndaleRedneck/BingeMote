@@ -351,7 +351,10 @@ try {
     $sec = ConvertTo-SecureString $plain -AsPlainText -Force
     $plain = $null
     New-LocalUser -Name $stdName -Password $sec -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword -ErrorAction Stop | Out-Null
-    Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $stdName -ErrorAction Stop
+    $usersMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-545' | ForEach-Object { [string]$_.Name })
+    if (@($usersMembers | Where-Object { $_ -like "*\${stdName}" }).Count -eq 0) { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $stdName -ErrorAction Stop }
+    $usersMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-545' | ForEach-Object { [string]$_.Name })
+    Assert (@($usersMembers | Where-Object { $_ -like "*\${stdName}" }).Count -eq 1) "disposable account is a member of Users"
     $adminMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object { [string]$_.Name })
     Assert (@($adminMembers | Where-Object { $_ -like "*\${stdName}" }).Count -eq 0) "disposable account is not a member of Administrators"
     New-Item -ItemType Directory -Force -Path $stdDir | Out-Null
@@ -375,6 +378,9 @@ if ($p.WaitForExit(60000)) { W ('hookExit|' + $p.ExitCode) } else { try { $p.Kil
 W 'DONE'
 '@
     Set-Content -Path (Join-Path $stdDir 'child.ps1') -Value $child -Encoding UTF8
+    $ctoks = $null; $cerrs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $stdDir 'child.ps1'), [ref]$ctoks, [ref]$cerrs)
+    if ($cerrs -and $cerrs.Count -gt 0) { throw ("child script does not parse (line " + $cerrs[0].Extent.StartLineNumber + "): " + $cerrs[0].Message) }
     $cred = New-Object System.Management.Automation.PSCredential(($env:COMPUTERNAME + '\' + $stdName), $sec)
     $startErr = $null
     try {
@@ -390,7 +396,7 @@ W 'DONE'
     Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
     $identityProven = ($childLines -contains 'isAdminRole|False') -and ($childLines -contains 'hasAdminSid|False') -and (@($childLines | Where-Object { $_ -like "identity|*\${stdName}" }).Count -eq 1)
     $ctlCurrent = ($ctlLines -contains 'setupIsCurrent|True') -and ($ctlLines -contains 'lastReadFailed|False') -and (@($ctlLines | Where-Object { $_ -like 'hookError|*' -or $_ -like 'rule|*|Unreadable' }).Count -eq 0)
-    $stdBad = @($stdLines | Where-Object { $_ -like 'rule|*|Unreadable' -or $_ -eq 'lastReadFailed|True' -or $_ -eq 'urlaclReadFailed|True' })
+    $stdBad = @($stdLines | Where-Object { $_ -like 'rule|*|Unreadable' -or $_ -eq 'lastReadFailed|True' })
     if ($startErr) { $script:StdVerdict = 'UNSUPPORTED'; $script:StdDetail = "could not start the child as the standard user: $startErr" }
     elseif (-not ($childLines -contains 'DONE')) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'standard-user child did not finish' }
     elseif (-not $identityProven) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'non-admin token not proven (identity, Administrators role or SID check)' }
