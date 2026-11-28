@@ -157,6 +157,62 @@ function Write-SetupDiagnostics([string]$why) {
                 }
             }
         }
+        # Probe A (bindings-only control, disposable port 8493): do SSL bindings ALONE block the
+        # https urlacl add? The 8488 failure has two candidate causes; COEXIST proved the http
+        # sibling is one controlled cause, this arm tests the other. A 183 here means bindings
+        # are ANOTHER possible cause - it does NOT disprove the sibling mechanism. A success
+        # here leaves the sibling as one controlled demonstrated cause, NOT the only possible
+        # one. Everything created here is probe-owned and removed: the cert by exact thumbprint,
+        # the bindings only after thumbprint readback matches, the reservation per the verified
+        # Invoke-UrlaclProbe pattern. 8488 is never touched.
+        $probePort = 8493
+        $preA1 = (netsh http show urlacl 'url=http://+:8493/') | Out-String
+        $preA2 = (netsh http show urlacl 'url=https://+:8493/') | Out-String
+        $preB1 = (netsh http show sslcert 'ipport=0.0.0.0:8493') | Out-String
+        $preB2 = (netsh http show sslcert 'ipport=[::]:8493') | Out-String
+        if ($preA1 -match ':8493/' -or $preA2 -match ':8493/' -or $preB1 -match ':8493' -or $preB2 -match ':8493') {
+            Write-Host "PROBE-A SKIP: 8493 not clean beforehand; untouched"
+        } else {
+            $cert = New-SelfSignedCertificate -DnsName 'bingemote-probe-a.invalid' -CertStoreLocation 'Cert:\LocalMachine\My' -FriendlyName 'BingeMote probe A (disposable)'
+            $thumb = $cert.Thumbprint
+            Write-Host "PROBE-A created disposable cert $thumb"
+            netsh http add sslcert ipport=0.0.0.0:8493 certhash=$thumb 'appid={84930000-8493-8493-8493-849384938493}' | Out-Host
+            netsh http add sslcert ipport=[::]:8493 certhash=$thumb 'appid={84930000-8493-8493-8493-849384938493}' | Out-Host
+            Invoke-UrlaclProbe 'https://+:8493/' 'sddl=D:(A;;GX;;;S-1-5-4)'
+            foreach ($ipp in @('0.0.0.0:8493', '[::]:8493')) {
+                $rb = (netsh http show sslcert "ipport=$ipp") | Out-String
+                if ($rb -match $thumb) {
+                    Write-Host "removing probe-owned binding $ipp (thumbprint match)"
+                    netsh http delete sslcert "ipport=$ipp" | Out-Host
+                } else { Write-Host "binding $ipp readback is not the probe cert; leaving untouched" }
+            }
+            Remove-Item "Cert:\LocalMachine\My\$thumb" -ErrorAction SilentlyContinue
+            Write-Host 'PROBE-A note: exit 183 above = bindings are another possible cause (sibling mechanism NOT disproven); exit 0 = http sibling remains one controlled cause, not proven the only one.'
+        }
+        # Probe B (delete-then-add premise, disposable port 8492): add the http sibling, delete
+        # the OWNED probe entry, then add https. Success supports (does not prove) the
+        # migration's delete-then-add premise on this platform; 8488's controlled validation is
+        # the migration e2e. Failure means even an owned-delete does not unblock - another cause
+        # class exists. All entries probe-created, deleted only after exact readback, 8488
+        # never touched.
+        $preC1 = (netsh http show urlacl 'url=http://+:8492/') | Out-String
+        $preC2 = (netsh http show urlacl 'url=https://+:8492/') | Out-String
+        if ($preC1 -match ':8492/' -or $preC2 -match ':8492/') {
+            Write-Host "PROBE-B SKIP: 8492 not clean beforehand; untouched"
+        } else {
+            netsh http add urlacl 'url=http://+:8492/' 'sddl=D:(A;;GX;;;S-1-5-4)' | Out-Host
+            $rbH = (netsh http show urlacl 'url=http://+:8492/') | Out-String
+            if ($rbH -match 'S-1-5-4|INTERACTIVE' -and $rbH -notmatch 'Everyone|S-1-1-0') {
+                netsh http delete urlacl 'url=http://+:8492/' | Out-Host
+                $gone = (netsh http show urlacl 'url=http://+:8492/') | Out-String
+                if ($gone -match ':8492/') { Write-Host 'PROBE-B ABORT: owned http entry did not delete; https arm skipped' }
+                else {
+                    Write-Host 'PROBE-B http sibling deleted (owned); adding https'
+                    Invoke-UrlaclProbe 'https://+:8492/' 'sddl=D:(A;;GX;;;S-1-5-4)'
+                }
+            } else { Write-Host 'PROBE-B ABORT: probe-created http readback unexpected; leaving untouched' }
+            Write-Host 'PROBE-B note: https exit 0 = delete-then-add unblocks on this platform (supports, not proves, the 8488 migration premise); exit 183 = another cause class exists.'
+        }
     }
 }
 
