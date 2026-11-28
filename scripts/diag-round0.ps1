@@ -104,6 +104,13 @@ function Try-Cap($name, [scriptblock]$sb) {
   try { $ErrorActionPreference = 'Stop'; & $sb }
   catch { $m = "CAPTURE-ERROR[$name]: $($_.Exception.Message)"; Write-Host $m; $script:capErr += $m }
 }
+# taskkill nonzero can be a benign race (process already gone). Flag harness-invalid only if the pid is still alive.
+function Check-Kill([string]$what, [int]$procId, [int]$rc) {
+  if ($rc -eq 0) { return }
+  $alive = [bool](Get-Process -Id $procId -ErrorAction SilentlyContinue)
+  if ($alive) { Need $false "HARNESS INVALID: $what taskkill rc=$rc and pid $procId still alive" }
+  else { Write-Host "  note: $what taskkill rc=$rc but pid $procId is not running (benign race, verified by liveness)" }
+}
 # Processes whose exe is under a root, or whose command line contains a marker (case-insensitive).
 function Get-Under([string[]]$roots, [string[]]$cmdMarks) {
   $res = @()
@@ -122,17 +129,27 @@ function Test-HeldOpen([string]$path) {
   catch [IO.IOException] { return "HELD (sharing violation: $($_.Exception.Message))" }
   catch { return "UNKNOWN ($($_.Exception.GetType().Name): $($_.Exception.Message))" }
 }
-# Task state is three-valued. 'absent' only when the ScheduledTasks cmdlet reports a not-found error id
-# (locale independent); any other failure is 'unknown' and never treated as absent.
+# Task state is three-valued. 'absent' only when the Get-ScheduledTask query itself fails with error
+# category ObjectNotFound raised by that command (no locale text or error-id matching). Anything else,
+# including any Export-ScheduledTask failure after a successful query, is 'unknown'. Full error detail
+# (category, error id, command, message) is always printed so the classifier is auditable.
 function Get-TaskState([string]$name) {
+  $t = $null
+  try { $t = Get-ScheduledTask -TaskName $name -ErrorAction Stop }
+  catch {
+    $er = $_
+    $cat = [string]$er.CategoryInfo.Category
+    $cmd = [string]$er.InvocationInfo.MyCommand.Name
+    $detail = "category=$cat id=$($er.FullyQualifiedErrorId) command=$cmd type=$($er.Exception.GetType().Name) msg=$($er.Exception.Message)"
+    if ($cat -eq 'ObjectNotFound' -and $cmd -eq 'Get-ScheduledTask') { return [pscustomobject]@{ State = 'absent'; Xml = ''; Detail = "query-not-found $detail" } }
+    return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "query-error $detail" }
+  }
   try {
-    $t = Get-ScheduledTask -TaskName $name -ErrorAction Stop
     $x = Export-ScheduledTask -TaskName $name -ErrorAction Stop
     return [pscustomobject]@{ State = 'present'; Xml = [string]$x; Detail = "path=$($t.TaskPath)" }
   } catch {
-    $id = [string]$_.FullyQualifiedErrorId
-    if ($id -like '*NotFound*') { return [pscustomobject]@{ State = 'absent'; Xml = ''; Detail = "not-found id=$id" } }
-    return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "id=$id type=$($_.Exception.GetType().Name) msg=$($_.Exception.Message)" }
+    $er = $_
+    return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "export-error category=$($er.CategoryInfo.Category) id=$($er.FullyQualifiedErrorId) type=$($er.Exception.GetType().Name) msg=$($er.Exception.Message)" }
   }
 }
 function Get-State([string]$label, [string]$root, [string]$exePath) {
@@ -183,7 +200,7 @@ function Clean-Scoped([string]$label, [string]$root, [string[]]$marks, [int[]]$k
       $ps = @(Get-Under @($root) $marks | Where-Object { $keepPids -notcontains [int]$_.ProcessId })
       if ($ps.Count -eq 0) { $script:cEmpty++ } else {
         $script:cEmpty = 0
-        foreach ($p in $ps) { Write-Host "  CLEAN[$label] stop pid=$($p.ProcessId) path=$($p.ExecutablePath)"; $script:cKilled += [int]$p.ProcessId; & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | ForEach-Object { Write-Host "    taskkill: $_" }; if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: $label taskkill rc=$LASTEXITCODE for pid $($p.ProcessId)" } }
+        foreach ($p in $ps) { Write-Host "  CLEAN[$label] stop pid=$($p.ProcessId) path=$($p.ExecutablePath)"; $script:cKilled += [int]$p.ProcessId; & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | ForEach-Object { Write-Host "    taskkill: $_" }; Check-Kill "$label cleanup" ([int]$p.ProcessId) $LASTEXITCODE }
       }
       Start-Sleep -Seconds 1
     }
@@ -259,7 +276,7 @@ function Run-Installer($label, $argsLine, $boundSec, [bool]$captureWindows) {
     Write-Host (Snap-Tree $rootPid "$label pre-kill")
     [int[]]$treeIds = Get-Tree $rootPid
     & taskkill.exe /T /F /PID $rootPid 2>&1 | ForEach-Object { Write-Host "  taskkill: $_" }
-    if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: $label installer-tree taskkill rc=$LASTEXITCODE" }
+    Check-Kill "$label installer-tree" $rootPid $LASTEXITCODE
     Start-Sleep -Seconds 3
     $surv = @($treeIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
     Write-Host "HARNESS-KILLED: TIMED OUT after ${boundSec}s; pre-kill tree ids=$($treeIds -join ','); survivors of that snapshot after kill+3s=$($surv -join ',')"
@@ -312,7 +329,7 @@ function Start-Lock($dir, $mode) {
   return $p
 }
 function Stop-Lock($p) {
-  if ($p -and -not $p.HasExited) { & taskkill.exe /T /F /PID $p.Id | Out-Null; if ($LASTEXITCODE -ne 0) { Need $false "HARNESS INVALID: lock holder taskkill rc=$LASTEXITCODE pid=$($p.Id)" } }
+  if ($p -and -not $p.HasExited) { & taskkill.exe /T /F /PID $p.Id | Out-Null; Check-Kill 'lock holder' ([int]$p.Id) $LASTEXITCODE }
   Start-Sleep -Seconds 1
   if ($p) { $p.Refresh(); Need $p.HasExited "lock holder pid=$($p.Id) verified exited after stop (else harness invalid)" }
 }
