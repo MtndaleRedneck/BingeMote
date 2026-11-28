@@ -368,7 +368,9 @@ internal static class FirewallSetup
                     return true;
                 }
                 // The rule changed and reads back as the new spec, but the journal still holds the OLD property line: it matches nothing now, so it can never authorise a delete. Reported as failure, not success.
-                Program.Log($"firewall setup: journaled rule '{r.Name}' was updated but the journal could not be rewritten; the old journal entry no longer matches and will not be used to delete it. Reported as not updated.");
+                Program.Log($"firewall setup: journaled rule '{r.Name}' was updated but the journal could not be rewritten; the old journal entry no longer matches and will not be used to delete it. Reported as not updated; trying to record it as uncertain.");
+                if (!LifecycleJournalStore.Replace(MoveToUncertain(j, e.Key, "rule updated in place and reads back as the new spec, but the journal property line could not be rewritten (recovery evidence only, never delete authority)")))
+                    Program.Log($"firewall setup: could not record the uncertain outcome for key {e.Key} either.");
                 return false;
             }
             var outcome = $"in-place update exited {code}, read-back {after.Found}; state unknown (recovery evidence only, never delete authority)";
