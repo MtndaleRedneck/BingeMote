@@ -466,9 +466,7 @@ try {
     Write-Host "-- admin control status (exit $($ctl.ExitCode)) --"; $ctlLines | ForEach-Object { Write-Host "admin: $_" }
     $child = @'
 $o = 'C:\bmstd\child-result.txt'
-$o2 = 'C:\bmstd\child-logfail.txt'
-# Every record is appended with retries; a record that still cannot be written is kept in a second file instead of being dropped silently.
-function W($s) { for ($i = 0; $i -lt 40; $i++) { try { [IO.File]::AppendAllText($o, $s + "`r`n"); return } catch { $script:lastWErr = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message; Start-Sleep -Milliseconds 50 } }; try { [IO.File]::AppendAllText($o2, 'logWriteFailed|' + $script:lastWErr + '|' + $s + "`r`n") } catch { } }
+function W($s) { Add-Content -Path $o -Value $s }
 function Dt($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return ($x.GetType().FullName + '|0x' + ('{0:X8}' -f [int]$x.HResult) + '|' + (($x.Message -replace '[\r\n]+', ' ').Trim())) }
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 W ('identity|' + $id.Name)
@@ -482,13 +480,13 @@ $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $fld = $svc.GetFo
 $t = $null
 try { $t = $fld.GetTask('bm-dacl-fixture'); W 'daclRead|ok' } catch { W 'daclRead|denied' }
 try { $x = [string]$t.GetSecurityDescriptor(4); W ('daclReadSd|' + [bool]$x) } catch { W 'daclReadSd|denied' }
-function H($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return [int]$x.HResult }
+function Get-BmHresult($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return [int]$x.HResult }
 W 'probesBegin|True'
 try { $fxml = Get-Content 'C:\bmstd\fixture.xml' -Raw -ErrorAction Stop; W ('daclFixtureXml|ok|' + $fxml.Length) } catch { W ('daclFixtureXml|' + (Dt $_)); $fxml = '' }
-if ($null -eq $t) { W 'daclNoHandle|True' } else { try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W ('daclDisable|hr' + (H $_)); W ('daclDetail|disable|' + (Dt $_)) } }
-try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W ('daclUpdate|hr' + (H $_)); W ('daclDetail|update|' + (Dt $_)) }
-try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W ('daclCreateOrUpdate|hr' + (H $_)); W ('daclDetail|createOrUpdate|' + (Dt $_)) }
-try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W ('daclDelete|hr' + (H $_)); W ('daclDetail|delete|' + (Dt $_)) }
+if ($null -eq $t) { W 'daclNoHandle|True' } else { try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W ('daclDisable|hr' + (Get-BmHresult $_)); W ('daclDetail|disable|' + (Dt $_)) } }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W ('daclUpdate|hr' + (Get-BmHresult $_)); W ('daclDetail|update|' + (Dt $_)) }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W ('daclCreateOrUpdate|hr' + (Get-BmHresult $_)); W ('daclDetail|createOrUpdate|' + (Dt $_)) }
+try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W ('daclDelete|hr' + (Get-BmHresult $_)); W ('daclDetail|delete|' + (Dt $_)) }
 $so = (schtasks /Delete /TN 'bm-dacl-fixture' /F 2>&1 | Out-String)
 W ('daclSchtasksDelete|exit' + $LASTEXITCODE + '|accessDeniedText=' + ($so -match 'Access is denied'))
 W 'DONE'
@@ -508,7 +506,7 @@ W 'DONE'
     $statusFile = Join-Path $stdDir 'status-std.txt'
     $childLines = if (Test-Path $childFile) { @(Get-Content $childFile) } else { @() }
     $stdLines = if (Test-Path $statusFile) { @(Get-Content $statusFile) } else { @() }
-    foreach ($cf in 'child-stdout.txt', 'child-stderr.txt', 'child-logfail.txt') { $cp = Join-Path $stdDir $cf; if (Test-Path $cp) { Write-Host "-- $cf --"; Get-Content $cp | ForEach-Object { Write-Host "childio: $_" } } else { Write-Host "-- $cf absent --" } }
+    foreach ($cf in 'child-stdout.txt', 'child-stderr.txt') { $cp = Join-Path $stdDir $cf; if (Test-Path $cp) { Write-Host "-- $cf --"; Get-Content $cp | ForEach-Object { Write-Host "childio: $_" } } else { Write-Host "-- $cf absent --" } }
     Write-Host '-- standard-user identity / child record --'; $childLines | ForEach-Object { Write-Host "child: $_" }
     Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
     # DACL verdict: the standard user (the task's own principal) must be unable to disable, update, replace or delete; admin then proves the task is intact.
