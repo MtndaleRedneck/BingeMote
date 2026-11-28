@@ -14,7 +14,7 @@ namespace BingeMoteHelper;
 /// created by an earlier version, by anyone else, or one whose creation could not be journaled is
 /// never in this file and is never deleted. Admin-vs-admin replacement is NOT prevented: an
 /// administrator can edit this file and the objects alike.</summary>
-internal sealed record LifecycleJournal(int Version, List<RuleEntry> Rules, bool UrlAcl, WatchdogEntry? Watchdog, List<UncertainEntry> Uncertain);
+internal sealed record LifecycleJournal(int Version, List<RuleEntry> Rules, bool UrlAcl, WatchdogEntry? Watchdog, List<UncertainEntry> Uncertain, string? UrlAclUncertain = null);
 /// <summary>Recovery evidence only: a create was attempted under this fresh Name but the outcome could not be confirmed (create exit nonzero, or read-back not exact). It is NEVER delete authority; uninstall only reports it as a possible orphan.</summary>
 internal sealed record UncertainEntry(string Key, string DisplayName, string Outcome);
 /// <summary>A firewall rule this build created: its actual unique Name (a random key chosen at creation, never reused), the DisplayName, and the full property line read back right after creation.</summary>
@@ -44,7 +44,7 @@ internal static class LifecycleJournalStore
     }
 
     /// <summary>Merge new entries into the journal. Returns false (and logs) when it could not be written; the objects then stay un-journaled, which means they are never deleted.</summary>
-    internal static bool Merge(IEnumerable<RuleEntry> rules, bool urlAcl, WatchdogEntry? watchdog, IEnumerable<UncertainEntry>? uncertain = null)
+    internal static bool Merge(IEnumerable<RuleEntry> rules, bool urlAcl, WatchdogEntry? watchdog, IEnumerable<UncertainEntry>? uncertain = null, string? urlAclUncertain = null)
     {
         try
         {
@@ -54,7 +54,8 @@ internal static class LifecycleJournalStore
                 (cur?.Rules ?? new List<RuleEntry>()).Concat(rules).DistinctBy(e => e.Key).ToList(),
                 (cur?.UrlAcl ?? false) || urlAcl,
                 watchdog ?? cur?.Watchdog,
-                (cur?.Uncertain ?? new List<UncertainEntry>()).Concat(uncertain ?? Array.Empty<UncertainEntry>()).DistinctBy(u => u.Key).ToList());
+                (cur?.Uncertain ?? new List<UncertainEntry>()).Concat(uncertain ?? Array.Empty<UncertainEntry>()).DistinctBy(u => u.Key).ToList(),
+                urlAclUncertain ?? cur?.UrlAclUncertain);
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(merged));
             return true;
         }
@@ -66,7 +67,7 @@ internal static class LifecycleJournalStore
     {
         try
         {
-            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null && j.Uncertain.Count == 0) { File.Delete(FilePath); return; }
+            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null && j.Uncertain.Count == 0 && j.UrlAclUncertain == null) { File.Delete(FilePath); return; }
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(j));
         }
         catch (Exception ex) { Program.Log("lifecycle journal not updated: " + ex.Message); }
@@ -177,6 +178,26 @@ internal static class WatchdogSetup
         catch { return TaskRead.Unreadable; }
     }
 
+    /// <summary>Live definition must still be what we registered: one user principal equal to the journaled SID, InteractiveToken, LeastPrivilege, exactly one action running the journaled exe with --ensure-running. Anything unreadable is "no".</summary>
+    private static bool IdentityMatches(object folderObj, WatchdogEntry w)
+    {
+        try
+        {
+            dynamic folder = folderObj;
+            dynamic def = folder.GetTask(TaskName).Definition;
+            string userId = (string)def.Principal.UserId;
+            string liveSid;
+            try { liveSid = new SecurityIdentifier(userId).Value; }
+            catch { liveSid = new NTAccount(userId).Translate(typeof(SecurityIdentifier)).Value; }
+            if (liveSid != w.Sid) return false;
+            if ((int)def.Principal.LogonType != LogonInteractiveToken || (int)def.Principal.RunLevel != 0) return false;   // 0 = TASK_RUNLEVEL_LUA
+            if ((int)def.Actions.Count != 1) return false;
+            dynamic act = def.Actions.Item(1);
+            return string.Equals((string)act.Path, w.Exe, StringComparison.OrdinalIgnoreCase) && (string)act.Arguments == "--ensure-running";
+        }
+        catch { return false; }
+    }
+
     private static object Folder()
     {
         dynamic svc = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service", true)!)!;
@@ -200,7 +221,8 @@ internal static class WatchdogSetup
             object folder = Folder();
             var live = Read(folder, out var liveSddl);
             var (js, j) = LifecycleJournalStore.Read();
-            var ours = js == MarkerState.Present && j?.Watchdog != null && j.Watchdog.Verified && j.Watchdog.Sid == sid && SddlEquivalent(liveSddl, j.Watchdog.Sddl) && SddlEquivalent(liveSddl, sddl);
+            var ours = js == MarkerState.Present && j?.Watchdog != null && j.Watchdog.Verified && j.Watchdog.Sid == sid && SddlEquivalent(liveSddl, j.Watchdog.Sddl) && SddlEquivalent(liveSddl, sddl)
+                && live == TaskRead.Present && IdentityMatches(folder, j.Watchdog);
             int flags;
             if (live == TaskRead.Absent) flags = TaskCreate;
             else if (live == TaskRead.Present && ours) flags = TaskCreate | TaskUpdate;   // journaled by us and still byte-for-ACE as we left it: refresh the exe path on upgrade
@@ -240,8 +262,15 @@ internal static class WatchdogSetup
             object folder = Folder();
             var live = Read(folder, out var liveSddl);
             if (live == TaskRead.Absent) return true;
-            if (live == TaskRead.Present && SddlEquivalent(liveSddl, w.Sddl)) { ((dynamic)folder).DeleteTask(TaskName, 0); return true; }
-            Program.Log("uninstall cleanup: watchdog task left (" + live + "; not provably unchanged).");
+            if (live == TaskRead.Present && SddlEquivalent(liveSddl, w.Sddl) && IdentityMatches(folder, w))
+            {
+                ((dynamic)folder).DeleteTask(TaskName, 0);
+                // A returned delete is not removal: the task must read back NotFound before the journal entry is dropped.
+                if (Read(folder, out _) == TaskRead.Absent) return true;
+                Program.Log("uninstall cleanup: watchdog task delete returned but the task did not read back as absent; left in the journal.");
+                return false;
+            }
+            Program.Log("uninstall cleanup: watchdog task left (" + live + "; access list or principal/exe not provably unchanged).");
             return false;
         }
         catch (Exception ex) { Program.Log("uninstall cleanup: watchdog task not removed: " + ex.Message); return false; }

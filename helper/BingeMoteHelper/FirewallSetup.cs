@@ -122,12 +122,20 @@ internal static class FirewallSetup
                 var acl = Run("netsh", "http add urlacl url=https://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;S-1-5-4)");
                 if (acl != 0 || !UrlAclExists())
                 {
+                    if (acl != 0) LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, null, null, "netsh add urlacl exited " + acl + "; outcome unknown (recovery evidence only, never delete authority)");
                     Program.Log("firewall setup: the listen permission could not be added (netsh exit " + acl + ").");
                     Console.Error.WriteLine("partial=true tls=ready firewall=" + (RulesExist() ? "ready" : "failed") + " urlacl=failed");
                     Console.Error.WriteLine("The listen permission could not be added.");
                     return 3;
                 }
-                LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), true, null);   // create-only add succeeded and reads back exact
+                // Presence plus interactive-only scope is not an exact read-back. The ownership witness needs the exact classification; otherwise the attempt is recovery evidence only.
+                if (ClassifyHttpsUrlAcl(InteractiveSid) == AclOwnership.Ours)
+                    LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), true, null);
+                else
+                {
+                    Program.Log("firewall setup: the listen permission was added (exit 0) but its exact SDDL read-back is not the expected one; journaled as UNCERTAIN, not as ours.");
+                    LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, null, null, "netsh add urlacl exited 0 but exact SDDL classification was not Ours (recovery evidence only, never delete authority)");
+                }
             }
             if (!RulesExist())
             {
@@ -594,8 +602,9 @@ internal static class FirewallSetup
             keepRules.Add(e);
         }
         var keepWatchdog = lj.Watchdog != null && !WatchdogSetup.RemoveJournaled(lj.Watchdog) ? lj.Watchdog : null;
+        if (lj.UrlAclUncertain != null) Program.Log("uninstall cleanup: HTTPS reservation recorded as uncertain at setup (" + lj.UrlAclUncertain + "): not removed on that basis.");
         foreach (var u in lj.Uncertain) Program.Log("uninstall cleanup: possible orphan firewall rule '" + u.DisplayName + "' key " + u.Key + " (" + u.Outcome + "): never created-witnessed, not removed.");
-        LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog, lj.Uncertain));
+        LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog, lj.Uncertain, lj.UrlAclUncertain));
     }
 
     private static int Run(string file, string args)
