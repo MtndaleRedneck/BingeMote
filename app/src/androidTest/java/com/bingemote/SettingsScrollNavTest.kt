@@ -29,7 +29,8 @@ class SettingsScrollNavTest {
                 return b.top >= 0 && b.bottom <= device.displayHeight && b.height() > 0
             } catch (e: androidx.test.uiautomator.StaleObjectException) { /* node recycled mid-read: re-find */ }
         }
-        return false
+        // Unreadable after 3 fresh reads is neither on nor off screen: fail, never report "absent" (negative callers).
+        throw AssertionError("node for '$text' stayed stale across 3 fresh reads; on-screen state unknown")
     }
     private fun shot(name: String) =
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-$name.png"))
