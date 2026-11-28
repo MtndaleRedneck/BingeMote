@@ -177,6 +177,34 @@ internal static class Program
             return FirewallSetup.RunUninstallCleanup();
         }
 
+#if SETUP_STATUS_HOOK
+        // CI fixture build only (never defined for shipped builds): writes the NON-SECRET status of the same reads
+        // SetupIsCurrent() performs (rule states, URL ACL, TLS readiness reason, the combined result) to the given file so
+        // the e2e can run it as a standard user. No dialog, no listen, no marker, no setup, no write other than that file.
+        var statusIdx = Array.IndexOf(args, "--setup-status");
+        if (statusIdx >= 0 && statusIdx + 1 < args.Length)
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                foreach (var kv in FirewallSetup.ReadAll()) sb.AppendLine("rule|" + kv.Key + "|" + kv.Value);
+                FirewallSetup.LastReadFailed = false;
+                sb.AppendLine("urlacl|" + FirewallSetup.UrlAclExists());
+                sb.AppendLine("urlaclReadFailed|" + FirewallSetup.LastReadFailed);
+                var tlsReady = HelperTls.RuntimeReady(HttpPort, out var tlsWhy);
+                var why = new string((tlsWhy ?? "").Where(c => c >= ' ' && c != '|').Take(200).ToArray());
+                sb.AppendLine("tlsReady|" + tlsReady + "|" + why);
+                FirewallSetup.LastReadFailed = false;
+                var current = FirewallSetup.SetupIsCurrent();
+                sb.AppendLine("setupIsCurrent|" + current);
+                sb.AppendLine("lastReadFailed|" + FirewallSetup.LastReadFailed);
+            }
+            catch (Exception ex) { sb.AppendLine("hookError|" + ex.GetType().Name); }
+            File.WriteAllText(args[statusIdx + 1], sb.ToString());
+            return 0;
+        }
+#endif
+
 #if WINDOW_SHOT_HOOK
         if (args.Contains("--dialog-shots"))
         {

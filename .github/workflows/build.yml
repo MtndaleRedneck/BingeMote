@@ -228,8 +228,16 @@ jobs:
         with:
           dotnet-version: 10.x
 
+      - name: Parse-check the e2e script (fast fail before the expensive steps)
+        timeout-minutes: 2
+        run: |
+          $tokens = $null; $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/helper-e2e.ps1').Path, [ref]$tokens, [ref]$errors)
+          if ($errors -and $errors.Count -gt 0) { $errors | ForEach-Object { Write-Host ("PARSE ERROR line " + $_.Extent.StartLineNumber + ": " + $_.Message) }; exit 1 }
+          Write-Host "ok: scripts/helper-e2e.ps1 parses"
+
       - name: Publish helper exe (with the CI-only pairing hook)
-        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK" -o helper/out
+        run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true "-p:DefineConstants=TRACE%3BPAIR_CODE_HOOK%3BKEEPAWAKE_HOOK%3BBLOCK_NOTICE_HOOK%3BSETUP_STATUS_HOOK" -o helper/out
 
       # The movies test launches real VLC. Pinned official download, sha256-verified BEFORE it is run
       # (replaces `choco install vlc`: the feed's 503 was swallowed here and only failed later as a

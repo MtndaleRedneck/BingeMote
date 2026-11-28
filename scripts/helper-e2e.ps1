@@ -336,6 +336,88 @@ foreach ($e in $script:BingeRules) { if ($e.Name -ne $pubTcp) { $o = Get-RuleObj
 Enable-NetFirewallRule -DisplayName $pubTcp
 Assert-BingeRulesExact 'after harness restored its own fixture'
 
+# --- Standard-user readability of SetupIsCurrent's reads (fixture hook only; ONE execution path, not every branch) ---
+# Verdicts: READABLE-CURRENT | UNREADABLE | NOT-CURRENT | UNSUPPORTED | UNVERIFIED. Only READABLE-CURRENT is product proof; anything else
+# fails the job at the very end of this script. The password lives only in memory (SecureString/PSCredential): never written, echoed or uploaded.
+Write-Host "== standard-user SetupIsCurrent read (fixture hook --setup-status) =="
+$script:StdVerdict = 'UNVERIFIED'
+$script:StdDetail = 'stage did not complete'
+$stdName = 'bmstd' + (Get-Random -Minimum 10000 -Maximum 99999)
+$stdDir = Join-Path $env:SystemDrive 'bmstd'
+$ctlFile = Join-Path $env:TEMP 'bm-status-admin.txt'
+$stdProc = $null
+try {
+    $plain = (-join ((48..57 + 65..90 + 97..122) | Get-Random -Count 24 | ForEach-Object { [char]$_ })) + 'aA1!'
+    $sec = ConvertTo-SecureString $plain -AsPlainText -Force
+    $plain = $null
+    New-LocalUser -Name $stdName -Password $sec -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword -ErrorAction Stop | Out-Null
+    Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $stdName -ErrorAction Stop
+    $adminMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-544' | ForEach-Object { [string]$_.Name })
+    Assert (@($adminMembers | Where-Object { $_ -like "*\${stdName}" }).Count -eq 0) "disposable account is not a member of Administrators"
+    New-Item -ItemType Directory -Force -Path $stdDir | Out-Null
+    icacls $stdDir /grant "${stdName}:(OI)(CI)M" | Out-Null
+    Copy-Item (Resolve-Path $exe).Path (Join-Path $stdDir 'BingeMote.exe') -Force
+    # admin control: the same hook in the elevated fixture context, so the standard-user result is compared with real state at this point
+    Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
+    $ctl = Start-Process (Resolve-Path $exe).Path -ArgumentList '--setup-status', $ctlFile -Wait -PassThru
+    $ctlLines = if (Test-Path $ctlFile) { @(Get-Content $ctlFile) } else { @() }
+    Write-Host "-- admin control status (exit $($ctl.ExitCode)) --"; $ctlLines | ForEach-Object { Write-Host "admin: $_" }
+    $child = @'
+$o = 'C:\bmstd\child-result.txt'
+function W($s) { Add-Content -Path $o -Value $s }
+$id = [Security.Principal.WindowsIdentity]::GetCurrent()
+W ('identity|' + $id.Name)
+W ('isAdminRole|' + ([Security.Principal.WindowsPrincipal]::new($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+W ('hasAdminSid|' + (@($id.Groups | Where-Object { $_.Value -eq 'S-1-5-32-544' }).Count -gt 0))
+W ('whoamiGroups|' + ((whoami /groups /fo csv /nh) -join ';'))
+$p = Start-Process 'C:\bmstd\BingeMote.exe' -ArgumentList '--setup-status', 'C:\bmstd\status-std.txt' -PassThru
+if ($p.WaitForExit(60000)) { W ('hookExit|' + $p.ExitCode) } else { try { $p.Kill() } catch { } ; W 'hookTimeout|True' }
+W 'DONE'
+'@
+    Set-Content -Path (Join-Path $stdDir 'child.ps1') -Value $child -Encoding UTF8
+    $cred = New-Object System.Management.Automation.PSCredential(($env:COMPUTERNAME + '\' + $stdName), $sec)
+    $startErr = $null
+    try {
+        $stdProc = Start-Process -FilePath 'powershell.exe' -Credential $cred -LoadUserProfile -WorkingDirectory $stdDir -WindowStyle Hidden -PassThru `
+            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $stdDir 'child.ps1'))
+    } catch { $startErr = $_.Exception.Message }
+    if ($stdProc -and -not $stdProc.WaitForExit(120000)) { Stop-Process -Id $stdProc.Id -Force -ErrorAction SilentlyContinue }
+    $childFile = Join-Path $stdDir 'child-result.txt'
+    $statusFile = Join-Path $stdDir 'status-std.txt'
+    $childLines = if (Test-Path $childFile) { @(Get-Content $childFile) } else { @() }
+    $stdLines = if (Test-Path $statusFile) { @(Get-Content $statusFile) } else { @() }
+    Write-Host '-- standard-user identity / child record --'; $childLines | ForEach-Object { Write-Host "child: $_" }
+    Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
+    $identityProven = ($childLines -contains 'isAdminRole|False') -and ($childLines -contains 'hasAdminSid|False') -and (@($childLines | Where-Object { $_ -like "identity|*\${stdName}" }).Count -eq 1)
+    $ctlCurrent = ($ctlLines -contains 'setupIsCurrent|True') -and ($ctlLines -contains 'lastReadFailed|False') -and (@($ctlLines | Where-Object { $_ -like 'hookError|*' -or $_ -like 'rule|*|Unreadable' }).Count -eq 0)
+    $stdBad = @($stdLines | Where-Object { $_ -like 'rule|*|Unreadable' -or $_ -eq 'lastReadFailed|True' -or $_ -eq 'urlaclReadFailed|True' })
+    if ($startErr) { $script:StdVerdict = 'UNSUPPORTED'; $script:StdDetail = "could not start the child as the standard user: $startErr" }
+    elseif (-not ($childLines -contains 'DONE')) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'standard-user child did not finish' }
+    elseif (-not $identityProven) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'non-admin token not proven (identity, Administrators role or SID check)' }
+    elseif (-not $ctlCurrent) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'admin control status is not current/readable, so there is nothing to compare against' }
+    elseif ($stdLines.Count -eq 0 -or @($stdLines | Where-Object { $_ -like 'hookError|*' }).Count -gt 0) { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = 'standard-user hook produced no usable status (see child record)' }
+    elseif ($stdBad.Count -gt 0) { $script:StdVerdict = 'UNREADABLE'; $script:StdDetail = ($stdBad -join ' ; ') }
+    elseif (($stdLines -join "`n") -ceq ($ctlLines -join "`n")) { $script:StdVerdict = 'READABLE-CURRENT'; $script:StdDetail = 'standard-user status identical to the admin control and current' }
+    else { $script:StdVerdict = 'NOT-CURRENT'; $script:StdDetail = 'readable but differs from the admin control (compare the admin: and std: lines above)' }
+}
+catch { $script:StdVerdict = 'UNVERIFIED'; $script:StdDetail = "stage error: $($_.Exception.Message)" }
+finally {
+    # kill anything running as/from the account BEFORE removing the account and its directory
+    if ($stdProc) { Stop-Process -Id $stdProc.Id -Force -ErrorAction SilentlyContinue }
+    Get-Process -Name BingeMote -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "${stdDir}\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $acct = Get-LocalUser -Name $stdName -ErrorAction SilentlyContinue
+    if ($acct) { Remove-LocalUser -Name $stdName -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object { $_.LocalPath -like "*\${stdName}" } | Remove-CimInstance -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $stdDir -ErrorAction SilentlyContinue
+    Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
+    $acctLeft = [bool](Get-LocalUser -Name $stdName -ErrorAction SilentlyContinue)
+    Write-Host ("cleanup: account removed=" + (-not $acctLeft) + ", directory removed=" + (-not (Test-Path $stdDir)))
+}
+Write-Host "STDUSER-VERDICT: $($script:StdVerdict) | $($script:StdDetail)"
+if ($script:StdVerdict -ne 'READABLE-CURRENT') { Write-Host "::error::standard-user SetupIsCurrent read is $($script:StdVerdict): not product proof ($($script:StdDetail))" }
+Assert-BingeRulesExact 'after standard-user stage (unchanged)'
+
 # --- Part 2: run the helper and drive its HTTPS API over loopback ---
 Write-Host "== helper runtime =="
 $env:BINGEMOTE_PAIR_CODE = '4242'
@@ -1037,3 +1119,6 @@ if ($acl -match ':8490/') { throw "shipping uninstall left the 8490 listen permi
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls, uninstall clean"
 }
+
+# Final gate: only a READABLE-CURRENT standard-user verdict is product proof; every other verdict fails the job after all other proof ran.
+if ($script:StdVerdict -ne 'READABLE-CURRENT') { throw "STANDARD-USER READ NOT PROVEN: $($script:StdVerdict) - $($script:StdDetail)" }
