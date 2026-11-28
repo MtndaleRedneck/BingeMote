@@ -258,10 +258,13 @@ var
   rc: Integer;
   cmd: String;
 begin
-  cmd := '/v:on /c (if exist "%LOCALAPPDATA%\BingeMote" (set "D=%LOCALAPPDATA%\BingeMote") '
-    + 'else (if exist "%LOCALAPPDATA%\BingeMoteHelper" (set "D=%LOCALAPPDATA%\BingeMoteHelper") '
-    + 'else (set "D=%LOCALAPPDATA%\BingeMote"))) '
-    + '&& (if not exist "!D!" mkdir "!D!") && (> "!D!\updating" echo updating)';
+  // No delayed expansion: a "!" in %LOCALAPPDATA% would corrupt !var! expansion, so
+  // each branch uses the literal expanded path inline. Mirrors Program.PickDataDir:
+  // the new folder once it exists, else the 1.x folder while it still exists, else
+  // the new folder (created here).
+  cmd := '/c (if exist "%LOCALAPPDATA%\BingeMote" (> "%LOCALAPPDATA%\BingeMote\updating" echo updating) '
+    + 'else (if exist "%LOCALAPPDATA%\BingeMoteHelper" (> "%LOCALAPPDATA%\BingeMoteHelper\updating" echo updating) '
+    + 'else (mkdir "%LOCALAPPDATA%\BingeMote" & > "%LOCALAPPDATA%\BingeMote\updating" echo updating)))';
   if ExecAsOriginalUser(ExpandConstant('{sys}\cmd.exe'), cmd, '', SW_HIDE, ewWaitUntilTerminated, rc) and (rc = 0) then
     Log('update-suppression marker written in the original user''s data dir')
   else
