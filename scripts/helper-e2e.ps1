@@ -94,6 +94,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 $rule = netsh advfirewall firewall show rule name="BingeMote"
 if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
+# Diagnostics only, on any post-upgrade setup assert failure: the product elevated
+# step's own account of its reservation decision (helper.log, captured BEFORE the
+# re-run appends to it), a fresh elevated re-run's exit code with its appended log
+# tail, and the live netsh state. Nothing is provisioned, repaired or deleted for
+# the success path; the re-run below happens only after a failure is already
+# determined, and the throw still follows.
+function Write-SetupDiagnostics([string]$why) {
+    Write-Host "== setup diagnostics ($why) =="
+    $diagLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    if (Test-Path $diagLog) { Write-Host "-- helper.log tail (original run) --"; Get-Content $diagLog -Tail 40 | ForEach-Object { Redact-Secrets $_ } } else { Write-Host "no helper.log" }
+    $prov = Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') -ArgumentList '--install-firewall' -Wait -PassThru
+    Write-Host "diagnostic --install-firewall exit: $($prov.ExitCode)"
+    if (Test-Path $diagLog) { Write-Host "-- helper.log tail (after diagnostic re-run) --"; Get-Content $diagLog -Tail 15 | ForEach-Object { Redact-Secrets $_ } }
+    Write-Host "-- netsh http show urlacl --"; netsh http show urlacl
+    Write-Host "-- netsh http show sslcert --"; netsh http show sslcert
+}
+
 # Install-time secure setup (installer [Run] --install-firewall) must leave the upgraded
 # helper fully provisioned on its own: the HTTPS reservation with the interactive-users
 # scope, the TLS port binding, and a live authenticated HTTPS surface from the instance
@@ -102,11 +119,11 @@ if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the 
 $acl = (netsh http show urlacl) | Out-String
 # The grant lives on the SDDL/User lines under the Reserved URL line; match the whole block.
 $aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
-if (-not $aclBlock) { throw "upgrade did not provision the HTTPS listen permission" }
-if ($aclBlock -match 'Everyone|S-1-1-0') { throw "listen permission grants Everyone after the real upgrade: $aclBlock" }
-if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
+if (-not $aclBlock) { Write-SetupDiagnostics 'https reservation missing'; throw "upgrade did not provision the HTTPS listen permission" }
+if ($aclBlock -match 'Everyone|S-1-1-0') { Write-SetupDiagnostics 'https reservation grants Everyone'; throw "listen permission grants Everyone after the real upgrade: $aclBlock" }
+if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { Write-SetupDiagnostics 'https reservation scope unexpected'; throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
 $bindings = (netsh http show sslcert) | Out-String
-if ($bindings -notmatch '0\.0\.0\.0:8488') { throw "upgrade did not provision the TLS port binding" }
+if ($bindings -notmatch '0\.0\.0\.0:8488') { Write-SetupDiagnostics 'tls binding missing'; throw "upgrade did not provision the TLS port binding" }
 Write-Host "ok: real upgrade provisioned the HTTPS interactive-users grant and TLS binding"
 $script:Scheme = 'https'
 # Pair the instance the installer relaunched, under the retained installer-created state.
@@ -119,11 +136,7 @@ foreach ($i in 1..60) {
     Start-Sleep -Milliseconds 500
 }
 if (-not $up) {
-    # Diagnostics only: the product elevated step's exit code and the helper's own log.
-    $prov = Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') -ArgumentList '--install-firewall' -Wait -PassThru
-    Write-Host "diagnostic --install-firewall exit: $($prov.ExitCode)"
-    $diagLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
-    if (Test-Path $diagLog) { Get-Content $diagLog -Tail 30 | ForEach-Object { Redact-Secrets $_ } }
+    Write-SetupDiagnostics 'readiness wait exhausted'
     throw "installer-launched helper did not answer HTTPS /ping with 401 on 8488 after install-time secure setup"
 }
 $r = Invoke-Helper '/ping' '{}' $null
