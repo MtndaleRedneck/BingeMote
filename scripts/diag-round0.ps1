@@ -119,6 +119,19 @@ function Test-HeldOpen([string]$path) {
   catch [IO.IOException] { return "HELD (sharing violation: $($_.Exception.Message))" }
   catch { return "UNKNOWN ($($_.Exception.GetType().Name): $($_.Exception.Message))" }
 }
+# Task state is three-valued. 'absent' only when the ScheduledTasks cmdlet reports a not-found error id
+# (locale independent); any other failure is 'unknown' and never treated as absent.
+function Get-TaskState([string]$name) {
+  try {
+    $t = Get-ScheduledTask -TaskName $name -ErrorAction Stop
+    $x = Export-ScheduledTask -TaskName $name -ErrorAction Stop
+    return [pscustomobject]@{ State = 'present'; Xml = [string]$x; Detail = "path=$($t.TaskPath)" }
+  } catch {
+    $id = [string]$_.FullyQualifiedErrorId
+    if ($id -like '*NotFound*') { return [pscustomobject]@{ State = 'absent'; Xml = ''; Detail = "not-found id=$id" } }
+    return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "id=$id type=$($_.Exception.GetType().Name) msg=$($_.Exception.Message)" }
+  }
+}
 function Get-State([string]$label, [string]$root, [string]$exePath) {
   Write-Host "----- STATE[$label] -----"
   $sf = Join-Path $out "state.$label.txt"
@@ -134,8 +147,9 @@ function Get-State([string]$label, [string]$root, [string]$exePath) {
   }
   Try-Cap "$label exe-held" { if ($exePath) { & $emit "EXE-HELD[$exePath]: $(Test-HeldOpen $exePath)" } }
   Try-Cap "$label task" {
-    $o = (& schtasks.exe /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String)
-    & $emit "TASK 'BingeMote Watchdog' rc=$LASTEXITCODE xml/err:`n$o"
+    $ts = Get-TaskState 'BingeMote Watchdog'
+    & $emit "TASK 'BingeMote Watchdog' state=$($ts.State) $($ts.Detail)`n$($ts.Xml)"
+    if ($ts.State -eq 'unknown') { throw "task state UNKNOWN (not verified absent): $($ts.Detail)" }
   }
   Try-Cap "$label runkey" {
     $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction Stop
@@ -184,15 +198,17 @@ function Test-UnderRoot([string]$exe, [string]$root) {
 }
 function Clean-Persistence([string]$label, [string]$root) {
   Try-Cap "$label persist-task" {
-    $x = (& schtasks.exe /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0) { Write-Host "PERSIST[$label] task absent (rc=$LASTEXITCODE); nothing to delete" }
+    $ts = Get-TaskState 'BingeMote Watchdog'
+    if ($ts.State -eq 'absent') { Write-Host "PERSIST[$label] task verified absent ($($ts.Detail)); nothing to delete" }
+    elseif ($ts.State -eq 'unknown') { throw "PERSIST[$label] task state UNKNOWN, NOT deleted and NOT treated as absent: $($ts.Detail)" }
     else {
-      $xml = [xml]$x.Substring($x.IndexOf('<'))
+      $xml = [xml]$ts.Xml
       $cmds = @($xml.GetElementsByTagName('Command') | ForEach-Object { $_.InnerText })
       Write-Host "PERSIST[$label] task Command value(s): $($cmds -join ' | ')"
       if (@($cmds | Where-Object { Test-UnderRoot $_ $root }).Count -gt 0) {
-        $d = (& schtasks.exe /Delete /TN 'BingeMote Watchdog' /F 2>&1 | Out-String); Write-Host "PERSIST[$label] delete REQUESTED (Command exactly under isolated root): rc=$LASTEXITCODE $d"
-        $q = (& schtasks.exe /Query /TN 'BingeMote Watchdog' 2>&1 | Out-String); Write-Host "PERSIST[$label] re-query after delete rc=$LASTEXITCODE (completion not claimed; pending ops not excluded)"
+        Unregister-ScheduledTask -TaskName 'BingeMote Watchdog' -Confirm:$false -ErrorAction Stop
+        $after = Get-TaskState 'BingeMote Watchdog'
+        Write-Host "PERSIST[$label] delete REQUESTED (Command exactly under isolated root); re-query state=$($after.State) (completion not claimed; pending ops not excluded)"
       } else { Write-Host "PERSIST[$label] task NOT deleted (no Command exactly under isolated root)" }
     }
   }
@@ -285,7 +301,9 @@ function Start-Lock($dir, $mode) {
     $p = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList '-NoProfile','-Command',$cmd -WindowStyle Hidden -PassThru
   }
   Start-Sleep -Seconds 2
-  Need (-not $p.HasExited) "lock holder ($mode) is alive pid=$($p.Id)"
+  $alive = ($p -and -not $p.HasExited)
+  Need $alive "lock holder ($mode) is alive pid=$(if ($p) { $p.Id } else { 'none' })"
+  if (-not $alive) { return $null }
   return $p
 }
 function Stop-Lock($p) { if ($p -and -not $p.HasExited) { & taskkill.exe /T /F /PID $p.Id | Out-Null }; Start-Sleep -Seconds 1 }
@@ -319,6 +337,8 @@ Need (($r.Exit -eq 0) -and ($payloadSha -ne 'ABSENT')) "control install exit 0 a
 "PAYLOAD sha256 (shipped helper exe) = $payloadSha"
 $lockSha = Sha "$env:SystemRoot\System32\PING.EXE"
 Post-Leg 'T6-0-control' $ctl $null $r.Log
+$controlValid = (($r.Exit -eq 0) -and (-not $r.TimedOut) -and ($payloadSha -ne 'ABSENT'))
+if (-not $controlValid) { Write-Host "CONTROL INVALID: ALL dependent legs (T6-a..d) are SKIPPED (no result is meaningful without a valid control)" }
 
 # ---- T6-a / T6-b / T6-c / T6-d ----
 $legs = @(
@@ -328,9 +348,15 @@ $legs = @(
   @{ n = 'T6-d'; mode = 'image';  args = '/SILENT /NORESTART'; win = $true }
 )
 foreach ($l in $legs) {
+  if (-not $controlValid) { Need $false "$($l.n) SKIPPED: control invalid"; continue }
   $dir = New-Target ($l.n -replace '-', '')
   Get-State "$($l.n).pre" $dir (Join-Path $dir 'BingeMote.exe')
   $lock = Start-Lock $dir $l.mode
+  if (-not $lock) {
+    Need $false "$($l.n) SKIPPED: lock holder not alive, installer NOT run"
+    Clean-Scoped "$($l.n).lock-dead" $dir @() @() 10
+    continue
+  }
   "LOCK[$($l.n)] mode=$($l.mode) (windowless surrogate) holder pid=$($lock.Id) preInstall sha256=$(Sha (Join-Path $dir 'BingeMote.exe'))"
   Get-State "$($l.n).pre-install(locked)" $dir (Join-Path $dir 'BingeMote.exe')
   $res = Run-Installer $l.n ("$($l.args) /DIR=`"$dir`"") 90 $l.win
