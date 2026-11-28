@@ -183,15 +183,28 @@ function Assert-LogOrder($logText, [bool]$expectBlind) {
 # is the unconditional signature. helper.log is
 # second-resolution; the uninstall log is millisecond. Both logs use the
 # runner's local zone (UTC on the CI runner).
-$HelperLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
-if (-not (Test-Path $HelperLog)) { $HelperLog = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log' }  # legacy data-dir fallback (Program.cs PickDataDir)
+# Resolve at CALL time, never once at load: on a fresh runner the helper
+# creates helper.log during the legs, so a one-time top-level Test-Path picks
+# the legacy fallback permanently and every later check reads the wrong path
+# (observed: run 46112197533 threw "helper.log missing" at the assert while the
+# real log existed at the primary path - load-before-log regression). Primary
+# is the current data dir; legacy is the pre-PickDataDir data dir.
+function Resolve-HelperLog {
+    $p = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+    if (Test-Path $p) { return $p }
+    $l = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log'
+    if (Test-Path $l) { return $l }
+    return $null
+}
 function Count-CleanupLines {
-    if (-not (Test-Path $HelperLog)) { return 0 }
-    return ([regex]::Matches((Get-Content $HelperLog -Raw), 'tls removal:')).Count
+    $h = Resolve-HelperLog
+    if (-not $h) { return 0 }
+    return ([regex]::Matches((Get-Content $h -Raw), 'tls removal:')).Count
 }
 function Assert-CodeCleanupFresh([int]$hlBefore, $t0, $t1, $uninstallLogText) {
-    if (-not (Test-Path $HelperLog)) { throw 'P4: helper.log missing after uninstall - cannot attribute the [Code] --uninstall-tls exec (non-vacuous requirement)' }
-    $all = [regex]::Matches((Get-Content $HelperLog -Raw), '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+tls removal:')
+    $h = Resolve-HelperLog
+    if (-not $h) { throw 'P4: helper.log missing after uninstall (neither current nor legacy data dir) - cannot attribute the [Code] --uninstall-tls exec (non-vacuous requirement)' }
+    $all = [regex]::Matches((Get-Content $h -Raw), '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+tls removal:')
     if ($all.Count -le $hlBefore) { throw 'P4: no FRESH helper tls-removal entry written during this uninstall - the [Code] --uninstall-tls exec cannot be attributed' }
     $cleanAt = [datetime]::ParseExact($all[$hlBefore].Groups[1].Value, 'yyyy-MM-dd HH:mm:ss', $null)
     if ($cleanAt -lt $t0.AddSeconds(-1) -or $cleanAt -gt $t1.AddSeconds(1)) { throw "P4: fresh cleanup entry at $cleanAt outside this uninstall's window ($t0 - $t1) - stale or foreign invocation" }
