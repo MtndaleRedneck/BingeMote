@@ -29,7 +29,10 @@ internal static class FirewallSetup
     /// <summary>The unelevated "is everything in place" check. firewall.ok only records that this check passed; it holds no identity data and the identity marker is a separate, elevated-written file.</summary>
     internal static bool SetupIsCurrent()
     {
-        if (!(RulesExist() && UrlAclExists())) return false;
+        // Tri-state: an unreadable firewall object is a read failure that elevation cannot fix (same contract as the TLS reads below), not a reason to prompt again.
+        var rules = ReadAll();
+        if (rules.Values.Any(v => v == RuleState.Unreadable)) { LastReadFailed = true; return false; }
+        if (!(rules.Values.All(v => v == RuleState.Exact) && UrlAclExists())) return false;
         if (HelperTls.RuntimeReady(Program.HttpPort, out var why)) return true;
         // An unreadable store or binding (for example an unelevated read that is refused) cannot be fixed by elevating: report it as a read failure, never as a reason to prompt again.
         if (why.Contains("could not be read") || why.Contains("unreadable")) LastReadFailed = true;

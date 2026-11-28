@@ -325,9 +325,14 @@ Assert-BingeRulesExact 'after second install-firewall'
 # Fail-closed on a same-named rule with the wrong state: the harness disables its own fixture; setup must refuse and not repair it.
 $pubTcp = $script:BingeRules[2].Name
 Disable-NetFirewallRule -DisplayName $pubTcp
+$diagLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+$logBefore = if (Test-Path $diagLog) { (Get-Content $diagLog -Raw).Length } else { 0 }
 $fw3 = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
 Assert ($fw3.ExitCode -ne 0) "install-firewall refuses a same-named rule that is not exactly as expected (exit $($fw3.ExitCode))"
+$newLog = (Get-Content $diagLog -Raw).Substring($logBefore)
+Assert ($newLog.Contains("rule '$pubTcp' is Mismatch")) "the refusal is the exact named-rule Mismatch for '$pubTcp', not an unrelated failure"
 Assert ((Get-RuleObject $pubTcp)[0].Enabled.ToString() -eq 'False') "refused setup left the disabled same-named rule untouched"
+foreach ($e in $script:BingeRules) { if ($e.Name -ne $pubTcp) { $o = Get-RuleObject $e.Name; Assert ($o.Count -eq 1 -and $o[0].Enabled.ToString() -eq 'True') "unaffected rule '$($e.Name)' still exactly one and enabled" } }
 Enable-NetFirewallRule -DisplayName $pubTcp
 Assert-BingeRulesExact 'after harness restored its own fixture'
 
