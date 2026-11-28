@@ -126,7 +126,11 @@ function Get-Under([string[]]$roots, [string[]]$cmdMarks) {
 function Test-HeldOpen([string]$path) {
   if (-not (Test-Path $path)) { return 'ABSENT' }
   try { $fs = [IO.File]::Open($path, 'Open', 'Write', 'ReadWrite,Delete'); $fs.Close(); return 'open-for-write-OK (not held)' }
-  catch [IO.IOException] { return "HELD (sharing violation: $($_.Exception.Message))" }
+  catch [IO.IOException] {
+    $hr = $_.Exception.HResult -band 0xFFFF
+    if ($hr -eq 32 -or $hr -eq 33) { return "HELD (win32=$hr sharing/lock violation: $($_.Exception.Message))" }
+    return "UNKNOWN (IOException win32=${hr}: $($_.Exception.Message))"
+  }
   catch { return "UNKNOWN ($($_.Exception.GetType().Name): $($_.Exception.Message))" }
 }
 # Task state is three-valued. 'absent' only when the Get-ScheduledTask query itself fails with error
@@ -134,8 +138,12 @@ function Test-HeldOpen([string]$path) {
 # including any Export-ScheduledTask failure after a successful query, is 'unknown'. Full error detail
 # (category, error id, command, message) is always printed so the classifier is auditable.
 function Get-TaskState([string]$name) {
+  # All three cmdlets must exist; Get/Export/Unregister all use the same -TaskPath '\' root; exactly one match required.
+  foreach ($c in 'Get-ScheduledTask','Export-ScheduledTask','Unregister-ScheduledTask') {
+    if (-not (Get-Command $c -ErrorAction SilentlyContinue)) { return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "cmdlet $c unavailable" } }
+  }
   $t = $null
-  try { $t = Get-ScheduledTask -TaskName $name -ErrorAction Stop }
+  try { $t = @(Get-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop) }
   catch {
     $er = $_
     $cat = [string]$er.CategoryInfo.Category
@@ -144,9 +152,10 @@ function Get-TaskState([string]$name) {
     if ($cat -eq 'ObjectNotFound' -and $cmd -eq 'Get-ScheduledTask') { return [pscustomobject]@{ State = 'absent'; Xml = ''; Detail = "query-not-found $detail" } }
     return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "query-error $detail" }
   }
+  if ($t.Count -ne 1) { return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "expected exactly 1 task at root path, got $($t.Count)" } }
   try {
-    $x = Export-ScheduledTask -TaskName $name -ErrorAction Stop
-    return [pscustomobject]@{ State = 'present'; Xml = [string]$x; Detail = "path=$($t.TaskPath)" }
+    $x = Export-ScheduledTask -TaskName $name -TaskPath '\' -ErrorAction Stop
+    return [pscustomobject]@{ State = 'present'; Xml = [string]$x; Detail = "path=$($t[0].TaskPath)" }
   } catch {
     $er = $_
     return [pscustomobject]@{ State = 'unknown'; Xml = ''; Detail = "export-error category=$($er.CategoryInfo.Category) id=$($er.FullyQualifiedErrorId) type=$($er.Exception.GetType().Name) msg=$($er.Exception.Message)" }
@@ -227,7 +236,7 @@ function Clean-Persistence([string]$label, [string]$root) {
       $cmds = @($xml.GetElementsByTagName('Command') | ForEach-Object { $_.InnerText })
       Write-Host "PERSIST[$label] task Command value(s): $($cmds -join ' | ')"
       if (@($cmds | Where-Object { Test-UnderRoot $_ $root }).Count -gt 0) {
-        Unregister-ScheduledTask -TaskName 'BingeMote Watchdog' -Confirm:$false -ErrorAction Stop
+        Unregister-ScheduledTask -TaskName 'BingeMote Watchdog' -TaskPath '\' -Confirm:$false -ErrorAction Stop
         $after = Get-TaskState 'BingeMote Watchdog'
         Write-Host "PERSIST[$label] delete REQUESTED (Command exactly under isolated root); re-query state=$($after.State) (completion not claimed; pending ops not excluded)"
       } else { Write-Host "PERSIST[$label] task NOT deleted (no Command exactly under isolated root)" }
@@ -326,6 +335,13 @@ function Start-Lock($dir, $mode) {
   $alive = ($p -and -not $p.HasExited)
   Need $alive "lock holder ($mode) is alive pid=$(if ($p) { $p.Id } else { 'none' })"
   if (-not $alive) { return $null }
+  # Positive acquisition gate: alive is not proof the file is held. Require a real sharing/lock violation
+  # on a write-open of the target (retry up to ~10s for the child to acquire it).
+  $held = ''
+  for ($i = 0; $i -lt 10; $i++) { $held = Test-HeldOpen $exe; if ($held -like 'HELD*') { break }; Start-Sleep -Seconds 1 }
+  Write-Host "LOCK-ACQUIRE[$mode] $held"
+  Need ($held -like 'HELD*') "lock ($mode) positively holds $exe before installer (else leg skipped)"
+  if ($held -notlike 'HELD*') { Stop-Lock $p; return $null }
   return $p
 }
 function Stop-Lock($p) {
@@ -387,7 +403,8 @@ foreach ($l in $legs) {
   "LOCK[$($l.n)] mode=$($l.mode) (windowless surrogate) holder pid=$($lock.Id) preInstall sha256=$(Sha (Join-Path $dir 'BingeMote.exe'))"
   Get-State "$($l.n).pre-install(locked)" $dir (Join-Path $dir 'BingeMote.exe')
   $res = Run-Installer $l.n ("$($l.args) /DIR=`"$dir`"") 90 $l.win
-  "LOCK[$($l.n)] holder alive after installer finished: $(-not $lock.HasExited)"
+  $lock.Refresh()
+  "LOCK-VALIDITY[$($l.n)] after installer (recorded, not asserted; installer may legitimately close the holder): holderAlive=$(-not $lock.HasExited) exeHeld=$(Test-HeldOpen (Join-Path $dir 'BingeMote.exe'))"
   Report-Target $l.n $dir $payloadSha $lockSha $res.TimedOut
   Post-Leg $l.n $dir $lock $res.Log
   Start-Sleep -Seconds 1
