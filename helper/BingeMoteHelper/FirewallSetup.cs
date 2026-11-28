@@ -28,7 +28,7 @@ internal static class FirewallSetup
     /// <summary>The unelevated "is everything in place" check. firewall.ok only records that this check passed; it holds no identity data and the identity marker is a separate, elevated-written file.</summary>
     internal static bool SetupIsCurrent()
     {
-        if (!(RuleExists() && UrlAclExists())) return false;
+        if (!(RulesExist() && UrlAclExists())) return false;
         if (HelperTls.RuntimeReady(Program.HttpPort, out var why)) return true;
         // An unreadable store or binding (for example an unelevated read that is refused) cannot be fixed by elevating: report it as a read failure, never as a reason to prompt again.
         if (why.Contains("could not be read") || why.Contains("unreadable")) LastReadFailed = true;
@@ -64,9 +64,8 @@ internal static class FirewallSetup
                 return 8;
             }
             TlsStepDone = true;
-            Run("netsh", $"advfirewall firewall delete rule name=\"{Program.LegacyFirewallRule}\""); // 1.x installs
-            AddRule("TCP", Program.HttpPort);
-            AddRule("UDP", Program.DiscoveryPort);
+            // New-named, create-only rules (see EnsureRules); the pre-1.10 "BingeMote"/"BingeMote Helper" rules are neither read nor deleted.
+            EnsureRules();
             // VLC's web remote needs inbound too: one Private-networks-only rule for vlc.exe.
             var vlc = Movies.FindVlc();
             if (vlc != null)
@@ -89,7 +88,7 @@ internal static class FirewallSetup
             if (httpsPlan == HttpsReservationPlanner.Action.Refuse)
             {
                 Program.Log("firewall setup: an HTTPS reservation for this port exists that is not provably BingeMote's (class " + httpsOwn + "); left untouched.");
-                Console.Error.WriteLine("partial=true tls=ready firewall=" + (RuleExists() ? "ready" : "failed") + " urlacl=foreign");
+                Console.Error.WriteLine("partial=true tls=ready firewall=" + (RulesExist() ? "ready" : "failed") + " urlacl=foreign");
                 Console.Error.WriteLine("The listen permission for this port is held by a reservation BingeMote did not create; it was left untouched. Setup cannot finish until it is examined.");
                 return 3;
             }
@@ -110,28 +109,16 @@ internal static class FirewallSetup
                 if (acl != 0 || !UrlAclExists())
                 {
                     Program.Log("firewall setup: the listen permission could not be added (netsh exit " + acl + ").");
-                    Console.Error.WriteLine("partial=true tls=ready firewall=" + (RuleExists() ? "ready" : "failed") + " urlacl=failed");
+                    Console.Error.WriteLine("partial=true tls=ready firewall=" + (RulesExist() ? "ready" : "failed") + " urlacl=failed");
                     Console.Error.WriteLine("The listen permission could not be added.");
                     return 3;
                 }
             }
-            if (!RuleExists())
+            if (!RulesExist())
             {
-                Console.Error.WriteLine("The firewall rule could not be verified after adding it.");
+                Console.Error.WriteLine("The firewall rules could not be verified after adding it.");
                 return 2;
             }
-            // Old http:// reservation: deleted only when positively ours or legacy, verified gone; a foreign or unreadable one is left.
-            try
-            {
-                var oldOwn = ClassifyOldHttpUrlAcl(InteractiveSid);
-                if (UrlAclMigrationPlanner.PlanOld(oldOwn) == UrlAclMigrationPlanner.Action.DeleteOldHttpReservation)
-                {
-                    Run("netsh", "http delete urlacl url=http://+:" + Program.HttpPort + "/");
-                    if (QueryUrlAcl("http://+:" + Program.HttpPort + "/").Found) Program.Log("firewall setup: the old http reservation could not be removed; it remains (plain http is not served).");
-                }
-                else Program.Log("firewall setup: old http reservation: " + oldOwn + "; left alone.");
-            }
-            catch (Exception ex) { Program.Log("firewall setup: old http reservation check failed (" + ex.GetType().Name + "); left alone."); }
             Directory.CreateDirectory(Path.GetDirectoryName(markerPath)!);
             File.WriteAllText(markerPath, MarkerVersion + "\n" + DateTime.UtcNow.ToString("O"));
             return 0;
@@ -215,13 +202,28 @@ internal static class FirewallSetup
         catch { }
     }
 
-    private static void AddRule(string protocol, int port)
+    /// <summary>Creates each missing BingeMote rule once. Create-only: a rule is added only when no rule of that exact name exists, and nothing is ever deleted or rewritten here (netsh would otherwise add duplicates). Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
+    private static void EnsureRules()
     {
-        Run("netsh", $"advfirewall firewall delete rule name=\"{Program.FirewallRule}\" protocol={protocol} localport={port}");
-        // No remote-IP scoping here: the phone app supports typing the PC's address
-        // directly, which also works across VPN/routed networks outside the local subnet.
-        var code = Run("netsh", $"advfirewall firewall add rule name=\"{Program.FirewallRule}\" dir=in action=allow protocol={protocol} localport={port} profile=private");
+        EnsureNetshRule(Program.RuleTcpPrivate, "TCP", Program.HttpPort);
+        EnsureNetshRule(Program.RuleUdpPrivate, "UDP", Program.DiscoveryPort);
+        EnsurePublicRule(Program.RuleTcpPublic, "TCP", Program.HttpPort);
+        EnsurePublicRule(Program.RuleUdpPublic, "UDP", Program.DiscoveryPort);
+    }
+
+    private static void EnsureNetshRule(string name, string protocol, int port)
+    {
+        if (RuleNamed(name)) return;
+        var code = Run("netsh", $"advfirewall firewall add rule name=\"{name}\" dir=in action=allow protocol={protocol} localport={port} profile=private");
         if (code != 0) throw new InvalidOperationException($"netsh add rule exited {code}");
+    }
+
+    private static void EnsurePublicRule(string name, string protocol, int port)
+    {
+        if (RuleNamed(name)) return;
+        var cmd = $"New-NetFirewallRule -DisplayName '{name}' -Direction Inbound -Action Allow -Protocol {protocol} -LocalPort {port} -Profile Public -RemoteAddress LocalSubnet4 -ErrorAction Stop | Out-Null";
+        var code = Run("powershell", "-NoProfile -NonInteractive -Command \"" + cmd + "\"");
+        if (code != 0) throw new InvalidOperationException($"New-NetFirewallRule exited {code}");
     }
 
     /// <summary>The exact helper URL must have only the intended interactive-user grant.
@@ -261,13 +263,6 @@ internal static class FirewallSetup
                 ace.AccessMask == unchecked((int)0x20000000); // GENERIC_EXECUTE (GX)
         }
         catch { return false; }
-    }
-
-    /// <summary>Ownership of the OLD http:// reservation, for migration planning only (UrlAclMigrationPlanner).</summary>
-    internal static AclOwnership ClassifyOldHttpUrlAcl(string? sid)
-    {
-        var (found, sddl) = QueryUrlAcl("http://+:" + Program.HttpPort + "/");
-        return found ? ClassifySddl(sddl, sid) : AclOwnership.None;
     }
 
     /// <summary>Ownership of the HTTPS reservation, for setup planning (HttpsReservationPlanner) and uninstall cleanup (HttpsReservationCleanupPlanner).</summary>
@@ -425,9 +420,13 @@ internal static class FirewallSetup
     [System.Runtime.InteropServices.DllImport("httpapi.dll", ExactSpelling = true)]
     private static extern uint HttpTerminate(uint flags, IntPtr reserved);
 
-    internal static bool RuleExists()
+    internal static bool RulesExist() =>
+        RuleNamed(Program.RuleTcpPrivate) && RuleNamed(Program.RuleUdpPrivate) &&
+        RuleNamed(Program.RuleTcpPublic) && RuleNamed(Program.RuleUdpPublic);
+
+    internal static bool RuleNamed(string name)
     {
-        var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{Program.FirewallRule}\"")
+        var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{name}\"")
         {
             RedirectStandardOutput = true,
             UseShellExecute = false,
@@ -436,7 +435,7 @@ internal static class FirewallSetup
         using var p = Process.Start(psi)!;
         var output = p.StandardOutput.ReadToEnd();
         p.WaitForExit();
-        return output.Contains(Program.FirewallRule) && !output.Contains("No rules match");
+        return output.Contains(name) && !output.Contains("No rules match");
     }
 
     /// <summary>Elevated uninstall cleanup, invoked by the uninstaller via --uninstall-tls while

@@ -38,20 +38,10 @@ Type: files; Name: "{userprograms}\BingeMote Helper.lnk"
 Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 
 [Run]
-; The installer is already elevated, so it owns the firewall rule and the listen
-; permission: no surprise admin prompt on first run. Old 1.x rule name removed too.
-Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote Helper"""; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=TCP localport=8488 profile=private"; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "advfirewall firewall add rule name=""BingeMote"" dir=in action=allow protocol=UDP localport=8489 profile=private"; Flags: runhidden waituntilterminated
-Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated
-; HTTP.sys URL reservation for interactively signed-in users (S-1-5-4) instead of
-; Everyone. Partial hardening only: HTTP.sys will register the helper's URL for any
-; interactive user and BingeMote no longer grants it to non-interactive identities, but
-; another interactive user can still register the same URL, and raw TCP binding of the
-; port is unaffected. INTERACTIVE, not the installing account's SID, because a standard
-; user elevating with admin credentials still runs the helper as themselves.
-Filename: "netsh"; Parameters: "http add urlacl url=http://+:8488/ sddl=D:(A;;GX;;;S-1-5-4)"; Flags: runhidden waituntilterminated
+; Firewall rules, the HTTPS listen permission and the TLS identity are all created by the
+; product's own --install-firewall step below (create-only, new names, port 8490). This
+; installer no longer deletes or adds any firewall rule or http:// reservation: the
+; pre-1.10 "BingeMote" rules and the http://+:8488/ reservation are left exactly as found.
 ; One-time secure setup (TLS identity, port bindings, HTTPS listen permission): the same
 ; elevated product step the first-run prompt would launch, so install asks for admin once
 ; and the app never needs a surprise prompt. Idempotent - same-path upgrades never run the
@@ -64,8 +54,11 @@ Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
-Filename: "netsh"; Parameters: "advfirewall firewall delete rule name=""BingeMote"""; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
-Filename: "netsh"; Parameters: "http delete urlacl url=http://+:8488/"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
+; Inno runs only the NEWEST entry per RunOnceId at uninstall, so these same-id inert entries
+; shadow the blind deletes that 1.9.x installs left in the merged uninstall log. Nothing is
+; deleted by name any more; "delwatchdog" above is unchanged (watchdog lifecycle is a separate open item).
+Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
+Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
 
 [Code]
 // TLS transport cleanup runs as the newest install's own compiled logic, while the exe

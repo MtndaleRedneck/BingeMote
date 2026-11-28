@@ -20,7 +20,7 @@ data class DiscoveredHelper(val host: String, val port: Int, val name: String)
  * the phone pairs again from the start.
  */
 object HelperClient {
-    const val DEFAULT_PORT = 8488
+    const val DEFAULT_PORT = 8490
     const val DISCOVERY_PORT = 8489
     private const val DISCOVER_MAGIC = "BINGEMOTE_DISCOVER_V1"
     private const val REPLY_MAGIC = "BINGEMOTE_HERE_V1"

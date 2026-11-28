@@ -111,20 +111,8 @@ internal static class TlsPlanner
     private static TlsPlan Fail(string why, string notes = "") => new(TlsAction.FailClosed, why, Notes: notes);
 }
 
-/// <summary>What to do with the old http:// reservation when the https:// one is created. Planning only; nothing calls it with side effects yet.</summary>
-internal static class UrlAclMigrationPlanner
-{
-    internal enum Action { None, DeleteOldHttpReservation, LeaveForeign }
-    internal static Action PlanOld(FirewallSetup.AclOwnership oldHttp) => oldHttp switch
-    {
-        FirewallSetup.AclOwnership.Ours or FirewallSetup.AclOwnership.Legacy => Action.DeleteOldHttpReservation,
-        FirewallSetup.AclOwnership.Foreign => Action.LeaveForeign,
-        _ => Action.None,
-    };
-}
-
 /// <summary>What setup may do with the HTTPS listen permission, from the reservation's classified
-/// ownership. Unlike the old-http migration, no BingeMote version has ever written an Everyone (WD)
+/// ownership. No BingeMote version has ever written an Everyone (WD)
 /// HTTPS reservation - the only HTTPS grant this code writes is the interactive-users one - so
 /// Legacy is NOT a permitted delete class here: a Legacy or otherwise foreign reservation is never
 /// deleted; setup refuses loudly instead. Ours is kept as-is: it is already exactly the desired

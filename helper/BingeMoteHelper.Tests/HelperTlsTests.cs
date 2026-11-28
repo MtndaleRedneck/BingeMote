@@ -127,14 +127,6 @@ SSL Certificate bindings:
         Assert.True(TlsLifetime.Validity < TimeSpan.FromDays(3650));
     }
 
-    [Theory]
-    [InlineData("Ours", "DeleteOldHttpReservation")]
-    [InlineData("Legacy", "DeleteOldHttpReservation")]
-    [InlineData("Foreign", "LeaveForeign")]
-    [InlineData("None", "None")]
-    public void OldHttpReservationIsOnlyPlannedForRemovalWhenOwned(string owner, string expected)
-        => Assert.Equal(expected, UrlAclMigrationPlanner.PlanOld(Enum.Parse<FirewallSetup.AclOwnership>(owner)).ToString());
-
     [Fact] public void StaleOwnedBindingNeedsExplicitSetupAndBecomesAnUpdate()
     {
         Assert.Equal(TlsAction.FailClosed, TlsPlanner.Plan(Obs(M, v4: BindingState.StaleOwned, v6: BindingState.StaleOwned)).Action);

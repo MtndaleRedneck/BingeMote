@@ -17,11 +17,17 @@ namespace BingeMoteHelper;
 
 internal static class Program
 {
-    internal const int HttpPort = 8488;
+    /// <summary>HTTPS pairing/control port. Distinct from the pre-1.10 plain-http 8488, whose http:// URL reservation cannot coexist with an https:// one on the same port (HTTP.sys); the old reservation is left untouched.</summary>
+    internal const int HttpPort = 8490;
     internal const int DiscoveryPort = 8489;
     internal const string DiscoverMagic = "BINGEMOTE_DISCOVER_V1";
     internal const string ReplyMagic = "BINGEMOTE_HERE_V1";
     internal const string FirewallRule = "BingeMote";
+    /// <summary>Rules created (create-only, never deleted by name) by 1.10+ setup. Private: any remote. Public: same-subnet remote only (LocalSubnet4); no Domain rule.</summary>
+    internal const string RuleTcpPrivate = "BingeMote TLS 8490 Private";
+    internal const string RuleUdpPrivate = "BingeMote Discovery 8489 Private";
+    internal const string RuleTcpPublic = "BingeMote TLS 8490 Public LocalSubnet";
+    internal const string RuleUdpPublic = "BingeMote Discovery 8489 Public LocalSubnet";
 
     /// <summary>Private-networks-only inbound rule for vlc.exe (the web remote the app sets up).</summary>
     internal const string VlcFirewallRule = "BingeMote VLC";
