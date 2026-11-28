@@ -52,17 +52,38 @@ class AutomaticOnlySetupTest {
         assertEquals(version.visibleBounds.centerY(), success.visibleBounds.centerY())
         assertTrue(success.visibleBounds.left > version.visibleBounds.right)
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-success.png"))
-        // Fresh-query gone: re-read the node every poll so a stale cached
-        // accessibility node cannot hold the wait; waitForIdle lets semantics settle.
-        // Same 7s budget, same meaning: the message must actually leave the live tree.
+        // Expiry proven on PIXELS, not the a11y tree: the framework tree can keep a
+        // visible-to-user ghost node long after the message leaves composition
+        // (run 46097348603: pixels empty at failure time, the uix dump at failure AND
+        // the later recurrence dump still listed the node). The message region's ink
+        // must vanish within the same 7s, same meaning: it must actually leave the
+        // screen. Ink is self-calibrating - background = 5th-percentile luminance of
+        // the region, ink = pixels more than 40 above it. Real frames from that run:
+        // success 2138 ink pixels, expired 0.
+        val msgBounds = Rect(success.visibleBounds)
         val goneBy = System.currentTimeMillis() + 7000
         var gone = false
+        val probe = java.io.File(ctx.cacheDir, "expiry-probe.png")
         while (System.currentTimeMillis() < goneBy) {
             device.waitForIdle()
-            if (device.findObject(By.text("You're up to date.")) == null) { gone = true; break }
-            Thread.sleep(150)
+            if (device.takeScreenshot(probe)) {
+                val bmp = android.graphics.BitmapFactory.decodeFile(probe.absolutePath)
+                if (bmp != null) {
+                    val w = msgBounds.width(); val h = msgBounds.height()
+                    val px = IntArray(w * h)
+                    bmp.getPixels(px, 0, w, msgBounds.left, msgBounds.top, w, h)
+                    bmp.recycle()
+                    val lums = IntArray(px.size) { i ->
+                        val c = px[i]
+                        (299 * (c shr 16 and 0xFF) + 587 * (c shr 8 and 0xFF) + 114 * (c and 0xFF)) / 1000
+                    }
+                    val bg = lums.sorted()[lums.size / 20]
+                    if (lums.count { it > bg + 40 } == 0) { gone = true; break }
+                }
+            }
+            Thread.sleep(250)
         }
-        assertTrue("'You're up to date.' must expire from the live tree within 7s", gone)
+        assertTrue("'You're up to date.' must expire from the screen within 7s", gone)
         assertTrue(device.hasObject(By.text("Version " + BuildConfig.VERSION_NAME)))
         device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-updates-expired.png"))
     }
@@ -213,15 +234,31 @@ class AutomaticOnlySetupTest {
             fail("same-viewport precondition not established before typing (fail closed): $preWhy")
         }
         val pre = finalRead!!
-        val fields = device.findObjects(By.clazz("android.widget.EditText"))
-        val addressField = fields.minBy { it.visibleBounds.top }
-        addressField.text = typed
+        // findObjects nodes can go stale between the query and the bounds read when a
+        // recomposition lands in between (run 46097348603: StaleObjectException on
+        // getVisibleBounds right here). Re-query fresh on stale - same discipline as
+        // this file's single-tree reads - worst case 3 attempts.
+        var addressField: androidx.test.uiautomator.UiObject2? = null
+        var fieldAttempts = 0
+        while (addressField == null && fieldAttempts < 3) {
+            fieldAttempts++
+            try {
+                val f = device.findObjects(By.clazz("android.widget.EditText")).minBy { it.visibleBounds.top }
+                f.text = typed
+                addressField = f
+            } catch (s: androidx.test.uiautomator.StaleObjectException) { device.waitForIdle() }
+        }
+        assertNotNull("address field unreadable across 3 fresh queries", addressField)
         // ACTION_SET_TEXT applies asynchronously through the IME/accessibility path, so a
         // read on the very next frame can race the state update (saw one CI run read back
         // empty while the identical tree passed in its sibling run). Poll briefly instead.
         val textDeadline = System.currentTimeMillis() + 3000
-        while (addressField.text != "192.0.2.20" && System.currentTimeMillis() < textDeadline) Thread.sleep(100)
-        assertEquals("192.0.2.20", addressField.text)
+        var readBack: String? = null
+        while (readBack != "192.0.2.20" && System.currentTimeMillis() < textDeadline) {
+            readBack = try { addressField!!.text } catch (s: androidx.test.uiautomator.StaleObjectException) { break }
+            if (readBack != "192.0.2.20") Thread.sleep(100)
+        }
+        assertEquals("192.0.2.20", readBack)
         // Same async timing class as the setText read-back above: typing the address
         // clears the selection, which removes the pair card, but the accessibility
         // SetText -> onValueChange -> recomposition chain is several asynchronous hops
@@ -331,16 +368,27 @@ class AutomaticOnlySetupTest {
             .putExtra("screen", "setup").putExtra("vlcpending", "true"))
         assertTrue(device.wait(Until.hasObject(By.text(SETUP_TITLE)), 10000))
         assertTrue(device.hasObject(By.text("Or type the PC's address:")))
+        // Done sits at the very bottom of the scroll (paired card below the pair
+        // section). Run 46097348603 proved the flow correct and the budget short:
+        // Done entered the tree one settle after the 7th swipe (failure pixels show
+        // it on screen; the recurrence dump lists it). Check again after each
+        // settle, and allow up to 12 nudges on a hot emulator - same worst-case CI
+        // budget style as this file's other transition waits, all negative asserts
+        // still run every iteration.
         var foundDone = false
-        repeat(7) {
+        var doneNudges = 0
+        while (!foundDone && doneNudges < 12) {
             assertFalse(device.hasObject(By.text("VLC password")))
             assertFalse(device.hasObject(By.text("Turn on VLC's web remote")))
             assertFalse(device.hasObject(By.text("Set the password by hand instead")))
             assertFalse(device.hasObject(By.text("Hide the manual setup")))
-            if (device.hasObject(By.text("Done"))) foundDone = true
+            if (device.hasObject(By.text("Done"))) { foundDone = true; break }
             device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
                 device.displayWidth / 2, device.displayHeight / 4, 25)
+            device.waitForIdle()
             Thread.sleep(300)
+            if (device.hasObject(By.text("Done"))) foundDone = true
+            doneNudges++
         }
         assertTrue("Automatic deferred setup still needs a Done action", foundDone)
     }
