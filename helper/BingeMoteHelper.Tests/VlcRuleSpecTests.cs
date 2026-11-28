@@ -127,11 +127,11 @@ public class VlcRulePureBranchTests
     [Fact]
     public void UnverifiedUpdateMovesTheEntryToUncertainAndSurvivesTheJournalRoundTrip()
     {
-        var keep = new RuleEntry(Key('k'), Program.RuleVlcPrivate, "p");
+        var keep = new RuleEntry(Key('b'), Program.RuleVlcPrivate, "p");
         var upd = new RuleEntry(Key('a'), Program.RuleVlcPublic, "q");
         var j = new LifecycleJournal(1, new List<RuleEntry> { keep, upd }, true, null, new List<UncertainEntry>(), null);
         var after = FirewallSetup.MoveToUncertain(j, Key('a'), "in-place update exited 1, read-back Absent");
-        Assert.Equal(new[] { Key('k') }, after.Rules.Select(x => x.Key).ToArray());
+        Assert.Equal(new[] { Key('b') }, after.Rules.Select(x => x.Key).ToArray());
         Assert.Single(after.Uncertain);
         Assert.Equal(Key('a'), after.Uncertain[0].Key);
         Assert.Equal(Program.RuleVlcPublic, after.Uncertain[0].DisplayName);
