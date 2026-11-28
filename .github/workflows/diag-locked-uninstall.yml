@@ -22,7 +22,7 @@ jobs:
         timeout-minutes: 12
         run: scripts/diag-locked-uninstall.ps1
       - name: Upload diagnostics (always, cancellation-safe)
-        if: always() && !cancelled()
+        if: always()   # attempt even on cancellation; a cancelled runner may still fail to upload, so captures also stream to stdout
         uses: actions/upload-artifact@ea165f0fd8c8f4b2a94286aa620704383695a1fc   # v4, SHA-pinned
         with:
           name: diag-locked-uninstall
