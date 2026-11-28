@@ -1,3 +1,13 @@
+## v1.18.0 - (date stamped at publish)
+
+Phone and PC now talk over an encrypted connection, and pairing is locked to your PC's own key so another machine can't stand in for it.
+
+**Improved**
+- The after-pairing setup check now tells "couldn't verify yet, try again" apart from "PC not reachable", instead of mixing them up.
+- Your saved pairing and VLC settings get stronger protection on both sides.
+
+Phone and PC move to this together: if the PC is still on an old version, the app shows the update card.
+
 ## v1.17.1 - November 26, 2026
 
 The Accent color card now has eight colors. Burnt orange and teal are gone, and if you had picked one, the app goes back to orange.

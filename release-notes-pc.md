@@ -1,3 +1,9 @@
+## v1.10.0 - (date stamped at publish)
+
+The helper now talks to your phone over an encrypted, pinned connection, and your VLC setup is kept safe across updates and untidy shutdowns.
+
+Pairs with BingeMote Android v1.18.0 - update both sides.
+
 ## v1.9.1 - November 26, 2026
 
 The "This is my home Wi-Fi" fix now shows up.
