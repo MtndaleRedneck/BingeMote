@@ -12,6 +12,19 @@
 #        automated and a silent result is never reported as interactive behavior)
 #  T10   (shipped-helper marker/event probe) is NOT in this version: held out until the core test
 #        is useful.
+# LOCK MODEL: the locks are a WINDOWLESS SURROGATE (a renamed ping.exe image, or a pwsh child holding
+# an exclusive handle). They are NOT the real tray helper and NOT Restart Manager behavior. Whatever
+# the shipped installer does with the real helper is observed only where the control and the
+# silent [Run] entry launch it (see below).
+# SHIPPED [Run]: the installer's skipifnotsilent entry starts {app}\BingeMote.exe after a silent install.
+# No supported Inno switch skips [Run], so the real helper can start from the isolated dir (network
+# self-update/pairing are not gated). It is isolated and CAPTURED, never assumed absent: per leg the
+# script inventories processes (exact exe path under the isolated root or the leg's unique /LOG path
+# on the command line), the 'BingeMote Watchdog' task XML, the HKCU Run value, firewall rules and
+# uninstall keys BEFORE and AFTER, then stops what it found by exact path and rescans (bounded).
+# Task/Run entries are removed only if they reference the isolated root; nothing else is deleted.
+# No claim of zero descendants beyond the bounded scan is made. Capture errors are recorded and fail
+# the job. A timed-out leg is labeled HARNESS-KILLED: its final files are not a natural installer result.
 # Every installer run uses an isolated /DIR target and a bounded wait; on timeout the whole
 # process tree is killed (taskkill /T /F) and survivors are enumerated. Per run: exit code,
 # elapsed, tree snapshot, final target listing and SHA-256, Setup log. All artifacts go to
@@ -41,7 +54,8 @@ public static class R0Win {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-  public static string Dump(HashSet<uint> pids) {
+  public static string Dump(int[] pidList) {
+    var pids = new HashSet<uint>(); foreach (var x in pidList) pids.Add((uint)x);
     var sb = new StringBuilder();
     EnumProc outer = (h, l) => {
       uint pid; GetWindowThreadProcessId(h, out pid);
@@ -65,21 +79,113 @@ public static class R0Win {
 '@
 
 function Get-Tree([int]$rootPid) {
-  $all = Get-CimInstance Win32_Process
-  $seen = New-Object 'System.Collections.Generic.HashSet[uint32]'
+  # Returns int[] (comma-wrapped so the pipeline does not unroll/collapse it).
+  $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+  $seen = New-Object 'System.Collections.Generic.List[int]'
   $q = New-Object System.Collections.Queue
-  $q.Enqueue([uint32]$rootPid); [void]$seen.Add([uint32]$rootPid)
+  $q.Enqueue($rootPid); $seen.Add($rootPid)
   while ($q.Count -gt 0) {
     $c = $q.Dequeue()
-    foreach ($p in $all) { if ($p.ParentProcessId -eq $c -and $seen.Add([uint32]$p.ProcessId)) { $q.Enqueue([uint32]$p.ProcessId) } }
+    foreach ($p in $all) { if ([int]$p.ParentProcessId -eq $c -and -not $seen.Contains([int]$p.ProcessId)) { $seen.Add([int]$p.ProcessId); $q.Enqueue([int]$p.ProcessId) } }
   }
-  return $seen
+  return ,($seen.ToArray())
 }
 function Snap-Tree($rootPid, $label) {
-  $ids = Get-Tree $rootPid
-  $rows = Get-CimInstance Win32_Process | Where-Object { $ids.Contains([uint32]$_.ProcessId) } |
-    ForEach-Object { "  pid=$($_.ProcessId) ppid=$($_.ParentProcessId) name=$($_.Name) path=$($_.ExecutablePath)" }
+  [int[]]$ids = Get-Tree $rootPid
+  $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $ids -contains [int]$_.ProcessId } |
+    ForEach-Object { "  pid=$($_.ProcessId) ppid=$($_.ParentProcessId) name=$($_.Name) path=$($_.ExecutablePath)" })
   "TREE[$label]:`n" + ($rows -join "`n")
+}
+$script:capErr = @()
+function Try-Cap($name, [scriptblock]$sb) {
+  try { $ErrorActionPreference = 'Stop'; & $sb }
+  catch { $m = "CAPTURE-ERROR[$name]: $($_.Exception.Message)"; Write-Host $m; $script:capErr += $m }
+}
+# Processes whose exe is under a root, or whose command line contains a marker (case-insensitive).
+function Get-Under([string[]]$roots, [string[]]$cmdMarks) {
+  $res = @()
+  foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
+    if ([int]$p.ProcessId -eq $PID) { continue }
+    $hit = $false
+    if ($p.ExecutablePath) { foreach ($r in $roots) { if ($p.ExecutablePath.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { $hit = $true } } }
+    if ($p.CommandLine) { foreach ($m in $cmdMarks) { if ($m -and $p.CommandLine.IndexOf($m, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true } } }
+    if ($hit) { $res += $p }
+  }
+  return $res
+}
+function Test-HeldOpen([string]$path) {
+  if (-not (Test-Path $path)) { return 'ABSENT' }
+  try { $fs = [IO.File]::Open($path, 'Open', 'Write', 'ReadWrite,Delete'); $fs.Close(); return 'open-for-write-OK (not held)' }
+  catch [IO.IOException] { return "HELD (sharing violation: $($_.Exception.Message))" }
+  catch { return "UNKNOWN ($($_.Exception.GetType().Name): $($_.Exception.Message))" }
+}
+function Get-State([string]$label, [string]$root, [string]$exePath) {
+  Write-Host "----- STATE[$label] -----"
+  $sf = Join-Path $out "state.$label.txt"
+  $buf = New-Object System.Collections.Generic.List[string]
+  $emit = { param($t) Write-Host $t; $buf.Add($t) }
+  Try-Cap "$label procs" {
+    $ps = @(Get-Under @($root) @())
+    & $emit "PROCS-under-root count=$($ps.Count) (root=$root)"
+    foreach ($p in $ps) { & $emit "  pid=$($p.ProcessId) ppid=$($p.ParentProcessId) path=$($p.ExecutablePath) cmd=$($p.CommandLine)" }
+    $other = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -like 'BingeMote*' -and (-not $_.ExecutablePath -or -not $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) })
+    & $emit "PROCS-BingeMote*-outside-root count=$($other.Count) (reported only, never stopped)"
+    foreach ($p in $other) { & $emit "  pid=$($p.ProcessId) path=$($p.ExecutablePath)" }
+  }
+  Try-Cap "$label exe-held" { if ($exePath) { & $emit "EXE-HELD[$exePath]: $(Test-HeldOpen $exePath)" } }
+  Try-Cap "$label task" {
+    $o = (& schtasks.exe /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String)
+    & $emit "TASK 'BingeMote Watchdog' rc=$LASTEXITCODE xml/err:`n$o"
+  }
+  Try-Cap "$label runkey" {
+    $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction Stop
+    $pr = $k.PSObject.Properties['BingeMote']
+    & $emit "RUNKEY HKCU Run BingeMote = $(if ($pr) { $pr.Value } else { '<absent>' })"
+  }
+  Try-Cap "$label firewall" {
+    foreach ($n in 'BingeMote','BingeMote Helper') {
+      $o = (& netsh.exe advfirewall firewall show rule name="$n" 2>&1 | Out-String)
+      & $emit "FIREWALL[$n] rc=$LASTEXITCODE`n$o"
+    }
+  }
+  Try-Cap "$label uninstallkeys" {
+    foreach ($h in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+      foreach ($k in @(Get-ChildItem $h -ErrorAction Stop)) {
+        $v = Get-ItemProperty $k.PSPath -ErrorAction Stop
+        if ($v.DisplayName -like 'BingeMote*') { & $emit "UNINSTALLKEY $($k.PSChildName) DisplayName=$($v.DisplayName) InstallLocation=$($v.InstallLocation)" }
+      }
+    }
+  }
+  Set-Content -Path $sf -Value ($buf -join "`n")
+}
+# Stop what was found by exact path/log marker, rescan (bounded). Not a universal zero-descendant claim.
+function Clean-Scoped([string]$label, [string]$root, [string[]]$marks, [int[]]$keepPids, [int]$boundSec) {
+  $end = (Get-Date).AddSeconds($boundSec); $script:cEmpty = 0; $script:cKilled = @()
+  Try-Cap "$label clean" {
+    while ((Get-Date) -lt $end -and $script:cEmpty -lt 3) {
+      $ps = @(Get-Under @($root) $marks | Where-Object { $keepPids -notcontains [int]$_.ProcessId })
+      if ($ps.Count -eq 0) { $script:cEmpty++ } else {
+        $script:cEmpty = 0
+        foreach ($p in $ps) { Write-Host "  CLEAN[$label] stop pid=$($p.ProcessId) path=$($p.ExecutablePath)"; $script:cKilled += [int]$p.ProcessId; & taskkill.exe /T /F /PID $p.ProcessId 2>&1 | ForEach-Object { Write-Host "    taskkill: $_" } }
+      }
+      Start-Sleep -Seconds 1
+    }
+  }
+  Write-Host "CLEAN[$label] stopped pids=[$($script:cKilled -join ',')]; final rescan: $($script:cEmpty) consecutive empty scans within ${boundSec}s bound (scope: exe under root or leg /LOG marker; later/other spawns are NOT excluded)"
+}
+# Remove task/Run only when they reference the isolated work root (scoped, never by name alone).
+function Clean-Persistence([string]$label, [string]$root) {
+  Try-Cap "$label persist" {
+    $x = (& schtasks.exe /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0 -and $x.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      $d = (& schtasks.exe /Delete /TN 'BingeMote Watchdog' /F 2>&1 | Out-String); Write-Host "PERSIST[$label] deleted task (references isolated root): rc=$LASTEXITCODE $d"
+    } else { Write-Host "PERSIST[$label] task not deleted (absent or not referencing isolated root)" }
+    $k = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction Stop
+    $pr = $k.PSObject.Properties['BingeMote']
+    if ($pr -and ([string]$pr.Value).IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name BingeMote -ErrorAction Stop; Write-Host "PERSIST[$label] removed Run value (references isolated root)"
+    } else { Write-Host "PERSIST[$label] Run value not removed (absent or not referencing isolated root)" }
+  }
 }
 function Sha($p) { if (Test-Path $p) { (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() } else { 'ABSENT' } }
 
@@ -93,36 +199,39 @@ function Run-Installer($label, $argsLine, $boundSec, [bool]$captureWindows) {
   $p = Start-Process -FilePath $Installer -ArgumentList $a -PassThru
   $null = $p.Handle  # cache the process handle so ExitCode is readable after exit
   $rootPid = $p.Id
-  $winDump = ''
+  $script:winDump = ''
   $treeBefore = $null
   $deadline = (Get-Date).AddSeconds($boundSec)
   while (-not $p.HasExited -and (Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 700
     if ($captureWindows -and ($sw.Elapsed.TotalSeconds -gt 6) -and ($sw.Elapsed.TotalSeconds -lt 40)) {
-      $ids = Get-Tree $rootPid
-      $d = [R0Win]::Dump($ids)
-      if ($d -and ($d -ne $winDump)) { $winDump = $d; Write-Host "WINDOWS@$([int]$sw.Elapsed.TotalSeconds)s:`n$d" }
+      Try-Cap "$label windows" {
+        [int[]]$ids = Get-Tree $rootPid
+        $d = [R0Win]::Dump($ids)
+        if ($d -and ($d -ne $script:winDump)) { $script:winDump = $d; Write-Host "WINDOWS@$([int]$sw.Elapsed.TotalSeconds)s (top-level titles + child control text only; dialog body/buttons NOT guaranteed):`n$d" }
+      }
     }
   }
   $timedOut = -not $p.HasExited
   if ($timedOut) {
     Write-Host (Snap-Tree $rootPid "$label pre-kill")
-    $treeIds = @(Get-Tree $rootPid)
+    [int[]]$treeIds = Get-Tree $rootPid
     & taskkill.exe /T /F /PID $rootPid 2>&1 | ForEach-Object { Write-Host "  taskkill: $_" }
     Start-Sleep -Seconds 3
     $surv = @($treeIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
-    Write-Host "TIMED OUT after ${boundSec}s; tree ids=$($treeIds -join ','); survivors after kill+3s=$($surv -join ',')"
-    Need ($surv.Count -eq 0) "$label no survivors of the installer tree after taskkill /T"
+    Write-Host "HARNESS-KILLED: TIMED OUT after ${boundSec}s; pre-kill tree ids=$($treeIds -join ','); survivors of that snapshot after kill+3s=$($surv -join ',')"
+    Need ($surv.Count -eq 0) "$label no survivors of the pre-kill installer tree after taskkill /T (later/orphan spawns covered only by the scoped rescan)"
+    Clean-Scoped "$label post-kill" $script:IsoRoot @($log) @() 20
   }
   $rc = if ($p.HasExited) { $p.ExitCode } else { 'NOT-EXITED' }
-  Write-Host "RESULT[$label]: exit=$rc timedOut=$timedOut elapsed=$([int]$sw.Elapsed.TotalSeconds)s"
-  if ($winDump) { Set-Content -Path (Join-Path $out "$label.windows.txt") -Value $winDump }
+  Write-Host "RESULT[$label]: $(if ($timedOut) { 'HARNESS-KILLED (partial state below is NOT a natural installer result)' } else { 'natural exit' }) exit=$rc timedOut=$timedOut elapsed=$([int]$sw.Elapsed.TotalSeconds)s"
+  if ($script:winDump) { Set-Content -Path (Join-Path $out "$label.windows.txt") -Value $script:winDump }
   if (Test-Path $log) {
     Write-Host "SETUPLOG[$label] lines=$((Get-Content $log).Count); relevant:"
     Get-Content $log | Select-String -Pattern 'Restart ?Manager|CloseApplications|close the application|in use|Retry|Abort|Ignore|Failed|Exception|Installation process|exit code|Application.*running|locked' |
       Select-Object -First 40 | ForEach-Object { Write-Host "  $($_.Line)" }
   } else { Write-Host "SETUPLOG[$label]: ABSENT (no log written)" }
-  return [pscustomobject]@{ Exit = $rc; TimedOut = $timedOut }
+  return [pscustomobject]@{ Exit = $rc; TimedOut = $timedOut; Log = $log }
 }
 
 function New-Target($name) {
@@ -131,7 +240,8 @@ function New-Target($name) {
   New-Item -ItemType Directory -Force $d | Out-Null
   return $d
 }
-function Report-Target($label, $dir, $payloadSha, $lockSha) {
+function Report-Target($label, $dir, $payloadSha, $lockSha, $timedOut) {
+  if ($timedOut) { Write-Host "FINAL[$label] *** HARNESS-KILLED: files below are the state when the harness killed the installer, not a natural result ***" }
   $exe = Join-Path $dir 'BingeMote.exe'
   $h = Sha $exe
   Write-Host "FINAL[$label] listing:"
@@ -166,14 +276,27 @@ Need ($got -eq $ExpectedSha) "shipped installer sha256 matches pinned pc-v1.9.1 
 if ($got -ne $ExpectedSha) { "HASH MISMATCH - refusing to run anything"; exit 1 }
 "INSTALLER VersionInfo: $((Get-Item $Installer).VersionInfo | Format-List | Out-String)"
 
+$script:IsoRoot = $work
+Write-Host "LOCK MODEL: windowless surrogate (ping image / pwsh exclusive handle); NOT the real tray helper, NOT Restart Manager behavior."
+function Post-Leg($label, $dir, $lockProc, $log) {
+  Get-State "$label.post-install" $dir (Join-Path $dir 'BingeMote.exe')
+  if ($lockProc) { Stop-Lock $lockProc }
+  $keep = @()
+  Clean-Scoped "$label.cleanup" $dir @($log) $keep 20
+  Get-State "$label.post-cleanup(pre-persistence-clean)" $dir (Join-Path $dir 'BingeMote.exe')
+  Clean-Persistence $label $dir
+}
+
 # ---- T6-0 control ----
 $ctl = New-Target 't60'
+Get-State 'T6-0-control.pre' $ctl (Join-Path $ctl 'BingeMote.exe')
 $r = Run-Installer 'T6-0-control' "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /DIR=`"$ctl`"" 120 $false
 $payloadSha = Sha (Join-Path $ctl 'BingeMote.exe')
-Report-Target 'T6-0-control' $ctl $payloadSha 'n/a'
+Report-Target 'T6-0-control' $ctl $payloadSha 'n/a' $r.TimedOut
 Need (($r.Exit -eq 0) -and ($payloadSha -ne 'ABSENT')) "control install exit 0 and payload present (harness validity)"
 "PAYLOAD sha256 (shipped helper exe) = $payloadSha"
 $lockSha = Sha "$env:SystemRoot\System32\PING.EXE"
+Post-Leg 'T6-0-control' $ctl $null $r.Log
 
 # ---- T6-a / T6-b / T6-c / T6-d ----
 $legs = @(
@@ -184,16 +307,20 @@ $legs = @(
 )
 foreach ($l in $legs) {
   $dir = New-Target ($l.n -replace '-', '')
+  Get-State "$($l.n).pre" $dir (Join-Path $dir 'BingeMote.exe')
   $lock = Start-Lock $dir $l.mode
-  "LOCK[$($l.n)] mode=$($l.mode) holder pid=$($lock.Id) preInstall sha256=$(Sha (Join-Path $dir 'BingeMote.exe'))"
+  "LOCK[$($l.n)] mode=$($l.mode) (windowless surrogate) holder pid=$($lock.Id) preInstall sha256=$(Sha (Join-Path $dir 'BingeMote.exe'))"
+  Get-State "$($l.n).pre-install(locked)" $dir (Join-Path $dir 'BingeMote.exe')
   $res = Run-Installer $l.n ("$($l.args) /DIR=`"$dir`"") 90 $l.win
   "LOCK[$($l.n)] holder alive after installer finished: $(-not $lock.HasExited)"
-  Report-Target $l.n $dir $payloadSha $lockSha
-  Stop-Lock $lock
+  Report-Target $l.n $dir $payloadSha $lockSha $res.TimedOut
+  Post-Leg $l.n $dir $lock $res.Log
   Start-Sleep -Seconds 1
 }
 
 "===== SUMMARY ====="
+Need ($script:capErr.Count -eq 0) "all state/window captures completed without error ($($script:capErr.Count) capture errors)"
+$script:capErr | ForEach-Object { "  $_" }
 if ($script:fail.Count -gt 0) { "FAILED ASSERTIONS ($($script:fail.Count)):"; $script:fail | ForEach-Object { "  - $_" } } else { 'all assertions ok' }
 Get-ChildItem $out | ForEach-Object { "artifact: $($_.Name) $($_.Length)" }
 # Observation legs report behavior; only harness-validity assertions fail the job.
