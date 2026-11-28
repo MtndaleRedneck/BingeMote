@@ -94,7 +94,8 @@ begin
     end;
     // Relaunch task for the installing user only (limited token, admin-only write), new name, create-only.
     // Skips with a log line when the installing account is not the signed-in user. Result is read back by the product itself.
-    Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-watchdog', '', SW_HIDE, ewWaitUntilTerminated, Code);
+    if not Exec(ExpandConstant('{app}\BingeMote.exe'), '--install-watchdog', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      SuppressibleMsgBox('Setup could not start BingeMote''s relaunch step: ' + SysErrorMessage(Code), mbError, MB_OK, IDOK);
     // After a silent update, reopen the app for him as the signed-in user (not elevated), now that setup is complete.
     if WizardSilent then
       ExecAsOriginalUser(ExpandConstant('{app}\BingeMote.exe'), '', '', SW_SHOWNORMAL, ewNoWait, Code);
