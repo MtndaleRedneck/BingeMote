@@ -344,6 +344,8 @@ internal static class Program
                 // Watchdog launch: never pop the admin prompt every 5 minutes - stay quiet
                 // until he opens the app himself and finishes the one-time setup.
                 if (ensureRunning) { Log("Watchdog start skipped: firewall setup not done yet."); return 0; }
+                // A state that could not be READ is not a reason to ask for admin again: elevation cannot fix it, and prompting at every start would loop.
+                if (FirewallSetup.LastReadFailed) { FirewallSetup.ReportReadFailure(); return 1; }
                 FirewallSetup.ExplainAndRelaunch();
             }
             // Surface the vlc.exe rule inventory the elevated step saved (report only).

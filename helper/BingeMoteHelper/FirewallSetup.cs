@@ -134,12 +134,24 @@ internal static class FirewallSetup
         }
     }
 
+    /// <summary>Shown instead of the admin prompt when setup state could not be read (LastReadFailed). Logs the fact; asks for nothing.</summary>
+    public static void ReportReadFailure()
+    {
+        Program.Log("firewall setup: the firewall or secure-setup state could not be read; not asking for administrator permission because that would not fix a read failure.");
+        MessageBox.Show(
+            "BingeMote could not read its Windows setup state, so it cannot tell whether setup is complete. Asking for administrator permission would not fix that, so it will not ask. BingeMote will close; see helper.log in %LOCALAPPDATA%\\BingeMote for details.",
+            "BingeMote setup",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+    }
+
     /// <summary>Explains the prompt, then relaunches elevated for the one-time setup. Non-blocking.</summary>
     public static void ExplainAndRelaunch()
     {
         var answer = MessageBox.Show(
             "One Windows permission, then setup is done.\n\n" +
-            "BingeMote needs to let your phone reach this PC on your home network. Windows will now ask for administrator permission once - it is used only to set up the home (Private) network firewall rules, the Windows listen permission and the secure pairing identity. Click Yes.",
+            "BingeMote needs to let your phone reach this PC over Wi-Fi. Windows will now ask for administrator permission once - it is used only to set up the firewall rules, the Windows listen permission and the secure pairing identity. Click Yes.\n\n" +
+            "On networks Windows calls Private, any device on the network can reach BingeMote. On networks Windows calls Public, only devices on this PC's own subnet can. Some Wi-Fi (guest or hotel networks) blocks device-to-device traffic no matter what, and BingeMote cannot change that.",
             "BingeMote setup",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Information);
