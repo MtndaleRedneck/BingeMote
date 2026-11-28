@@ -61,26 +61,22 @@ class AutomaticOnlySetupTest {
         // the region, ink = pixels more than 40 above it. Real frames from that run:
         // success 2138 ink pixels, expired 0.
         val msgBounds = Rect(success.visibleBounds)
+        val probe = java.io.File(ctx.cacheDir, "expiry-probe.png")
+        // Positive baseline, measured at runtime - never assumed from prior
+        // calibration: the painted message must put real ink in its own region, so a
+        // blank or mis-located bounds can never pass the zero-ink expiry check
+        // vacuously. Floor 500 ink pixels: the real painted frame measures 2138 in
+        // this region (run 46097348603), a blank region measures 0.
+        val baselineInk = regionInk(device, probe, msgBounds)
+        assertNotNull("success frame unreadable for the baseline ink measure", baselineInk)
+        assertTrue("painted message region must contain text ink (real frame 2138, floor 500)",
+            baselineInk!! >= 500)
         val goneBy = System.currentTimeMillis() + 7000
         var gone = false
-        val probe = java.io.File(ctx.cacheDir, "expiry-probe.png")
         while (System.currentTimeMillis() < goneBy) {
             device.waitForIdle()
-            if (device.takeScreenshot(probe)) {
-                val bmp = android.graphics.BitmapFactory.decodeFile(probe.absolutePath)
-                if (bmp != null) {
-                    val w = msgBounds.width(); val h = msgBounds.height()
-                    val px = IntArray(w * h)
-                    bmp.getPixels(px, 0, w, msgBounds.left, msgBounds.top, w, h)
-                    bmp.recycle()
-                    val lums = IntArray(px.size) { i ->
-                        val c = px[i]
-                        (299 * (c shr 16 and 0xFF) + 587 * (c shr 8 and 0xFF) + 114 * (c and 0xFF)) / 1000
-                    }
-                    val bg = lums.sorted()[lums.size / 20]
-                    if (lums.count { it > bg + 40 } == 0) { gone = true; break }
-                }
-            }
+            val ink = regionInk(device, probe, msgBounds)
+            if (ink != null && ink == 0) { gone = true; break }
             Thread.sleep(250)
         }
         // The expired baseline is painted BEFORE the proof asserts: on a failure the
@@ -393,6 +389,27 @@ class AutomaticOnlySetupTest {
             doneNudges++
         }
         assertTrue("Automatic deferred setup still needs a Done action", foundDone)
+    }
+
+    /** Text ink in a screen region, self-calibrating: background = 5th-percentile
+     *  luminance of the region, ink = pixels more than 40 above the background.
+     *  Null when the frame cannot be captured, decoded, or the bounds fall outside
+     *  the frame - the caller fails loud, never vacuously. */
+    private fun regionInk(device: UiDevice, probe: java.io.File, bounds: Rect): Int? {
+        if (!device.takeScreenshot(probe)) return null
+        val bmp = android.graphics.BitmapFactory.decodeFile(probe.absolutePath) ?: return null
+        val w = bounds.width(); val h = bounds.height()
+        if (w <= 0 || h <= 0 || bounds.left < 0 || bounds.top < 0 ||
+            bounds.right > bmp.width || bounds.bottom > bmp.height) { bmp.recycle(); return null }
+        val px = IntArray(w * h)
+        bmp.getPixels(px, 0, w, bounds.left, bounds.top, w, h)
+        bmp.recycle()
+        val lums = IntArray(px.size) { i ->
+            val c = px[i]
+            (299 * (c shr 16 and 0xFF) + 587 * (c shr 8 and 0xFF) + 114 * (c and 0xFF)) / 1000
+        }
+        val bg = lums.sorted()[lums.size / 20]
+        return lums.count { it > bg + 40 }
     }
 
     // ---- single-tree reads (one getRootInActiveWindow walk per call; nothing is cached between calls) ----
