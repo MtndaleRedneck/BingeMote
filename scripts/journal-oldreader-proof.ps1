@@ -47,7 +47,14 @@ $AppExe    = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe'
 $StateDir  = Join-Path $env:ProgramData 'BingeMote'
 $Journal   = Join-Path $StateDir 'tls-journal.json'
 $Marker    = Join-Path $StateDir 'tls-identity.json'
-$HelperLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+# DataDir is %LocalAppData%\BingeMote on a fresh machine, but PickDataDir
+# (Program.cs:38-43) falls back to the legacy ...\BingeMoteHelper dir when only
+# that exists - which the 1.9.1 baseline leg can cause. Attribution checks must
+# read whichever candidate log actually received new lines.
+$HelperLogCandidates = @(
+    (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'),
+    (Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log')
+)
 $FixtureAppId = '{11111111-2222-3333-4444-555555555555}'
 
 if (-not (Test-Path $AppExe)) { throw "helper not installed at $AppExe - install the fixed build first" }
@@ -127,10 +134,19 @@ function Restore-Journal {
     elseif (Test-Path $script:Journal) { Remove-Item $script:Journal -Force }
     Write-Host 'journal prior state restored'
 }
-function Get-LogTailSince([long]$pos) {
-    if (-not (Test-Path $HelperLog)) { return '' }
-    $fs = [System.IO.File]::Open($HelperLog, 'Open', 'Read', 'ReadWrite')
-    try { $fs.Position = [Math]::Min($pos, $fs.Length); $sr = New-Object System.IO.StreamReader($fs); return $sr.ReadToEnd() } finally { $fs.Dispose() }
+function Get-LogPositions {
+    $pos = @{}
+    foreach ($c in $HelperLogCandidates) { $pos[$c] = (Test-Path $c) ? (Get-Item $c).Length : 0 }
+    return $pos
+}
+function Get-NewLogLines($positions) {
+    $text = ''
+    foreach ($c in $HelperLogCandidates) {
+        if (-not (Test-Path $c)) { continue }
+        $fs = [System.IO.File]::Open($c, 'Open', 'Read', 'ReadWrite')
+        try { $fs.Position = [Math]::Min([long]$positions[$c], $fs.Length); $sr = New-Object System.IO.StreamReader($fs); $text += $sr.ReadToEnd() } finally { $fs.Dispose() }
+    }
+    return $text
 }
 
 $transportProven = $false
@@ -155,10 +171,10 @@ try {
 
     # --- Surface A: setup fails closed, attributed exit 9, nothing mutated ---
     $before = Get-TransportState
-    $logPos = (Test-Path $HelperLog) ? (Get-Item $HelperLog).Length : 0
+    $logPos = Get-LogPositions
     $p = Start-Process $AppExe -ArgumentList '--install-firewall' -Wait -PassThru
     if ($p.ExitCode -ne 9) { throw "surface A: expected fail-closed exit 9 with an unknown-Kind journal, got $($p.ExitCode)" }
-    $tail = Get-LogTailSince $logPos
+    $tail = Get-NewLogLines $logPos
     if ($tail -notmatch 'operation journal') { throw 'surface A: exit 9 not attributed to the journal (expected helper.log "operation journal" line)' }
     if ((Get-FileHash $Journal -Algorithm SHA256).Hash -ne $plantedHash) { throw 'surface A: journal bytes changed across the fail-closed run' }
     if ($transportProven) {
@@ -171,10 +187,10 @@ try {
 
     # --- Surface B: uninstall cleanup holds journal-held state, attributed ---
     $before = Get-TransportState
-    $logPos = (Test-Path $HelperLog) ? (Get-Item $HelperLog).Length : 0
+    $logPos = Get-LogPositions
     $p = Start-Process $AppExe -ArgumentList '--uninstall-tls' -Wait -PassThru
     Write-Host "surface B: --uninstall-tls exit $($p.ExitCode) (journal-held; not asserted - exit contract is the migration plan's)"
-    $tail = Get-LogTailSince $logPos
+    $tail = Get-NewLogLines $logPos
     if ((Get-FileHash $Journal -Algorithm SHA256).Hash -ne $plantedHash) { throw 'surface B: journal bytes changed across the journal-held uninstall cleanup' }
     if ($transportProven) {
         if ($tail -notmatch 'journal Corrupt') { throw 'surface B: journal-held keep not attributed (expected helper.log "journal Corrupt" line)' }
@@ -185,8 +201,7 @@ try {
         Write-Host 'ok surface B: journal byte-identical (transport claim DEFERRED above)'
     }
 } finally {
-    Restore-Journal
-    Remove-OwnedFixture
+    try { Restore-Journal } finally { Remove-OwnedFixture }
 }
 
 foreach ($d in $script:Deferred) { Write-Host "DEFERRED: $d" }
