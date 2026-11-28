@@ -251,7 +251,20 @@ class AutomaticOnlySetupTest {
             trace.append("read#").append(nudges).append(": ")
                 .append(if (before == null) "no snapshot" else before.describe()).append(" problem=")
                 .append(if (before == null) "n/a" else before.preconditionProblem()?.substringBefore(": complete=")).append('\n')
-            if (before != null && before.preconditionProblem() == null) break
+            if (before != null && before.preconditionProblem() == null) {
+                // Run 46154390375: read#0 satisfied the precondition, then the very next read (the final gate) found the
+                // pair-code label gone, and the saved hierarchy mixed scrolled and unscrolled positions, so the page
+                // was still moving or the tree was mid-update. Accept the state only if it holds across a settle
+                // (idle + 400 ms) with the same address-label and pair-code-label bounds on a second fresh read.
+                device.waitForIdle(); Thread.sleep(400)
+                val again = readSetup()
+                val stable = again != null && again.preconditionProblem() == null &&
+                    again.f?.rect == before.f?.rect && again.l.firstOrNull()?.rect == before.l.firstOrNull()?.rect
+                trace.append("settle-check#").append(nudges).append(": stable=").append(stable).append(' ')
+                    .append(if (again == null) "no snapshot" else again.describe()).append('\n')
+                if (stable) break
+                nudges++; continue
+            }
             if (before == null || before.ve == null || before.ve.isEmpty) {
                 device.waitForIdle(); Thread.sleep(300); nudges++; continue
             }
