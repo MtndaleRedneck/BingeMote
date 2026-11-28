@@ -78,7 +78,14 @@ sleep 3
 adb exec-out screencap -p > focused-ui/status-icon-shade.png
 adb shell cmd statusbar collapse
 # Strict summary: exactly the expected count, and no failure markers anywhere.
-EXPECTED_TESTS=38
+# EXPECTED_TESTS is pinned from SOURCE ENUMERATION of the 7 classes named in the
+# -e class list above (never derived from a run's own summary, which could hide
+# omitted tests): AutomaticOnlySetupTest 5 + AutoSetupCheckTest 13 +
+# DisconnectedPlaybackTest 3 + DisconnectedHomeUiTest 3 + SettingsScrollNavTest 1 +
+# ImmediateFlipTest 14 + HapticTickTest 4 (last two live in NotificationFeedbackTest.kt)
+# = 43 @Test methods, no parameterized runners, as of 1788fe6. Update this count
+# only with a matching source enumeration in the same commit.
+EXPECTED_TESTS=43
 if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_RESULT: shortMsg|Process crashed' focused-ui/tests.txt; then
   echo "FOCUSED-UI GATE FAIL: failure marker in instrumentation output"; exit 1
 fi
