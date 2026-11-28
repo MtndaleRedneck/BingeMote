@@ -197,24 +197,34 @@ class AutomaticOnlySetupTest {
         // trusted to reach it), same condition, same 10 s budget; the assert below is unchanged. On failure
         // capture the real screen and hierarchy so the cause is read from evidence, not guessed (run 46145000387
         // failed here with no capture).
-        val pinBy = System.currentTimeMillis() + 10000
-        var pinTries = 0
-        while (!device.hasObject(By.text(PAIR_CODE_LABEL)) && System.currentTimeMillis() < pinBy) {
-            device.wait(Until.hasObject(By.text(PAIR_CODE_LABEL)), 700)
-            if (!device.hasObject(By.text(PAIR_CODE_LABEL))) {
-                if (pinTries % 3 == 2)
-                    device.swipe(device.displayWidth / 2, device.displayHeight / 2,
-                        device.displayWidth / 2, device.displayHeight * 4 / 5, 40)
-                else
-                    device.swipe(device.displayWidth / 2, device.displayHeight * 4 / 5,
-                        device.displayWidth / 2, device.displayHeight / 2, 40)
-                device.waitForIdle()
-                pinTries++
+        // Targeted reach (run 46151536096: the swipe loop above ended with the page at the top and the Pair card's
+        // code field below the fold; the hierarchy shows ONE scrollable android.widget.ScrollView spanning the page).
+        // Scroll that container itself with UiObject2.scroll (its own gesture, inside its bounds), re-finding it
+        // fresh each pass, until the label is present. At most 8 passes of one half-page scroll, 700 ms render wait
+        // each; every pass is traced. The assert below is unchanged.
+        val pinTrace = StringBuilder()
+        var pinPass = 0
+        while (!device.hasObject(By.text(PAIR_CODE_LABEL)) && pinPass < 8) {
+            try {
+                val sc = device.findObject(By.scrollable(true))
+                if (sc == null) { pinTrace.append("pass#").append(pinPass).append(": no scrollable container\n") }
+                else {
+                    val more = sc.scroll(androidx.test.uiautomator.Direction.DOWN, 0.5f)
+                    pinTrace.append("pass#").append(pinPass).append(": container=").append(sc.visibleBounds)
+                        .append(" scroll(DOWN,0.5)=").append(more).append('\n')
+                }
+            } catch (e: androidx.test.uiautomator.StaleObjectException) {
+                pinTrace.append("pass#").append(pinPass).append(": stale container, re-find\n")
             }
+            device.waitForIdle()
+            device.wait(Until.hasObject(By.text(PAIR_CODE_LABEL)), 700)
+            pinPass++
         }
+        pinTrace.append("label present=").append(device.hasObject(By.text(PAIR_CODE_LABEL))).append(" after ").append(pinPass).append(" passes\n")
         if (!device.hasObject(By.text(PAIR_CODE_LABEL))) {
             device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-pin-fail.png"))
             device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-pin-fail.xml"))
+            try { java.io.File(ctx.getExternalFilesDir(null), "bm-setup-pin-fail.trace.txt").writeText(pinTrace.toString()) } catch (e: Exception) {}
         }
         assertTrue("pair-code entry not present immediately before the address clears the selection",
             device.hasObject(By.text(PAIR_CODE_LABEL)))
