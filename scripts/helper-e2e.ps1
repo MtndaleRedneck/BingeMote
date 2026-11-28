@@ -10,14 +10,52 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 # product's self-signed pairing key: on loopback CI checks reachability and auth codes,
 # not certificate trust (the Android side pins the key; that is what the app tests prove).
 $script:Scheme = 'http'
+$script:Port = 8488   # the 1.9.x baseline (plain http); switched to 8490 once the candidate under test is installed
 function Invoke-Helper($path, $body, $token) {
     $headers = @{}
     if ($token) { $headers['X-BingeMote-Token'] = $token }
     $tls = @{}
     if ($script:Scheme -eq 'https') { $tls['SkipCertificateCheck'] = $true }
-    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:8488$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
+    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:${script:Port}$path" -Method Post -Body $body -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
+# --- Firewall object readback (effective objects, not netsh text) ---------------------------
+$script:BingeRules = @(
+    @{ Name='BingeMote TLS 8490 Private';              Profile='Private'; Proto='TCP'; Port='8490'; Remote='Any' },
+    @{ Name='BingeMote Discovery 8489 Private';        Profile='Private'; Proto='UDP'; Port='8489'; Remote='Any' },
+    @{ Name='BingeMote TLS 8490 Public LocalSubnet';   Profile='Public';  Proto='TCP'; Port='8490'; Remote='LocalSubnet4' },
+    @{ Name='BingeMote Discovery 8489 Public LocalSubnet'; Profile='Public'; Proto='UDP'; Port='8489'; Remote='LocalSubnet4' }
+)
+function Get-RuleObject([string]$name) {
+    $rs = @(Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue)
+    return ,$rs
+}
+function Format-RuleObject($x) {
+    $p = $x | Get-NetFirewallPortFilter; $a = $x | Get-NetFirewallAddressFilter; $ap = $x | Get-NetFirewallApplicationFilter; $sv = $x | Get-NetFirewallServiceFilter
+    return "$($x.DisplayName)|enabled=$($x.Enabled)|$($x.Direction)|$($x.Action)|profile=$($x.Profile)|$($p.Protocol)|lport=$($p.LocalPort -join ',')|rport=$($p.RemotePort -join ',')|remote=$($a.RemoteAddress -join ',')|local=$($a.LocalAddress -join ',')|program=$($ap.Program)|service=$($sv.Service)|edge=$($x.EdgeTraversalPolicy)"
+}
+# Exactly one object per expected name with exactly the expected scope.
+function Assert-BingeRulesExact([string]$when) {
+    foreach ($e in $script:BingeRules) {
+        $rs = Get-RuleObject $e.Name
+        Assert ($rs.Count -eq 1) "$when: exactly one firewall rule named '$($e.Name)' (found $($rs.Count))"
+        $line = Format-RuleObject $rs[0]
+        Write-Host "readback: $line"
+        $want = "enabled=True|Inbound|Allow|profile=$($e.Profile)|$($e.Proto)|lport=$($e.Port)|rport=Any|remote=$($e.Remote)|local=Any|program=Any|service=Any|edge=Block"
+        Assert ($line.ToLower().Contains(('|' + $want).ToLower())) "$when: '$($e.Name)' has exactly the expected scope ($want)"
+    }
+}
+# Informational, never deletes: every enabled inbound allow rule that can reach 8489/8490 or is named BingeMote, with its scope.
+function Write-BroaderRuleInventory([string]$when) {
+    Write-Host "== inbound allow rules reaching 8489/8490 or named BingeMote ($when) =="
+    foreach ($x in @(Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -ErrorAction SilentlyContinue)) {
+        $p = $x | Get-NetFirewallPortFilter
+        $hit = ($x.DisplayName -like '*BingeMote*') -or (@($p.LocalPort) -contains '8489') -or (@($p.LocalPort) -contains '8490')
+        if ($hit) { Write-Host ("inventory: " + (Format-RuleObject $x)) }
+    }
+}
+function Get-LegacyRuleText { return ((netsh advfirewall firewall show rule name="BingeMote" verbose 2>&1) | Out-String).Trim() }
+function Get-LegacyHttpBlock { return [regex]::Match(((netsh http show urlacl) | Out-String), '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value.Trim() }
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
 
 function Redact-Secrets([string]$text) {
@@ -32,7 +70,7 @@ function Invoke-HelperGet($path, $token) {
     if ($token) { $headers['X-BingeMote-Token'] = $token }
     $tls = @{}
     if ($script:Scheme -eq 'https') { $tls['SkipCertificateCheck'] = $true }
-    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:8488$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
+    $r = Invoke-WebRequest -Uri "${script:Scheme}://127.0.0.1:${script:Port}$path" -Method Get -Headers $headers -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck @tls
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 
@@ -83,6 +121,13 @@ foreach ($i in 1..60) {
 }
 if (-not $baselineUp) { throw "baseline helper did not answer /ping with 401 on 8488 after install" }
 Write-Host "ok: baseline helper fully up (authenticated /ping surface) before the upgrade"
+# Legacy state exactly as the 1.9.1 baseline left it: the candidate must leave all of it byte-identical.
+$script:LegacyRuleBefore = Get-LegacyRuleText
+$script:LegacyHttpBefore = Get-LegacyHttpBlock
+Assert ($script:LegacyHttpBefore -ne '') "baseline http://+:8488/ reservation recorded before upgrade"
+Assert ($script:LegacyRuleBefore -match 'BingeMote') "baseline 'BingeMote' firewall rule(s) recorded before upgrade"
+Write-Host "-- legacy rule snapshot --"; Write-Host $script:LegacyRuleBefore
+Write-Host "-- legacy http reservation snapshot --"; Write-Host $script:LegacyHttpBefore
 
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
@@ -92,8 +137,11 @@ if ($LASTEXITCODE -ne 0) {
     if (Test-Path helper/e2e-diag/install-upgrade.log) { Get-Content helper/e2e-diag/install-upgrade.log -Tail 80 }
     throw "silent upgrade failed with exit $LASTEXITCODE"
 }
-$rule = netsh advfirewall firewall show rule name="BingeMote"
-if (-not ($rule | Select-String 'BingeMote')) { throw "upgrade did not keep the BingeMote firewall rule" }
+# Legacy objects untouched by the upgrade (no delete-first, no blind deletes, no re-add).
+Assert ((Get-LegacyRuleText) -ceq $script:LegacyRuleBefore) "upgrade left the legacy 'BingeMote' firewall rule(s) byte-identical (name-based readback)"
+Assert ((Get-LegacyHttpBlock) -ceq $script:LegacyHttpBefore) "upgrade left the legacy http://+:8488/ reservation byte-identical"
+Assert-BingeRulesExact 'after upgrade'
+Write-BroaderRuleInventory 'after upgrade'
 # Diagnostics only, on any post-upgrade setup assert failure: the product elevated
 # step's own account of its reservation decision (helper.log, captured BEFORE the
 # re-run appends to it), a fresh elevated re-run's exit code with its appended log
@@ -117,16 +165,16 @@ function Write-SetupDiagnostics([string]$why) {
     # never a foreign or pre-existing entry, and the original failure still propagates.
     if ($why -eq 'https reservation missing') {
         Write-Host "-- diagnostic netsh add urlacl repro (exact product command) --"
-        $reproOut = netsh http add urlacl url=https://+:8488/ 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
+        $reproOut = netsh http add urlacl url=https://+:8490/ 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
         $reproExit = $LASTEXITCODE
         Write-Host "netsh add exit: $reproExit"
         Write-Host $reproOut
         if ($reproExit -eq 0) {
             $after = (netsh http show urlacl) | Out-String
-            $afterBlock = [regex]::Match($after, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+            $afterBlock = [regex]::Match($after, '(?s)Reserved URL\s*:\s*https://\+:8490/.*?(?=Reserved URL|$)').Value
             if ($afterBlock -and $afterBlock -match 'S-1-5-4|INTERACTIVE' -and $afterBlock -notmatch 'Everyone|S-1-1-0') {
                 Write-Host "repro created the previously-absent reservation with the exact expected grant; removing it to restore pre-repro state"
-                netsh http delete urlacl url=https://+:8488/ | Out-Host
+                netsh http delete urlacl url=https://+:8490/ | Out-Host
             } else {
                 Write-Host "repro exit 0 but readback is not the exact expected grant; leaving state untouched"
             }
@@ -141,14 +189,15 @@ function Write-SetupDiagnostics([string]$why) {
 # success path: a broken install-time path is a product regression to catch, not fix quietly.
 $acl = (netsh http show urlacl) | Out-String
 # The grant lives on the SDDL/User lines under the Reserved URL line; match the whole block.
-$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+$aclBlock = [regex]::Match($acl, '(?s)Reserved URL\s*:\s*https://\+:8490/.*?(?=Reserved URL|$)').Value
 if (-not $aclBlock) { Write-SetupDiagnostics 'https reservation missing'; throw "upgrade did not provision the HTTPS listen permission" }
 if ($aclBlock -match 'Everyone|S-1-1-0') { Write-SetupDiagnostics 'https reservation grants Everyone'; throw "listen permission grants Everyone after the real upgrade: $aclBlock" }
 if ($aclBlock -notmatch 'S-1-5-4|INTERACTIVE') { Write-SetupDiagnostics 'https reservation scope unexpected'; throw "listen permission not scoped to interactive users after the real upgrade: $aclBlock" }
 $bindings = (netsh http show sslcert) | Out-String
-if ($bindings -notmatch '0\.0\.0\.0:8488') { Write-SetupDiagnostics 'tls binding missing'; throw "upgrade did not provision the TLS port binding" }
-Write-Host "ok: real upgrade provisioned the HTTPS interactive-users grant and TLS binding"
+if ($bindings -notmatch '0\.0\.0\.0:8490') { Write-SetupDiagnostics 'tls binding missing'; throw "upgrade did not provision the TLS port binding" }
+Write-Host "ok: real upgrade provisioned the HTTPS interactive-users grant and TLS binding on 8490"
 $script:Scheme = 'https'
+$script:Port = 8490
 # Pair the instance the installer relaunched, under the retained installer-created state.
 $up = $false
 foreach ($i in 1..60) {
@@ -160,7 +209,7 @@ foreach ($i in 1..60) {
 }
 if (-not $up) {
     Write-SetupDiagnostics 'readiness wait exhausted'
-    throw "installer-launched helper did not answer HTTPS /ping with 401 on 8488 after install-time secure setup"
+    throw "installer-launched helper did not answer HTTPS /ping with 401 on 8490 after install-time secure setup"
 }
 $r = Invoke-Helper '/ping' '{}' $null
 Assert ($r.code -eq 401) "installed instance: ping without token is 401"
@@ -224,16 +273,22 @@ Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 2
 
 $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
-$uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART' -PassThru
+$uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART', "/LOG=$PWD\helper\e2e-diag\uninstall-candidate.log" -PassThru
 if (-not $uninstall.WaitForExit(60000)) { Stop-Process -Id $uninstall.Id -Force; throw 'Uninstall exceeded60seconds' }
 Start-Sleep -Seconds 3
-try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
-if ($rule -match 'BingeMote') { throw "uninstaller left the firewall rule behind" }
+# Inherited blind actions from the 1.9.1 install must be shadowed (Inno runs only the newest entry per RunOnceId).
+$ulog = Get-Content helper/e2e-diag/uninstall-candidate.log -Raw
+Assert ($ulog -match 'Skipping RunOnceId "delrule"') "uninstall log: inherited 'delrule' entry was skipped (newest same-id entry won)"
+Assert ($ulog -match 'Skipping RunOnceId "delacl"') "uninstall log: inherited 'delacl' entry was skipped (newest same-id entry won)"
+Assert ((Get-LegacyRuleText) -ceq $script:LegacyRuleBefore) "uninstall left the legacy 'BingeMote' firewall rule(s) byte-identical (not deleted by name)"
+Assert ((Get-LegacyHttpBlock) -ceq $script:LegacyHttpBefore) "uninstall left the legacy http://+:8488/ reservation byte-identical (not deleted)"
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
-if ($acl -match ':8488/') { throw "uninstaller left the listen permission behind" }
+if ($acl -match ':8490/') { throw "uninstaller left the 8490 listen permission behind" }
 try { $leftBindings = netsh http show sslcert 2>$null | Out-String } catch { $leftBindings = '' }
-if ($leftBindings -match ':8488') { throw "uninstaller left the TLS port bindings behind" }
-Write-Host "ok: uninstaller removed the firewall rule, listen permission and TLS port bindings"
+if ($leftBindings -match ':8490') { throw "uninstaller left the 8490 TLS port bindings behind" }
+# Stated cost, asserted so it cannot change silently: the four new firewall rules are NOT removed by uninstall.
+Assert-BingeRulesExact 'after uninstall (rules intentionally retained)'
+Write-Host "ok: uninstaller removed the 8490 listen permission and TLS port bindings; legacy objects and new firewall rules left in place"
 # The installed-instance pairing above survives the uninstall (config.json is user data);
 # clear it so the standalone runtime tests below pair fresh and see Phone 1.
 Remove-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\config.json') -Force -ErrorAction SilentlyContinue
@@ -250,18 +305,31 @@ Write-Host "== install-firewall =="
 $fw = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
 $fwExit = $fw.ExitCode
 Write-Host "install-firewall exit code: $fwExit"
-netsh advfirewall firewall show rule name="BingeMote"
 $aclOut = netsh http show urlacl
-$aclOut | Select-String '8488'
+$aclOut | Select-String '8490'
 if ($fwExit -ne 0) { throw "install-firewall failed with exit $fwExit" }
-if (-not ($aclOut | Select-String ':8488/')) { throw "URL ACL for port 8488 missing after setup" }
+if (-not ($aclOut | Select-String ':8490/')) { throw "URL ACL for port 8490 missing after setup" }
 $aclText2 = ($aclOut | Out-String)
-# The elevated step reserves the HTTPS URL (and migration-deletes an old http one it owns).
-$aclBlock2 = [regex]::Match($aclText2, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+# The elevated step reserves the HTTPS URL on 8490 only; it never touches an http:// reservation.
+$aclBlock2 = [regex]::Match($aclText2, '(?s)Reserved URL\s*:\s*https://\+:8490/.*?(?=Reserved URL|$)').Value
 if (-not $aclBlock2) { throw "helper setup did not add the HTTPS listen permission" }
 if ($aclBlock2 -match 'Everyone|S-1-1-0') { throw "helper setup still grants Everyone: $aclBlock2" }
 if ($aclBlock2 -notmatch 'S-1-5-4|INTERACTIVE') { throw "helper setup did not scope the listen permission to interactive users: $aclBlock2" }
 $script:Scheme = 'https'
+Assert-BingeRulesExact 'after install-firewall'
+Write-BroaderRuleInventory 'after install-firewall'
+# Idempotent re-run: still exactly one object per name.
+$fw2 = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+Assert ($fw2.ExitCode -eq 0) "second install-firewall run exits 0"
+Assert-BingeRulesExact 'after second install-firewall'
+# Fail-closed on a same-named rule with the wrong state: the harness disables its own fixture; setup must refuse and not repair it.
+$pubTcp = $script:BingeRules[2].Name
+Disable-NetFirewallRule -DisplayName $pubTcp
+$fw3 = Start-Process $exe -ArgumentList '--install-firewall' -Wait -PassThru
+Assert ($fw3.ExitCode -ne 0) "install-firewall refuses a same-named rule that is not exactly as expected (exit $($fw3.ExitCode))"
+Assert ((Get-RuleObject $pubTcp)[0].Enabled.ToString() -eq 'False') "refused setup left the disabled same-named rule untouched"
+Enable-NetFirewallRule -DisplayName $pubTcp
+Assert-BingeRulesExact 'after harness restored its own fixture'
 
 # --- Part 2: run the helper and drive its HTTPS API over loopback ---
 Write-Host "== helper runtime =="
@@ -272,10 +340,10 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
-    if (-not $up) { throw "helper did not start listening on 8488" }
+    if (-not $up) { throw "helper did not start listening on 8490" }
     Write-Host "helper is listening"
 
     $r = Invoke-Helper '/ping' '{}' $null
@@ -412,7 +480,7 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart" }
@@ -435,7 +503,7 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart for second pairing" }
@@ -466,7 +534,7 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart with an unacked adopt" }
@@ -492,7 +560,7 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $up) { throw "helper did not restart on old config" }
@@ -519,7 +587,7 @@ try {
         foreach ($i in 1..40) {
             try {
                 $c = New-Object Net.Sockets.TcpClient
-                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+                $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $up) { throw "helper did not restart for the pending-write test" }
@@ -544,7 +612,7 @@ try {
         foreach ($i in 1..40) {
             try {
                 $c = New-Object Net.Sockets.TcpClient
-                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+                $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $up) { throw "helper did not restart after VLC closed" }
@@ -574,7 +642,7 @@ try {
         foreach ($i in 1..40) {
             try {
                 $c = New-Object Net.Sockets.TcpClient
-                $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+                $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
             } catch { Start-Sleep -Milliseconds 500 }
         }
         if (-not $up) { throw "helper did not restart for the re-pair test" }
@@ -660,10 +728,10 @@ try {
     foreach ($i in 1..40) {
         try {
             $c = New-Object Net.Sockets.TcpClient
-            $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+            $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
         } catch { Start-Sleep -Milliseconds 500 }
     }
-    if (-not $up) { throw "taking-over copy did not start listening on 8488" }
+    if (-not $up) { throw "taking-over copy did not start listening on 8490" }
     $r = Invoke-Helper '/ping' '{}' $token
     Assert ($r.code -eq 200) "taking-over copy serves the saved token"
     $p = $p2
@@ -671,7 +739,6 @@ try {
     Write-Host "HELPER E2E PASSED"
 } finally {
     if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-    netsh advfirewall firewall delete rule name="BingeMote" | Out-Null
 }
 
 # --- Part 3: the exact shipping bytes (no CI hooks): install the published installer
@@ -713,6 +780,7 @@ if ($env:BINGEMOTE_REQUIRE_PRIOR_VERSION) {
     Assert ($prior -and $prior.Name -eq ('BingeMote-PC-' + $env:BINGEMOTE_REQUIRE_PRIOR_VERSION + '.exe')) "required prior installer BingeMote-PC-$($env:BINGEMOTE_REQUIRE_PRIOR_VERSION).exe is missing"
 }
 if ($prior) { $initialInstaller = $prior.FullName; Write-Host "Initial install: exact prior $priorLabel for paired upgrade retention ($($prior.Name))" }
+$script:Port = 8488   # the exact prior release listens on 8488
 $shipInstall = Start-Process $initialInstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-install.log' -PassThru
 if (-not $shipInstall.WaitForExit(90000)) { Stop-Process -Id $shipInstall.Id -Force; Get-Content shipping-install.log -Tail 40; throw 'Initial installer exceeded90seconds' }
 if ($shipInstall.ExitCode -ne 0) { Get-Content shipping-install.log -Tail 40; throw "shipping install failed: $($shipInstall.ExitCode)" }
@@ -890,6 +958,7 @@ Start-Sleep -Seconds 2
 $upgrade = Start-Process $ship.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=shipping-upgrade.log' -PassThru
 if (-not $upgrade.WaitForExit(90000)) { Stop-Process -Id $upgrade.Id -Force; Get-Content shipping-upgrade.log -Tail 40; throw 'Upgrade installer exceeded90seconds' }
 if ($upgrade.ExitCode -ne 0) { Get-Content shipping-upgrade.log -Tail 40; throw "exact shipping upgrade failed: $($upgrade.ExitCode)" }
+$script:Port = 8490   # the candidate under test serves on 8490
 # Inspect the actual installed payload extracted by the pinned installer, not
 # compressed setup bytes or a separately built helper. The single-file bundle
 # contains the managed metadata and literals uncompressed (default publish).
@@ -914,10 +983,10 @@ $up = $false
 foreach ($i in 1..40) {
     try {
         $c = New-Object Net.Sockets.TcpClient
-        $c.Connect('127.0.0.1', 8488); $c.Close(); $up = $true; break
+        $c.Connect('127.0.0.1', 8490); $c.Close(); $up = $true; break
     } catch { Start-Sleep -Milliseconds 500 }
 }
-if (-not $up) { throw "shipping install-over: helper did not start listening on 8488" }
+if (-not $up) { throw "shipping install-over: helper did not start listening on 8490" }
 $r = Invoke-Helper '/ping' '{}' $shipToken2
 Assert ($r.code -eq 200) "shipping upgrade: the window-paired token survives install-over"
 $r = Invoke-Helper '/pair' '{"code":"0000"}' $null
@@ -957,10 +1026,9 @@ Start-Sleep -Seconds 2
 $uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART' -PassThru
 if (-not $uninstall.WaitForExit(60000)) { Stop-Process -Id $uninstall.Id -Force; throw 'Uninstall exceeded60seconds' }
 Start-Sleep -Seconds 3
-try { $rule = netsh advfirewall firewall show rule name="BingeMote" 2>$null | Out-String } catch { $rule = '' }
-if ($rule -match 'BingeMote') { throw "shipping uninstall left the firewall rule behind" }
+Assert-BingeRulesExact 'after shipping uninstall (rules intentionally retained)'
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
-if ($acl -match ':8488/') { throw "shipping uninstall left the listen permission behind" }
+if ($acl -match ':8490/') { throw "shipping uninstall left the 8490 listen permission behind" }
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls, uninstall clean"
 }

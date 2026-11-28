@@ -153,22 +153,11 @@ jobs:
         with:
           dotnet-version: 10.x
       - name: Unit, palette and URL permission tests
-        # BINGEMOTE_URLACL_E2E opts the migration test into touching the real URL
-        # reservation; safe here because the runner is disposable. It skips elsewhere.
-        # shell: bash - the default pwsh would not stop on a failing native dotnet
-        # test (no -e equivalent), letting a later successful command mask it, and
-        # would reject this script's syntax outright. The test result and the E2E
-        # execution marker are checked independently: neither can cover the other.
+        # The old http->https URL reservation migration test (and its opt-in marker gate) is
+        # removed with the migration: http://+:8488/ is never touched any more. Real
+        # reservation/firewall behavior is covered by scripts/helper-e2e.ps1.
         shell: bash
-        env:
-          BINGEMOTE_URLACL_E2E: '1'
-        run: |
-          # Freshness: no marker from an earlier attempt may be read as this run's.
-          rm -f helper/BingeMoteHelper.Tests/bin/Release/net10.0-windows/bingemote-urlacl-e2e.marker
-          dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
-          test_exit=$?
-          grep -q EXECUTED helper/BingeMoteHelper.Tests/bin/Release/net10.0-windows/bingemote-urlacl-e2e.marker 2>/dev/null || { echo 'URLACL migration E2E did not execute on the opted-in runner (marker file missing or SKIPPED)'; exit 1; }
-          [ $test_exit -eq 0 ] || { echo "dotnet test failed with exit $test_exit"; exit $test_exit; }
+        run: dotnet test helper/BingeMoteHelper.Tests/BingeMoteHelper.Tests.csproj -c Release --filter 'FullyQualifiedName!~RealVlc' --logger 'trx;LogFileName=modernization-pc.trx'
       - name: Compile production helper
         run: dotnet publish helper/BingeMoteHelper/BingeMoteHelper.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o helper/out
       - uses: actions/upload-artifact@v4

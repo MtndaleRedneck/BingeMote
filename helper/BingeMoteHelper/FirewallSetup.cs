@@ -1,3 +1,4 @@
+using System.Text;
 using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -202,28 +203,72 @@ internal static class FirewallSetup
         catch { }
     }
 
-    /// <summary>Creates each missing BingeMote rule once. Create-only: a rule is added only when no rule of that exact name exists, and nothing is ever deleted or rewritten here (netsh would otherwise add duplicates). Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
+    /// <summary>Adds each BingeMote rule that is absent. Semantics, exactly: for each of four fixed names the rule is read first; no rule of that name -> add it; exactly one rule that matches the expected parameters -> keep it; anything else (a duplicate, a disabled or differently-scoped rule of that name) -> FAIL setup and change nothing. This is read-then-add, NOT an atomic create-only primitive: two concurrent setups could both add and leave duplicates, which RulesExist then refuses to accept. Nothing is ever deleted or rewritten. Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
     private static void EnsureRules()
     {
-        EnsureNetshRule(Program.RuleTcpPrivate, "TCP", Program.HttpPort);
-        EnsureNetshRule(Program.RuleUdpPrivate, "UDP", Program.DiscoveryPort);
-        EnsurePublicRule(Program.RuleTcpPublic, "TCP", Program.HttpPort);
-        EnsurePublicRule(Program.RuleUdpPublic, "UDP", Program.DiscoveryPort);
+        foreach (var r in ExpectedRules)
+        {
+            var state = ReadRule(r);
+            if (state == RuleState.Absent)
+            {
+                int code;
+                if (r.Profile == "Private")
+                    code = Run("netsh", $"advfirewall firewall add rule name=\"{r.Name}\" dir=in action=allow protocol={r.Protocol} localport={r.Port} profile=private");
+                else
+                    code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
+                        $"New-NetFirewallRule -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile Public -RemoteAddress {r.Remote} -ErrorAction Stop | Out-Null")));
+                if (code != 0) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}");
+                state = ReadRule(r);
+            }
+            if (state != RuleState.Exact)
+            {
+                Program.Log($"firewall setup: rule '{r.Name}' is {state} (expected exactly one enabled inbound allow rule, profile {r.Profile}, {r.Protocol} {r.Port}, remote {r.Remote}, any program/service); left untouched.");
+                throw new InvalidOperationException($"firewall rule '{r.Name}' is {state}; not changed");
+            }
+        }
     }
 
-    private static void EnsureNetshRule(string name, string protocol, int port)
-    {
-        if (RuleNamed(name)) return;
-        var code = Run("netsh", $"advfirewall firewall add rule name=\"{name}\" dir=in action=allow protocol={protocol} localport={port} profile=private");
-        if (code != 0) throw new InvalidOperationException($"netsh add rule exited {code}");
-    }
+    internal sealed record RuleSpec(string Name, string Profile, string Protocol, int Port, string Remote);
+    internal enum RuleState { Absent, Exact, Mismatch, Unreadable }
 
-    private static void EnsurePublicRule(string name, string protocol, int port)
+    internal static readonly RuleSpec[] ExpectedRules =
     {
-        if (RuleNamed(name)) return;
-        var cmd = $"New-NetFirewallRule -DisplayName '{name}' -Direction Inbound -Action Allow -Protocol {protocol} -LocalPort {port} -Profile Public -RemoteAddress LocalSubnet4 -ErrorAction Stop | Out-Null";
-        var code = Run("powershell", "-NoProfile -NonInteractive -Command \"" + cmd + "\"");
-        if (code != 0) throw new InvalidOperationException($"New-NetFirewallRule exited {code}");
+        new(Program.RuleTcpPrivate, "Private", "TCP", Program.HttpPort, "Any"),
+        new(Program.RuleUdpPrivate, "Private", "UDP", Program.DiscoveryPort, "Any"),
+        new(Program.RuleTcpPublic, "Public", "TCP", Program.HttpPort, "LocalSubnet4"),
+        new(Program.RuleUdpPublic, "Public", "UDP", Program.DiscoveryPort, "LocalSubnet4"),
+    };
+
+    /// <summary>Reads the effective rule object by exact name through the firewall objects (not netsh text).</summary>
+    internal static RuleState ReadRule(RuleSpec r)
+    {
+        var script =
+            "$ErrorActionPreference='Stop'; $r=@(Get-NetFirewallRule -DisplayName '" + r.Name + "' -ErrorAction SilentlyContinue); " +
+            "if ($r.Count -eq 0) { 'ABSENT'; exit 0 }; if ($r.Count -ne 1) { 'DUP'; exit 0 }; $x=$r[0]; " +
+            "$p=$x|Get-NetFirewallPortFilter; $a=$x|Get-NetFirewallAddressFilter; $ap=$x|Get-NetFirewallApplicationFilter; $sv=$x|Get-NetFirewallServiceFilter; " +
+            "'ONE|'+$x.Enabled+'|'+$x.Direction+'|'+$x.Action+'|'+$x.Profile+'|'+$p.Protocol+'|'+($p.LocalPort -join ',')+'|'+($p.RemotePort -join ',')+'|'+($a.RemoteAddress -join ',')+'|'+($a.LocalAddress -join ',')+'|'+$ap.Program+'|'+$sv.Service+'|'+$x.EdgeTraversalPolicy";
+        var psi = new ProcessStartInfo("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        try
+        {
+            using var p = Process.Start(psi)!;
+            var read = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(30000)) { try { p.Kill(); } catch { } return RuleState.Unreadable; }
+            var line = read.GetAwaiter().GetResult().Trim();
+            if (p.ExitCode != 0) return RuleState.Unreadable;
+            if (line == "ABSENT") return RuleState.Absent;
+            var f = line.Split('|');
+            if (f.Length != 13 || f[0] != "ONE") return line == "DUP" ? RuleState.Mismatch : RuleState.Unreadable;
+            bool Is(string got, string want) => string.Equals(got.Trim(), want, StringComparison.OrdinalIgnoreCase);
+            var ok = Is(f[1], "True") && Is(f[2], "Inbound") && Is(f[3], "Allow") && Is(f[4], r.Profile) && Is(f[5], r.Protocol) &&
+                Is(f[6], r.Port.ToString()) && Is(f[7], "Any") && Is(f[8], r.Remote) && Is(f[9], "Any") && Is(f[10], "Any") && Is(f[11], "Any") && Is(f[12], "Block");
+            return ok ? RuleState.Exact : RuleState.Mismatch;
+        }
+        catch { return RuleState.Unreadable; }
     }
 
     /// <summary>The exact helper URL must have only the intended interactive-user grant.
@@ -420,23 +465,8 @@ internal static class FirewallSetup
     [System.Runtime.InteropServices.DllImport("httpapi.dll", ExactSpelling = true)]
     private static extern uint HttpTerminate(uint flags, IntPtr reserved);
 
-    internal static bool RulesExist() =>
-        RuleNamed(Program.RuleTcpPrivate) && RuleNamed(Program.RuleUdpPrivate) &&
-        RuleNamed(Program.RuleTcpPublic) && RuleNamed(Program.RuleUdpPublic);
-
-    internal static bool RuleNamed(string name)
-    {
-        var psi = new ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{name}\"")
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var p = Process.Start(psi)!;
-        var output = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return output.Contains(name) && !output.Contains("No rules match");
-    }
+    /// <summary>True only when every expected rule is exactly one rule with exactly the expected scope. A same-named rule that is disabled, duplicated, broader or narrower is NOT current.</summary>
+    internal static bool RulesExist() => ExpectedRules.All(r => ReadRule(r) == RuleState.Exact);
 
     /// <summary>Elevated uninstall cleanup, invoked by the uninstaller via --uninstall-tls while
     /// the exe still exists: the HTTPS listen permission and the owned TLS transport bindings go
