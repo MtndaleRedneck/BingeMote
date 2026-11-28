@@ -14,10 +14,13 @@ namespace BingeMoteHelper;
 /// created by an earlier version, by anyone else, or one whose creation could not be journaled is
 /// never in this file and is never deleted. Admin-vs-admin replacement is NOT prevented: an
 /// administrator can edit this file and the objects alike.</summary>
-internal sealed record LifecycleJournal(int Version, List<RuleEntry> Rules, bool UrlAcl, WatchdogEntry? Watchdog);
+internal sealed record LifecycleJournal(int Version, List<RuleEntry> Rules, bool UrlAcl, WatchdogEntry? Watchdog, List<UncertainEntry> Uncertain);
+/// <summary>Recovery evidence only: a create was attempted under this fresh Name but the outcome could not be confirmed (create exit nonzero, or read-back not exact). It is NEVER delete authority; uninstall only reports it as a possible orphan.</summary>
+internal sealed record UncertainEntry(string Key, string DisplayName, string Outcome);
 /// <summary>A firewall rule this build created: its actual unique Name (a random key chosen at creation, never reused), the DisplayName, and the full property line read back right after creation.</summary>
 internal sealed record RuleEntry(string Key, string DisplayName, string Props);
-internal sealed record WatchdogEntry(string Task, string Sid, string Sddl, string Exe);
+/// <summary>Verified=false: the task was registered but its read-back DACL could not be confirmed. It is journaled so the attempt is on record, but it is never auto-removed or refreshed (orphan cost), and uninstall says so.</summary>
+internal sealed record WatchdogEntry(string Task, string Sid, string Sddl, string Exe, bool Verified);
 
 internal static class LifecycleJournalStore
 {
@@ -31,8 +34,8 @@ internal static class LifecycleJournalStore
             if (!File.Exists(p)) return (MarkerState.Absent, null);
             if (path == null && !ProtectedFile.DirTrusted(ProtectedFile.Dir)) return (MarkerState.Corrupt, null);
             var j = JsonSerializer.Deserialize<LifecycleJournal>(File.ReadAllText(p));
-            if (j != null && j.Version == 1 && j.Rules != null
-                && j.Rules.All(e => e != null && Regex.IsMatch(e.Key ?? "", "^BingeMote-[0-9a-f]{32}$") && FirewallSetup.ExpectedRules.Any(r => r.Name == e.DisplayName) && !string.IsNullOrEmpty(e.Props))
+            if (j != null && j.Version == 1 && j.Rules != null && j.Uncertain != null && j.Uncertain.All(u => u != null && Regex.IsMatch(u.Key ?? "", @"\ABingeMote-[0-9a-f]{32}\z") && !string.IsNullOrEmpty(u.Outcome))
+                && j.Rules.All(e => e != null && Regex.IsMatch(e.Key ?? "", @"\ABingeMote-[0-9a-f]{32}\z") && FirewallSetup.ExpectedRules.Any(r => r.Name == e.DisplayName) && !string.IsNullOrEmpty(e.Props))
                 && (j.Watchdog == null || (WatchdogSetup.SidAcceptable(j.Watchdog.Sid) && j.Watchdog.Task == WatchdogSetup.TaskName)))
                 return (MarkerState.Present, j);
             return (MarkerState.Corrupt, null);
@@ -41,7 +44,7 @@ internal static class LifecycleJournalStore
     }
 
     /// <summary>Merge new entries into the journal. Returns false (and logs) when it could not be written; the objects then stay un-journaled, which means they are never deleted.</summary>
-    internal static bool Merge(IEnumerable<RuleEntry> rules, bool urlAcl, WatchdogEntry? watchdog)
+    internal static bool Merge(IEnumerable<RuleEntry> rules, bool urlAcl, WatchdogEntry? watchdog, IEnumerable<UncertainEntry>? uncertain = null)
     {
         try
         {
@@ -50,7 +53,8 @@ internal static class LifecycleJournalStore
             var merged = new LifecycleJournal(1,
                 (cur?.Rules ?? new List<RuleEntry>()).Concat(rules).DistinctBy(e => e.Key).ToList(),
                 (cur?.UrlAcl ?? false) || urlAcl,
-                watchdog ?? cur?.Watchdog);
+                watchdog ?? cur?.Watchdog,
+                (cur?.Uncertain ?? new List<UncertainEntry>()).Concat(uncertain ?? Array.Empty<UncertainEntry>()).DistinctBy(u => u.Key).ToList());
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(merged));
             return true;
         }
@@ -62,7 +66,7 @@ internal static class LifecycleJournalStore
     {
         try
         {
-            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null) { File.Delete(FilePath); return; }
+            if (j.Rules.Count == 0 && !j.UrlAcl && j.Watchdog == null && j.Uncertain.Count == 0) { File.Delete(FilePath); return; }
             ProtectedFile.WriteAtomic(FilePath, JsonSerializer.Serialize(j));
         }
         catch (Exception ex) { Program.Log("lifecycle journal not updated: " + ex.Message); }
@@ -81,7 +85,7 @@ internal static class WatchdogSetup
     private const int TaskCreate = 0x2, TaskUpdate = 0x4, LogonInteractiveToken = 3, DaclInfo = 4;
 
     internal static bool SidAcceptable(string? sid) =>
-        sid != null && Regex.IsMatch(sid, @"^S-1-(5-21-\d+-\d+-\d+-\d+|12-1-\d+-\d+-\d+-\d+)$");
+        sid != null && Regex.IsMatch(sid, @"\AS-1-(5-21-\d+-\d+-\d+-\d+|12-1-\d+-\d+-\d+-\d+)\z");
 
     /// <summary>SYSTEM and Administrators full control; the one target user File Read. Protected: nothing inherited.</summary>
     internal static string BuildSddl(string sid) => "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;" + sid + ")";
@@ -196,7 +200,7 @@ internal static class WatchdogSetup
             object folder = Folder();
             var live = Read(folder, out var liveSddl);
             var (js, j) = LifecycleJournalStore.Read();
-            var ours = js == MarkerState.Present && j?.Watchdog != null && j.Watchdog.Sid == sid && SddlEquivalent(liveSddl, j.Watchdog.Sddl) && SddlEquivalent(liveSddl, sddl);
+            var ours = js == MarkerState.Present && j?.Watchdog != null && j.Watchdog.Verified && j.Watchdog.Sid == sid && SddlEquivalent(liveSddl, j.Watchdog.Sddl) && SddlEquivalent(liveSddl, sddl);
             int flags;
             if (live == TaskRead.Absent) flags = TaskCreate;
             else if (live == TaskRead.Present && ours) flags = TaskCreate | TaskUpdate;   // journaled by us and still byte-for-ACE as we left it: refresh the exe path on upgrade
@@ -205,10 +209,14 @@ internal static class WatchdogSetup
             var after = Read(folder, out var afterSddl);
             if (after != TaskRead.Present || !SddlEquivalent(afterSddl, sddl))
             {
-                Program.Log("watchdog registered but its read-back access list is not the expected one; NOT journaled, so it will not be auto-removed.");
+                // No blind cleanup of what we just created: journal the attempt as unverified so it is on record, never auto-removed, never refreshed.
+                if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe, false)))
+                    Program.Log("the unverified watchdog attempt could NOT be journaled; it is recorded only here and will never be removed automatically (task " + TaskName + ", user " + sid + ").");
+                Program.Log("watchdog registered but its read-back access list is " + (after == TaskRead.Present ? "not the expected one" : "unreadable (" + after + ")") + ". Journaled as UNVERIFIED: it is left in place, not removed or refreshed by setup or uninstall (orphan cost: a task that may run after uninstall until an administrator removes it).");
                 return 6;
             }
-            LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe));
+            if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe, true)))
+                Program.Log("the watchdog task was registered and verified but could NOT be journaled; it will never be removed automatically (task " + TaskName + ", user " + sid + ").");
             Program.Log("watchdog registered for the installing user (limited token, admin-only write).");
             return 0;
         }
@@ -218,6 +226,11 @@ internal static class WatchdogSetup
     /// <summary>Uninstall: delete only the journaled task while its live access list still equals the journaled one; otherwise leave it and say so. Returns true when nothing journaled remains.</summary>
     internal static bool RemoveJournaled(WatchdogEntry w)
     {
+        if (!w.Verified)
+        {
+            Program.Log("uninstall cleanup: watchdog task left: its registration was never verified (orphan cost; an administrator must remove it if it exists).");
+            return false;
+        }
         try
         {
             object folder = Folder();

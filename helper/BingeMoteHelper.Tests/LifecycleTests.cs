@@ -20,6 +20,9 @@ public class LifecycleTests
     [InlineData("S-1-5-18", false)]
     [InlineData("S-1-5-21-1-2-3", false)]   // domain SID without RID, not a user
     [InlineData("", false)]
+    [InlineData("S-1-5-21-1-2-3-1001\n", false)]   // a final newline must not match (absolute-end anchor)
+    [InlineData("S-1-5-21-1-2-3-1001\r\n", false)]
+    [InlineData(" S-1-5-21-1-2-3-1001", false)]
     [InlineData("x)(A;;FA;;;WD", false)]
     public void OnlyOrdinaryUserSidsAreAcceptedAsTarget(string sid, bool ok) => Assert.Equal(ok, WatchdogSetup.SidAcceptable(sid));
 
@@ -58,11 +61,11 @@ public class LifecycleTests
         {
             var f = Path.Combine(dir, "lifecycle.json");
             var good = "{\"Key\":\"BingeMote-" + new string('a', 32) + "\",\"DisplayName\":\"" + FirewallSetup.ExpectedRules[0].Name + "\",\"Props\":\"True|Inbound\"}";
-            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[{\"Key\":\"BingeMote\",\"DisplayName\":\"BingeMote\",\"Props\":\"x\"}],\"UrlAcl\":false,\"Watchdog\":null}");
+            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[{\"Key\":\"BingeMote\",\"DisplayName\":\"BingeMote\",\"Props\":\"x\"}],\"UrlAcl\":false,\"Watchdog\":null,\"Uncertain\":[]}");
             Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);   // a display name or legacy key is not a journal key
-            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[" + good + "],\"UrlAcl\":true,\"Watchdog\":null}");
+            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[" + good + "],\"UrlAcl\":true,\"Watchdog\":null,\"Uncertain\":[{\"Key\":\"BingeMote-" + new string('b', 32) + "\",\"DisplayName\":\"x\",\"Outcome\":\"create exited 1\"}]}");
             Assert.Equal(MarkerState.Present, LifecycleJournalStore.Read(f).state);
-            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[],\"UrlAcl\":false,\"Watchdog\":{\"Task\":\"BingeMote Watchdog\",\"Sid\":\"" + Sid + "\",\"Sddl\":\"x\",\"Exe\":\"x\"}}");
+            File.WriteAllText(f, "{\"Version\":1,\"Rules\":[],\"UrlAcl\":false,\"Watchdog\":{\"Task\":\"BingeMote Watchdog\",\"Sid\":\"" + Sid + "\",\"Sddl\":\"x\",\"Exe\":\"x\",\"Verified\":true},\"Uncertain\":[]}");
             Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);   // legacy task name is never journal-eligible
             File.WriteAllText(f, "not json");
             Assert.Equal(MarkerState.Corrupt, LifecycleJournalStore.Read(f).state);

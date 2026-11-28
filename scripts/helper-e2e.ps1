@@ -61,8 +61,12 @@ function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ;
 # --- Lifecycle helpers: watchdog task state and absence of journaled rules ---
 $script:WdName = 'BingeMote Watchdog (installed)'
 function Get-LegacyWatchdogXml { $o = (schtasks /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String).Trim(); if ($LASTEXITCODE -ne 0) { return '' } ; return $o }
+function Get-ComHresult($err) { $x = $err.Exception; while ($x.InnerException) { $x = $x.InnerException }; return [int]$x.HResult }
+# $null means ONLY "the task does not exist" (HRESULT 0x80070002/0x80070003); any other COM failure is an error, never absence.
 function Get-TaskSddl([string]$name) {
-    try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); return [string]($svc.GetFolder('\').GetTask($name).GetSecurityDescriptor(4)) } catch { return $null }
+    $svc = New-Object -ComObject Schedule.Service; $svc.Connect()
+    try { return [string]($svc.GetFolder('\').GetTask($name).GetSecurityDescriptor(4)) }
+    catch { $h = Get-ComHresult $_; if ($h -eq -2147024894 -or $h -eq -2147024893) { return $null }; throw ('task read failed, not absence: HRESULT ' + ('{0:X8}' -f $h) + ' ' + $_.Exception.Message) }
 }
 function Assert-BingeRulesAbsent([string]$when) {
     foreach ($e in $script:BingeRules) { $rs = Get-RuleObject $e.Name; Assert ($rs.Count -eq 0) "${when}: firewall rule '$($e.Name)' is gone (found $($rs.Count))" }
@@ -166,8 +170,17 @@ foreach ($e in $script:BingeRules) {
 }
 $keyProbe = (Get-RuleObject $script:BingeRules[0].Name)[0].Name
 $dupErr = $null
-try { New-NetFirewallRule -Name $keyProbe -DisplayName 'bm-dup-probe-never-created' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 59999 -ErrorAction Stop | Out-Null } catch { $dupErr = $_.Exception.Message }
-Assert ($null -ne $dupErr) "New-NetFirewallRule under an existing Name fails (create-only contract observed): $dupErr"
+$dupType = $null
+try { New-NetFirewallRule -Name $keyProbe -DisplayName 'bm-dup-probe-never-created' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 59999 -ErrorAction Stop | Out-Null }
+catch { $dupErr = $_.Exception.Message; $dupType = $_.Exception.GetType().FullName; Write-Host "same-Name create error: type=$dupType id=$($_.FullyQualifiedErrorId) message=$dupErr" }
+if ($null -eq $dupErr) {
+    # Unexpected success: capture the actual fixture identity, remove ONLY rules carrying this harness-only DisplayName, then fail.
+    $fx = @(Get-NetFirewallRule -DisplayName 'bm-dup-probe-never-created' -ErrorAction SilentlyContinue | ForEach-Object { 'Name=' + $_.Name })
+    Write-Host ("UNEXPECTED SUCCESS of same-Name create; harness-named rules: " + ($fx -join ',') + "; existing key rule now: " + ((Get-NetFirewallRule -Name $keyProbe -ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName }) -join ','))
+    Get-NetFirewallRule -DisplayName 'bm-dup-probe-never-created' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    throw "ASSERT FAILED: New-NetFirewallRule under an existing Name unexpectedly succeeded (create-only contract not observed)"
+}
+Assert ($dupType -match 'CimException' -and $dupErr -match 'already exists') "same-Name create failed with the already-exists error (type=$dupType): $dupErr"
 Assert ((Get-RuleObject 'bm-dup-probe-never-created').Count -eq 0) "the failed same-Name create left no new rule"
 Assert-BingeRulesExact 'after same-Name create attempt (unchanged)'
 Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "upgrade left the legacy 'BingeMote Watchdog' task definition identical"
@@ -435,6 +448,15 @@ try {
     $svcA = New-Object -ComObject Schedule.Service; $svcA.Connect(); $fldA = $svcA.GetFolder('\')
     $fldA.RegisterTask('bm-dacl-fixture', $fixXml, 2, $null, $null, 3, $fixSddl) | Out-Null
     $fixBeforeSddl = [string]($fldA.GetTask('bm-dacl-fixture').GetSecurityDescriptor(4))
+    # Positive control for the SAME probe operations: an administrator performs disable, update, create-or-update and delete on a separate control task with the same SDDL.
+    # If these fail for a reason other than rights (bad XML, API shape), the standard-user denials above would prove nothing.
+    $fldA.RegisterTask('bm-dacl-control', $fixXml, 2, $null, $null, 3, $fixSddl) | Out-Null
+    $ctrlTask = $fldA.GetTask('bm-dacl-control')
+    $ctrlTask.Enabled = $false
+    $fldA.RegisterTask('bm-dacl-control', $fixXml, 4, $null, $null, 3, $null) | Out-Null
+    $fldA.RegisterTask('bm-dacl-control', $fixXml, 6, $null, $null, 3, $null) | Out-Null
+    $fldA.DeleteTask('bm-dacl-control', 0)
+    Assert ($true) "admin positive control: the same disable/update/create-or-update/delete operations succeed for an administrator on a control task"
     Write-Host "dacl fixture registered; sddl=$fixBeforeSddl"
     # admin control: the same hook in the elevated fixture context, so the standard-user result is compared with real state at this point
     Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
@@ -456,12 +478,14 @@ $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $fld = $svc.GetFo
 $t = $null
 try { $t = $fld.GetTask('bm-dacl-fixture'); W 'daclRead|ok' } catch { W 'daclRead|denied' }
 try { $x = [string]$t.GetSecurityDescriptor(4); W ('daclReadSd|' + [bool]$x) } catch { W 'daclReadSd|denied' }
-try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W 'daclDisable|denied' }
-try { $fld.RegisterTask('bm-dacl-fixture', (Get-Content 'C:\bmstd\fixture.xml' -Raw), 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W 'daclUpdate|denied' }
-try { $fld.RegisterTask('bm-dacl-fixture', (Get-Content 'C:\bmstd\fixture.xml' -Raw), 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W 'daclCreateOrUpdate|denied' }
-try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W 'daclDelete|denied' }
-schtasks /Delete /TN 'bm-dacl-fixture' /F *> $null
-W ('daclSchtasksDelete|exit' + $LASTEXITCODE)
+function H($e) { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; return [int]$x.HResult }
+$fxml = Get-Content 'C:\bmstd\fixture.xml' -Raw
+if ($null -eq $t) { W 'daclNoHandle|True' } else { try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W ('daclDisable|hr' + (H $_)) } }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W ('daclUpdate|hr' + (H $_)) }
+try { $fld.RegisterTask('bm-dacl-fixture', $fxml, 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W ('daclCreateOrUpdate|hr' + (H $_)) }
+try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W ('daclDelete|hr' + (H $_)) }
+$so = (schtasks /Delete /TN 'bm-dacl-fixture' /F 2>&1 | Out-String)
+W ('daclSchtasksDelete|exit' + $LASTEXITCODE + '|accessDeniedText=' + ($so -match 'Access is denied'))
 W 'DONE'
 '@
     Set-Content -Path (Join-Path $stdDir 'child.ps1') -Value $child -Encoding UTF8
@@ -482,10 +506,11 @@ W 'DONE'
     Write-Host '-- standard-user identity / child record --'; $childLines | ForEach-Object { Write-Host "child: $_" }
     Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
     # DACL verdict: the standard user (the task's own principal) must be unable to disable, update, replace or delete; admin then proves the task is intact.
-    $fixAfter = $null; try { $ft = $fldA.GetTask('bm-dacl-fixture'); $fixAfter = @{ enabled = [bool]$ft.Enabled; sddl = [string]$ft.GetSecurityDescriptor(4) } } catch { }
-    $denyKeys = @('daclDisable|denied', 'daclUpdate|denied', 'daclCreateOrUpdate|denied', 'daclDelete|denied')
+    $fixAfter = $null; try { $ft = $fldA.GetTask('bm-dacl-fixture'); $fixAfter = @{ enabled = [bool]$ft.Enabled; sddl = [string]$ft.GetSecurityDescriptor(4) } } catch { Write-Host ('admin re-read of the fixture failed: ' + $_.Exception.Message) }
+    # Only the actual E_ACCESSDENIED (0x80070005 = -2147024891) counts as denial; any other error code (bad XML, null handle, missing task...) is NOT denial.
+    $denyKeys = @('daclDisable|hr-2147024891', 'daclUpdate|hr-2147024891', 'daclCreateOrUpdate|hr-2147024891', 'daclDelete|hr-2147024891')
     $allDenied = ((@($denyKeys | Where-Object { $childLines -notcontains $_ }).Count -eq 0) -and ($childLines -contains 'daclRead|ok'))
-    $schDelDenied = @($childLines | Where-Object { $_ -match '^daclSchtasksDelete\|exit[1-9]' }).Count -eq 1
+    $schDelDenied = @($childLines | Where-Object { $_ -match '^daclSchtasksDelete\|exit[1-9]\|accessDeniedText=True$' }).Count -eq 1
     $intact = ($null -ne $fixAfter) -and $fixAfter.enabled -and ($fixAfter.sddl -ceq $fixBeforeSddl)
     if ($allDenied -and $schDelDenied -and $intact) { $script:DaclVerdict = 'DENIED-ALL' } else { $script:DaclVerdict = 'NOT-DENIED-OR-UNVERIFIED' }
     Write-Host ("DACL-VERDICT: " + $script:DaclVerdict + " | readByUser=" + ($childLines -contains 'daclRead|ok') + " allDenied=$allDenied schtasksDeleteDenied=$schDelDenied taskIntact=$intact")
@@ -513,6 +538,7 @@ finally {
     Remove-Item -Recurse -Force $stdDir -ErrorAction SilentlyContinue
     Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
     try { $svcC = New-Object -ComObject Schedule.Service; $svcC.Connect(); $svcC.GetFolder('\').DeleteTask('bm-dacl-fixture', 0) } catch { }
+    try { $svcC = New-Object -ComObject Schedule.Service; $svcC.Connect(); $svcC.GetFolder('\').DeleteTask('bm-dacl-control', 0) } catch { }
     $acctLeft = [bool](Get-LocalUser -Name $stdName -ErrorAction SilentlyContinue)
     Write-Host ("cleanup: account removed=" + (-not $acctLeft) + ", directory removed=" + (-not (Test-Path $stdDir)))
 }

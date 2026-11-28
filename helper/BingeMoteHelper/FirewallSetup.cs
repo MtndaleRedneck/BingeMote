@@ -70,8 +70,16 @@ internal static class FirewallSetup
             TlsStepDone = true;
             // New-named, create-only rules (see EnsureRules); the pre-1.10 "BingeMote"/"BingeMote Helper" rules are neither read nor deleted.
             var createdRules = new List<RuleEntry>();
-            try { EnsureRules(createdRules); }
-            finally { if (createdRules.Count > 0) LifecycleJournalStore.Merge(createdRules, false, null); }   // journal what THIS run created, even if a later rule then fails
+            var uncertainRules = new List<UncertainEntry>();
+            try { EnsureRules(createdRules, uncertainRules); }
+            finally
+            {
+                // Journal what THIS run created, and keep any create attempt whose outcome is uncertain as recovery evidence (never delete authority), even if a later rule fails.
+                if ((createdRules.Count > 0 || uncertainRules.Count > 0) && !LifecycleJournalStore.Merge(createdRules, false, null, uncertainRules))
+                    Program.Log("lifecycle journal could NOT be written. Created: " + string.Join("; ", createdRules.Select(e => e.DisplayName + " key " + e.Key))
+                        + ". Uncertain: " + string.Join("; ", uncertainRules.Select(u => u.DisplayName + " key " + u.Key + " (" + u.Outcome + ")"))
+                        + ". These are recorded here only; setup and uninstall will never delete them automatically (possible orphan rules).");
+            }
             // VLC's web remote needs inbound too: one Private-networks-only rule for vlc.exe.
             var vlc = Movies.FindVlc();
             if (vlc != null)
@@ -222,7 +230,7 @@ internal static class FirewallSetup
     }
 
     /// <summary>Adds each BingeMote rule that is absent. Semantics, exactly: for each of four fixed names the rule is read first; no rule of that name -> add it; exactly one rule that matches the expected parameters -> keep it; anything else (a duplicate, a disabled or differently-scoped rule of that name) -> FAIL setup and change nothing. This is read-then-add, NOT an atomic create-only primitive: two concurrent setups could both add and leave duplicates, which RulesExist then refuses to accept. Nothing is ever deleted or rewritten. Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
-    private static void EnsureRules(List<RuleEntry> created)
+    private static void EnsureRules(List<RuleEntry> created, List<UncertainEntry> uncertain)
     {
         foreach (var r in ExpectedRules)
         {
@@ -235,9 +243,10 @@ internal static class FirewallSetup
                 var remote = r.Remote == "Any" ? "" : " -RemoteAddress " + r.Remote;
                 var code = Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
                     $"New-NetFirewallRule -Name '{key}' -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile {r.Profile}{remote} -ErrorAction Stop | Out-Null")));
-                if (code != 0) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}");
+                if (code != 0) { uncertain.Add(new UncertainEntry(key, r.Name, "create exited " + code)); throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}"); }
                 state = ReadAll()[r.Name];
-                if (state == RuleState.Exact && ReadByKey(key) is { Found: Found.One } rb && rb.Display == r.Name) created.Add(new RuleEntry(key, r.Name, rb.Props));   // absent before, our create under a fresh key succeeded, read back exact
+                if (state == RuleState.Exact && ReadByKey(key) is { Found: Found.One } rb && rb.Display == r.Name) created.Add(new RuleEntry(key, r.Name, rb.Props));
+                else uncertain.Add(new UncertainEntry(key, r.Name, "create returned 0 but read-back was " + state + " by display name and not exactly one rule under this key"));   // absent before, our create under a fresh key succeeded, read back exact
             }
             if (state != RuleState.Exact)
             {
@@ -543,7 +552,7 @@ internal static class FirewallSetup
     internal static KeyRead ReadByKey(string key)
     {
         var bad = new KeyRead(Found.Unreadable, "", "");
-        if (!Regex.IsMatch(key, "^BingeMote-[0-9a-f]{32}$")) return bad;
+        if (!Regex.IsMatch(key, @"\ABingeMote-[0-9a-f]{32}\z")) return bad;
         var script =
             "$ErrorActionPreference='Stop'; try { $all=@(Get-NetFirewallRule) } catch { 'ERR'; exit 0 }; " +
             "try { $r=@($all | Where-Object { $_.Name -ceq '" + key + "' }); " +
@@ -579,12 +588,14 @@ internal static class FirewallSetup
             if (now.Found == Found.Absent) continue;   // already gone: nothing to remove
             if (now.Found == Found.One && now.Display == e.DisplayName && now.Props == e.Props
                 && Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
-                    "$ErrorActionPreference='Stop'; Remove-NetFirewallRule -Name '" + e.Key + "'"))) == 0) continue;
+                    "$ErrorActionPreference='Stop'; Remove-NetFirewallRule -Name '" + e.Key + "'"))) == 0
+                && ReadByKey(e.Key).Found == Found.Absent) continue;   // exit 0 alone is not removal: the key must read back Absent before the entry is dropped
             Program.Log("uninstall cleanup: firewall rule '" + e.DisplayName + "' (key " + e.Key + ") left (" + now.Found + ", not provably unchanged, or removal failed).");
             keepRules.Add(e);
         }
         var keepWatchdog = lj.Watchdog != null && !WatchdogSetup.RemoveJournaled(lj.Watchdog) ? lj.Watchdog : null;
-        LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog));
+        foreach (var u in lj.Uncertain) Program.Log("uninstall cleanup: possible orphan firewall rule '" + u.DisplayName + "' key " + u.Key + " (" + u.Outcome + "): never created-witnessed, not removed.");
+        LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog, lj.Uncertain));
     }
 
     private static int Run(string file, string args)
