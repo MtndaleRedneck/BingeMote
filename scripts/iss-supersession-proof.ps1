@@ -154,11 +154,13 @@ function Uninstall($logName) {
     if ($LASTEXITCODE -ne 0) { throw "uninstall failed ($LASTEXITCODE)" }
     return (Get-Content $log -Raw)
 }
-# P4/P6: locate phase markers in the uninstall log; positions give the order.
+# P2/P6/P7: locate phase markers in the uninstall log. Inno never logs [Code]-
+# driven Exec calls (observed run 46110921073; consistent with issrc
+# Setup.Uninstall.pas), so the [Code] --uninstall-tls exec is NOT greped here -
+# its attribution is Assert-CodeCleanupFresh's job via helper.log freshness.
 function Assert-LogOrder($logText, [bool]$expectBlind) {
     $inert = $logText.IndexOf('/c exit 0')
     $blind = $logText.IndexOf('http delete urlacl')
-    $code  = $logText.IndexOf('--uninstall-tls')
     if ($expectBlind) {
         if ($blind -lt 0) { throw 'P2/P7: expected blind http delete urlacl execution in the log, none found' }
         $count = ([regex]::Matches($logText, 'http delete urlacl')).Count
@@ -167,10 +169,38 @@ function Assert-LogOrder($logText, [bool]$expectBlind) {
         if ($blind -ge 0) { throw 'P6: blind http delete urlacl execution found in the FIXED-chain uninstall log' }
         if ($inert -lt 0) { throw 'P6: inert delacl entry execution not found in the fixed-chain uninstall log' }
     }
-    if (-not $expectBlind) {
-        if ($code -lt 0) { throw 'P4: --uninstall-tls exec marker missing from the fixed-chain uninstall log - phase order cannot be attributed (non-vacuous requirement)' }
-        if ($inert -gt $code) { throw 'P4: log order wrong: [UninstallRun] inert entry logged AFTER the [Code] --uninstall-tls exec' }
-    }
+}
+# P4, corrected against Inno 6.7.1 source (Setup.Uninstall.pas: CurUninstallStep-
+# Changed(usUninstall), which Execs the helper's --uninstall-tls, fires BEFORE
+# UninstLog.PerformUninstall processes [UninstallRun]). Real order is therefore
+# code-exec FIRST, then the inert [UninstallRun] entry - the reverse of the old
+# doc-derived expectation. Attribution: a FRESH 'tls removal' helper.log entry
+# (line index beyond the pre-uninstall count) inside this uninstall's
+# wall-clock window, timestamped no later than the inert entry. Marker choice:
+# TlsSetup.Remove logs 'tls removal:' on EVERY outcome (retained, removed,
+# enumeration failure), while 'uninstall cleanup:' is absent on the successful
+# owned-delete path (FirewallSetup.cs RunUninstallCleanup) - so 'tls removal:'
+# is the unconditional signature. helper.log is
+# second-resolution; the uninstall log is millisecond. Both logs use the
+# runner's local zone (UTC on the CI runner).
+$HelperLog = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+if (-not (Test-Path $HelperLog)) { $HelperLog = Join-Path $env:LOCALAPPDATA 'BingeMoteHelper\helper.log' }  # legacy data-dir fallback (Program.cs PickDataDir)
+function Count-CleanupLines {
+    if (-not (Test-Path $HelperLog)) { return 0 }
+    return ([regex]::Matches((Get-Content $HelperLog -Raw), 'tls removal:')).Count
+}
+function Assert-CodeCleanupFresh([int]$hlBefore, $t0, $t1, $uninstallLogText) {
+    if (-not (Test-Path $HelperLog)) { throw 'P4: helper.log missing after uninstall - cannot attribute the [Code] --uninstall-tls exec (non-vacuous requirement)' }
+    $all = [regex]::Matches((Get-Content $HelperLog -Raw), '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+tls removal:')
+    if ($all.Count -le $hlBefore) { throw 'P4: no FRESH helper tls-removal entry written during this uninstall - the [Code] --uninstall-tls exec cannot be attributed' }
+    $cleanAt = [datetime]::ParseExact($all[$hlBefore].Groups[1].Value, 'yyyy-MM-dd HH:mm:ss', $null)
+    if ($cleanAt -lt $t0.AddSeconds(-1) -or $cleanAt -gt $t1.AddSeconds(1)) { throw "P4: fresh cleanup entry at $cleanAt outside this uninstall's window ($t0 - $t1) - stale or foreign invocation" }
+    $inertM = [regex]::Match($uninstallLogText, '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d{3}\s+Running Exec parameters: /c exit 0')
+    if (-not $inertM.Success) { throw 'P4: inert [UninstallRun] entry timestamp not found in the uninstall log' }
+    $inertAt = [datetime]::ParseExact($inertM.Groups[1].Value, 'yyyy-MM-dd HH:mm:ss', $null)
+    if ($cleanAt -gt $inertAt) { throw "P4: order inverted vs Inno 6.7.1 source: cleanup $cleanAt AFTER inert entry $inertAt ([Code] usUninstall must precede [UninstallRun] processing)" }
+    if ($cleanAt -eq $inertAt) { Write-Host 'P4 note: cleanup and inert entry share a second; order corroborated structurally (Inno source), timestamps are second-resolution' }
+    Write-Host "ok P4: fresh [Code] --uninstall-tls cleanup at $cleanAt inside the window, preceding the inert entry at $inertAt (source-corrected order)"
 }
 function Assert-FirewallRemoved {
     $rule = (netsh advfirewall firewall show rule name="BingeMote") | Out-String
@@ -227,8 +257,12 @@ try {
     Assert-SameCompilerVersion 'fixed-install-old.log' 'fixed-install-new.log'
     $provisioned = Test-HttpsProvisioned
     Add-Sentinel
+    $hlBefore = Count-CleanupLines
+    $t0 = Get-Date
     $log = Uninstall 'fixed-uninstall.log'
+    $t1 = Get-Date
     Assert-LogOrder $log $false
+    Assert-CodeCleanupFresh $hlBefore $t0 $t1 $log
     if (-not (Test-Sentinel)) { throw 'P1: foreign sentinel was DELETED on the fixed chain - supersession did not hold' }
     Write-Host 'ok P1/P6: sentinel survived; no blind delete in the fixed-chain log'
     Assert-OwnedHttpsCleanup $provisioned
