@@ -88,12 +88,22 @@ internal static class FirewallSetup
             {
                 var vcreated = new List<RuleEntry>();
                 var vuncertain = new List<UncertainEntry>();
-                try { EnsureRules(VlcSpecs(vlc, VlcHttpPort()), vcreated, vuncertain, false); }
+                // The port comes from the signed-in user's vlcrc (the file the helper itself writes). This elevated process reads its OWN APPDATA, which is that user's only when the elevated account is the signed-in
+                // user (the same check the watchdog uses). With a different administrator account the port cannot be grounded, so only the Private (program-only) rule is attempted and the Public rule is skipped, said plainly.
+                var sameUser = WatchdogSetup.TryTargetUser(out _, out var userWhy);
+                var vspecs = VlcSpecs(vlc, VlcHttpPort());
+                if (!sameUser)
+                {
+                    vspecs = vspecs.Where(x => x.Profile == "Private").ToArray();
+                    Program.Log("VLC Public-network firewall rule skipped: " + userWhy + ", so VLC's web port could not be read for the signed-in user.");
+                    Console.Error.WriteLine("VLC's Public-network rule was not added: setup ran under a different administrator account than the signed-in user, so VLC's web port could not be read for the right user.");
+                }
+                try { EnsureRules(vspecs, vcreated, vuncertain, false); }
                 catch (Exception ex) { Program.Log("VLC firewall rules: " + ex.Message); }
                 if ((vcreated.Count > 0 || vuncertain.Count > 0) && !LifecycleJournalStore.Merge(vcreated, false, null, vuncertain))
                     Program.Log("lifecycle journal could NOT be written for the VLC rules. Created: " + string.Join("; ", vcreated.Select(e => e.DisplayName + " key " + e.Key))
                         + ". Uncertain: " + string.Join("; ", vuncertain.Select(u => u.DisplayName + " key " + u.Key + " (" + u.Outcome + ")")) + ". Recorded here only; never deleted automatically.");
-                if (vuncertain.Count > 0 || vcreated.Count < 2 && !VlcRulesAllExact(vlc)) Console.Error.WriteLine("The VLC firewall rules were not all added (the phone may not reach VLC; see the helper log).");
+                if (sameUser && (vuncertain.Count > 0 || (vcreated.Count < 2 && !VlcRulesAllExact(vlc)))) Console.Error.WriteLine("The VLC firewall rules were not all added (the phone may not reach VLC; see the helper log).");
             }
             else Console.Error.WriteLine("VLC is not installed - its firewall rules were skipped. Install VLC first, then run BingeMote setup again.");
             // Report, never touch: any broad vlc.exe rules from elsewhere (all networks, or
@@ -196,6 +206,11 @@ internal static class FirewallSetup
             var p = Process.Start(psi);
             if (p == null || !p.WaitForExit(60_000) || p.ExitCode != 0 || !SetupIsCurrent())
                 throw new InvalidOperationException("Setup could not be verified.");
+            var vlcNow = Movies.FindVlc();
+            if (vlcNow != null && !VlcRulesAllExact(vlcNow))
+                MessageBox.Show(
+                    "Setup finished, but VLC's own firewall rules are not all in place, so the phone may not reach VLC on this network. The details are in helper.log in %LOCALAPPDATA%\\BingeMote. Everything else is set up.",
+                    "BingeMote setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch
         {
@@ -268,6 +283,7 @@ internal static class FirewallSetup
                 if (state == RuleState.Exact && ReadByKey(key) is { Found: Found.One } rb && rb.Display == r.Name) created.Add(new RuleEntry(key, r.Name, rb.Props));
                 else uncertain.Add(new UncertainEntry(key, r.Name, "create returned 0 but read-back was " + state + " by display name and not exactly one rule under this key"));   // absent before, our create under a fresh key succeeded, read back exact
             }
+            if (state == RuleState.Mismatch && r.Program != null && TryUpdateOwnedRule(r)) state = ReadAll(specs)[r.Name];
             if (state != RuleState.Exact)
             {
                 Program.Log($"firewall setup: rule '{r.Name}' is {state} (expected exactly one enabled inbound allow rule, profile {r.Profile}, {r.Protocol} {(r.Port == 0 ? "any port" : r.Port.ToString())}, remote {r.Remote}, program {r.Program ?? "any"}, any service); left untouched.");
@@ -275,6 +291,30 @@ internal static class FirewallSetup
                 continue;
             }
         }
+    }
+
+    /// <summary>In-place update of a rule THIS build journaled (VLC rules only: the vlc.exe path or the vlcrc port moved since setup). Only when the journal names exactly one entry for the display name AND the rule read by its unique key is still exactly the journaled one (same display name, same full property line); then Set-NetFirewallRule -Name key with the new program/port, and it counts only if the key reads back as the new spec exactly, whereupon the journal entry's property line is replaced. Never deletes; anything else (not journaled, edited since, unreadable, failed) is left untouched and logged. Same documented read-then-change limit as the delete path: an administrator can change the rule between the read and the update.</summary>
+    private static bool TryUpdateOwnedRule(RuleSpec r)
+    {
+        try
+        {
+            var (js, j) = LifecycleJournalStore.Read();
+            if (js != MarkerState.Present || j == null) { Program.Log($"firewall setup: rule '{r.Name}' differs but no readable journal entry owns it; left untouched."); return false; }
+            var owned = j.Rules.Where(q => q.DisplayName == r.Name).ToList();
+            if (owned.Count != 1) { Program.Log($"firewall setup: rule '{r.Name}' differs and the journal has {owned.Count} entries for it; left untouched."); return false; }
+            var e = owned[0];
+            var now = ReadByKey(e.Key);
+            if (now.Found != Found.One || now.Display != e.DisplayName || now.Props != e.Props) { Program.Log($"firewall setup: rule '{r.Name}' (key {e.Key}) is not exactly what was journaled ({now.Found}); left untouched."); return false; }
+            var script = "$ErrorActionPreference='Stop'; Set-NetFirewallRule -Name '" + e.Key + "' -Program '" + r.Program!.Replace("'", "''") + "'" + (r.Port == 0 ? "" : " -LocalPort " + r.Port);
+            if (Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(script))) != 0) { Program.Log($"firewall setup: updating journaled rule '{r.Name}' failed; left as it was."); return false; }
+            var after = ReadByKey(e.Key);
+            if (after.Found != Found.One || after.Display != r.Name || ReadAll(new[] { r })[r.Name] != RuleState.Exact) { Program.Log($"firewall setup: journaled rule '{r.Name}' was updated but did not read back as the new spec; journal entry not changed."); return false; }
+            var rules = j.Rules.Select(x => x.Key == e.Key ? x with { Props = after.Props } : x).ToList();
+            LifecycleJournalStore.Replace(j with { Rules = rules });
+            Program.Log($"firewall setup: journaled rule '{r.Name}' updated in place to program {r.Program}, {r.Protocol} {(r.Port == 0 ? "any port" : r.Port.ToString())}.");
+            return true;
+        }
+        catch (Exception ex) { Program.Log($"firewall setup: updating rule '{r.Name}' failed: " + ex.Message); return false; }
     }
 
     internal sealed record RuleSpec(string Name, string Profile, string Protocol, int Port, string Remote, string? Program = null);

@@ -5,54 +5,23 @@ Runs on Android 12 or newer and 64-bit Windows 10/11.
 ## Architecture
 
 ```
-Android app  --(VLC HTTP, port 8080, Basic auth)-->  VLC on the PC
-Android app  --(BingeMote PC HTTP, port 8488, token)-->  BingeMote PC (mouse/keyboard)
+Android app  --(VLC HTTP, VLC's web port (default 8080), Basic auth)-->  VLC on the PC
+Android app  --(BingeMote PC HTTPS, port 8490, token)-->  BingeMote PC (mouse/keyboard)
 Android app  --(UDP broadcast, port 8489)          -->  BingeMote PC discovery
 ```
 
-Both HTTP APIs are plain HTTP on the LAN. VLC's interface is HTTP-only; BingeMote PC follows
-suit. Pairing tokens and typed input are visible to a device able to observe LAN traffic.
-Use only on a trusted private network, and never forward these ports to the internet.
+VLC's own web interface is plain HTTP (its password is sent with each request), so its traffic
+is visible to a device able to observe LAN traffic. The BingeMote PC connection is HTTPS. Use only
+on a trusted private network, and never forward these ports to the internet.
 
-## The Android app
-
-Kotlin + Jetpack Compose, single module, minSdk 31.
-
-- `Vlc.kt` - VLC's built-in HTTP interface client. Polls `status.json` once a second while
-  open; commands are the standard `command=...&val=...` requests. Volume uses VLC's raw
-  scale (256 = 100%). The volume buttons control Windows system volume and mute through BingeMote PC; VLC volume is the fallback when it is unreachable, capped at 100%.
-- `HelperClient.kt` - the BingeMote PC HTTP API plus UDP broadcast discovery
-  (`BINGEMOTE_DISCOVER_V1` / `BINGEMOTE_HERE_V1`).
-- `RemoteState.kt` - holds the latest VLC status, fan-out of commands, mute bookkeeping
-  (tap-to-mute restores the previous volume on unmute), and reconnect + rediscovery.
-- `Store.kt` - settings in SharedPreferences; the VLC password and pairing token in
-  EncryptedSharedPreferences.
-- `Updater.kt` - once per open, asks the GitHub releases API for the latest release,
-  compares versions, downloads the APK over HTTPS with a size cap and optional SHA-256
-  check, verifies package name, version bump and the signing certificate, and hands the
-  file to Android's installer. Silent on any network failure; no auto-install.
-- Screens: `MainScreen` (remote), `MoviesScreen` (folder browser + D-pad), `MouseScreen`
-  (touchpad gesture machine), `SettingsScreen`, `SetupScreen` (first-run pairing).
-
-### VLC quirks worth knowing
-
-- Relative seek: `val=+5s` (the `+` must be URL-encoded as `%2B`) or `-5s`.
-- Subtitle selection: `command=subtitle_track&val=N` where N is the "Stream N" number from
-  status.json; `-1` turns subtitles off. VLC does not reliably report the active track, so
-  the app remembers the last pick per title.
-- `browse.json?dir=` lists any folder VLC can read; playing a file is
-  `command=in_play&input=<uri>`.
-
-## BingeMote PC (Windows)
-
-.NET 8, Windows Forms, single self-contained exe (installed as "BingeMote.exe"; the code
+.NET 10, Windows Forms, single self-contained exe (installed as "BingeMote.exe"; the code
 still calls itself BingeMoteHelper internally). The "BingeMote PC" label lives only on the
 release downloads, to tell them apart from the phone app.
 
-- HTTP on 8488: `/ping`, `/pair`, `/mouse/move`, `/mouse/button`, `/mouse/scroll`,
+- HTTPS on 8490: `/ping`, `/pair`, `/mouse/move`, `/mouse/button`, `/mouse/scroll`,
   `/mouse/zoom`, `/key`, `/type`. Every request except `/pair` needs
   `X-BingeMote-Token`. Only private addresses (loopback, RFC1918, link-local) are served.
-- Pairing: the PC window shows a 6-digit code. `/pair` trades it (single use, 10-minute
+- Pairing: the PC window shows a 4-digit code. `/pair` trades it (single use, 10-minute
   expiry, 5 strikes locks until restart) for a random 256-bit token. Each phone gets its
   own token, so several phones can stay paired at once (capped at 8); the tokens live in
   `%LOCALAPPDATA%\BingeMoteHelper\config.json` (per-user directory), and a 1.x
@@ -95,6 +64,6 @@ Android and PC release separately: `android-vX.Y.Z` (latest) ships
 
 ## Network security
 
-BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. Traffic is unencrypted HTTP, including typed text and the token. Use only on a trusted network. Do not forward these ports to the internet.
+BingeMote requires pairing and accepts private-network addresses only. Several phones can pair with the same PC - each phone pairs once with its own code. The BingeMote PC connection is HTTPS and the token travels inside it. VLC's own web interface is plain HTTP with its password. Use only on a trusted network. Do not forward these ports to the internet.
 
 Uninstalling BingeMote removes the program, its start-with-Windows entry, and the firewall rules, listen permission and watchdog task that setup recorded in its journal, each only when it still matches what was recorded. Anything that no longer matches, or that setup did not create (rules or startup entries from older versions), is left in place and noted in the helper log. The plain exe has no uninstaller of its own: if you ran it without the installer, the rules, listen permission and task that setup created stay until the installer's uninstaller runs the same journal-based cleanup.
