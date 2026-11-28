@@ -109,26 +109,52 @@ function Write-SetupDiagnostics([string]$why) {
     if (Test-Path $diagLog) { Write-Host "-- helper.log tail (after diagnostic re-run) --"; Get-Content $diagLog -Tail 15 | ForEach-Object { Redact-Secrets $_ } }
     Write-Host "-- netsh http show urlacl --"; netsh http show urlacl
     Write-Host "-- netsh http show sslcert --"; netsh http show sslcert
-    # Failure-only repro of the exact product add, gated to the absent-reservation case:
-    # captures netsh's own error text that the product's Run() discards. Runs AFTER the
-    # state dumps above so pre-repro state is on record. Cleanup deletes ONLY a
-    # reservation this repro just created itself (previously absent) whose readback is
-    # exactly the expected interactive-users grant - never an unconditional delete,
-    # never a foreign or pre-existing entry, and the original failure still propagates.
+    # Failure-only probes, gated to the absent-reservation case. The product's Run() argument
+    # path is already exonerated: the v6 repro invoked netsh directly from this shell and
+    # failed identically, so the remaining unknowns are http.sys-side. Every probe checks
+    # absence first, and deletes ONLY a reservation the probe itself just created whose
+    # readback is exactly the expected interactive-users grant - never an unconditional
+    # delete, never a foreign or pre-existing entry. The original failure still propagates.
     if ($why -eq 'https reservation missing') {
-        Write-Host "-- diagnostic netsh add urlacl repro (exact product command) --"
-        $reproOut = netsh http add urlacl url=https://+:8488/ 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
-        $reproExit = $LASTEXITCODE
-        Write-Host "netsh add exit: $reproExit"
-        Write-Host $reproOut
-        if ($reproExit -eq 0) {
-            $after = (netsh http show urlacl) | Out-String
-            $afterBlock = [regex]::Match($after, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
-            if ($afterBlock -and $afterBlock -match 'S-1-5-4|INTERACTIVE' -and $afterBlock -notmatch 'Everyone|S-1-1-0') {
-                Write-Host "repro created the previously-absent reservation with the exact expected grant; removing it to restore pre-repro state"
-                netsh http delete urlacl url=https://+:8488/ | Out-Host
-            } else {
-                Write-Host "repro exit 0 but readback is not the exact expected grant; leaving state untouched"
+        Write-Host "-- exact read: netsh http show urlacl url=https://+:8488/ --"
+        netsh http show urlacl url=https://+:8488/
+        function Invoke-UrlaclProbe([string]$url, [string]$grant) {
+            $before = (netsh http show urlacl "url=$url") | Out-String
+            if ($before -match [regex]::Escape($url)) { Write-Host "PROBE SKIP $url : present before probe (not probe-created; untouched)"; return }
+            $out = netsh http add urlacl "url=$url" $grant 2>&1 | Out-String
+            Write-Host "PROBE add url=$url $grant -> exit $LASTEXITCODE"; Write-Host $out
+            if ($LASTEXITCODE -eq 0) {
+                $after = (netsh http show urlacl "url=$url") | Out-String
+                if ($after -match 'S-1-5-4|INTERACTIVE' -and $after -notmatch 'Everyone|S-1-1-0') {
+                    Write-Host "probe-created reservation verified for $url; removing to restore pre-probe state"
+                    netsh http delete urlacl "url=$url" | Out-Host
+                } else { Write-Host "probe add exit 0 but readback unexpected for $url; leaving untouched" }
+            }
+        }
+        Invoke-UrlaclProbe 'https://+:8488/' 'sddl=D:(A;;GX;;;S-1-5-4)'
+        Invoke-UrlaclProbe 'https://+:8491/' 'sddl=D:(A;;GX;;;S-1-5-4)'
+        Invoke-UrlaclProbe 'https://+:8488/' 'user="NT AUTHORITY\INTERACTIVE"'
+        # Controlled same-port http/https coexistence on a disposable unused port pair (8492):
+        # the official UrlPrefix conflict rules treat reservations within the context of
+        # scheme+port+relativeURI and predict no cross-scheme conflict, so this tests the
+        # one hypothesis that would explain 183 on 8488. Both entries are probe-created and
+        # removed after exact readback; the legacy 8488 reservation is never touched.
+        $pairHttp = 'http://+:8492/'; $pairHttps = 'https://+:8492/'
+        $preH = (netsh http show urlacl "url=$pairHttp") | Out-String
+        $preS = (netsh http show urlacl "url=$pairHttps") | Out-String
+        if ($preH -match [regex]::Escape($pairHttp) -or $preS -match [regex]::Escape($pairHttps)) {
+            Write-Host "COEXIST PROBE SKIP: 8492 not clean beforehand; untouched"
+        } else {
+            $o1 = netsh http add urlacl "url=$pairHttp" 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
+            Write-Host "COEXIST add $pairHttp -> exit $LASTEXITCODE"; Write-Host $o1
+            $o2 = netsh http add urlacl "url=$pairHttps" 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
+            Write-Host "COEXIST add $pairHttps (http sibling present) -> exit $LASTEXITCODE"; Write-Host $o2
+            foreach ($u in @($pairHttps, $pairHttp)) {
+                $rb = (netsh http show urlacl "url=$u") | Out-String
+                if ($rb -match 'S-1-5-4|INTERACTIVE' -and $rb -notmatch 'Everyone|S-1-1-0') {
+                    Write-Host "removing probe-created $u"
+                    netsh http delete urlacl "url=$u" | Out-Host
+                }
             }
         }
     }
