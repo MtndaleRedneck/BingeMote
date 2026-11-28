@@ -69,7 +69,9 @@ internal static class FirewallSetup
             }
             TlsStepDone = true;
             // New-named, create-only rules (see EnsureRules); the pre-1.10 "BingeMote"/"BingeMote Helper" rules are neither read nor deleted.
-            EnsureRules();
+            var createdRules = new List<string>();
+            try { EnsureRules(createdRules); }
+            finally { if (createdRules.Count > 0) LifecycleJournalStore.Merge(createdRules, false, null); }   // journal what THIS run created, even if a later rule then fails
             // VLC's web remote needs inbound too: one Private-networks-only rule for vlc.exe.
             var vlc = Movies.FindVlc();
             if (vlc != null)
@@ -117,6 +119,7 @@ internal static class FirewallSetup
                     Console.Error.WriteLine("The listen permission could not be added.");
                     return 3;
                 }
+                LifecycleJournalStore.Merge(Array.Empty<string>(), true, null);   // create-only add succeeded and reads back exact
             }
             if (!RulesExist())
             {
@@ -219,7 +222,7 @@ internal static class FirewallSetup
     }
 
     /// <summary>Adds each BingeMote rule that is absent. Semantics, exactly: for each of four fixed names the rule is read first; no rule of that name -> add it; exactly one rule that matches the expected parameters -> keep it; anything else (a duplicate, a disabled or differently-scoped rule of that name) -> FAIL setup and change nothing. This is read-then-add, NOT an atomic create-only primitive: two concurrent setups could both add and leave duplicates, which RulesExist then refuses to accept. Nothing is ever deleted or rewritten. Private rules: any remote address. Public rules: remote must be on the PC's own subnet (LocalSubnet4). No Domain rule, no program scoping (HTTP.sys serves the port, so a program rule would not match).</summary>
-    private static void EnsureRules()
+    private static void EnsureRules(List<string> created)
     {
         foreach (var r in ExpectedRules)
         {
@@ -234,6 +237,7 @@ internal static class FirewallSetup
                         $"New-NetFirewallRule -DisplayName '{r.Name}' -Direction Inbound -Action Allow -Protocol {r.Protocol} -LocalPort {r.Port} -Profile Public -RemoteAddress {r.Remote} -ErrorAction Stop | Out-Null")));
                 if (code != 0) throw new InvalidOperationException($"adding firewall rule '{r.Name}' exited {code}");
                 state = ReadAll()[r.Name];
+                if (state == RuleState.Exact) created.Add(r.Name);   // absent before, our add succeeded, read back exact
             }
             if (state != RuleState.Exact)
             {
@@ -508,21 +512,48 @@ internal static class FirewallSetup
     {
         var (ms, _) = TlsMarkerStore.Read();
         var (js, _) = TlsJournalStore.Read();
+        var (ls, lj) = LifecycleJournalStore.Read();
+        // Ownership of the reservation is the lifecycle journal entry written by the install run that created it (not the identity marker).
+        var urlAclWitness = ls == MarkerState.Present && lj!.UrlAcl ? MarkerState.Present : (ls == MarkerState.Corrupt ? MarkerState.Corrupt : MarkerState.Absent);
         var own = ClassifyHttpsUrlAcl(InteractiveSid);
+        var urlAclRemoved = false;
         if (own == AclOwnership.None)
         {
             Program.Log("uninstall cleanup: no HTTPS reservation present.");
         }
-        else if (HttpsReservationCleanupPlanner.Plan(true, ms, own, js) == HttpsReservationCleanupPlanner.Action.Delete)
+        else if (HttpsReservationCleanupPlanner.Plan(true, urlAclWitness, own, js) == HttpsReservationCleanupPlanner.Action.Delete)
         {
             if (Run("netsh", "http delete urlacl url=https://+:" + Program.HttpPort + "/") != 0)
                 Program.Log("uninstall cleanup: the owned HTTPS listen permission could not be deleted; left in place.");
+            else urlAclRemoved = true;
         }
         else
         {
-            Program.Log("uninstall cleanup: HTTPS reservation left (marker " + ms + ", class " + own + ", journal " + js + "): not provably removable.");
+            Program.Log("uninstall cleanup: HTTPS reservation left (identity marker " + ms + ", lifecycle journal " + ls + ", class " + own + ", journal " + js + "): not provably removable.");
         }
+        if (own == AclOwnership.None) urlAclRemoved = true;
+        RemoveJournaledObjects(ls, lj, urlAclRemoved);
         return TlsSetup.Remove(Program.HttpPort);
+    }
+
+    /// <summary>Removes only the journaled firewall rules (each while it still reads back Exact: one enabled rule of the expected shape) and the journaled watchdog task (while its access list is unchanged). Everything else, including rules from older versions, stays. Admin-vs-admin: this is read-then-delete, so an administrator editing in between is not excluded.</summary>
+    private static void RemoveJournaledObjects(MarkerState ls, LifecycleJournal? lj, bool urlAclGone)
+    {
+        if (ls == MarkerState.Absent) { Program.Log("uninstall cleanup: no lifecycle journal; firewall rules and watchdog task left as found."); return; }
+        if (ls == MarkerState.Corrupt || lj == null) { Program.Log("uninstall cleanup: lifecycle journal unreadable; firewall rules and watchdog task left."); return; }
+        var keepRules = new List<string>();
+        var states = lj.Rules.Count > 0 ? ReadAll() : new Dictionary<string, RuleState>();
+        foreach (var n in lj.Rules)
+        {
+            if (states.TryGetValue(n, out var st) && st == RuleState.Absent) continue;
+            if (states.TryGetValue(n, out st) && st == RuleState.Exact
+                && Run("powershell", "-NoProfile -NonInteractive -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes(
+                    "$ErrorActionPreference='Stop'; Remove-NetFirewallRule -DisplayName '" + n + "'"))) == 0) continue;
+            Program.Log("uninstall cleanup: firewall rule '" + n + "' left (not provably unchanged, or removal failed).");
+            keepRules.Add(n);
+        }
+        var keepWatchdog = lj.Watchdog != null && !WatchdogSetup.RemoveJournaled(lj.Watchdog) ? lj.Watchdog : null;
+        LifecycleJournalStore.Replace(new LifecycleJournal(1, keepRules, lj.UrlAcl && !urlAclGone, keepWatchdog));
     }
 
     private static int Run(string file, string args)

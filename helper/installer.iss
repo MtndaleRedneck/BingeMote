@@ -48,15 +48,19 @@ Type: files; Name: "{userdesktop}\BingeMote Helper.lnk"
 ; old uninstaller (their log entries merge into the next real uninstall), so this simply
 ; re-verifies Ready or rebinds the existing identity.
 Filename: "{app}\BingeMote.exe"; Parameters: "--install-firewall"; Flags: runhidden waituntilterminated
+; Relaunch task for the installing user only (limited token, admin-only write), new name, create-only.
+; Skips with a log line when the installing account is not the signed-in user.
+Filename: "{app}\BingeMote.exe"; Parameters: "--install-watchdog"; Flags: runhidden waituntilterminated
 Filename: "{app}\BingeMote.exe"; Description: "Open BingeMote"; Flags: nowait postinstall skipifsilent
 ; After a silent update, reopen the app for him as the signed-in user (not elevated).
 Filename: "{app}\BingeMote.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
-Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""BingeMote Watchdog"" /F"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "delwatchdog"
+Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delwatchdog"
 ; Inno runs only the NEWEST entry per RunOnceId at uninstall, so these same-id inert entries
 ; shadow the blind deletes that 1.9.x installs left in the merged uninstall log. Nothing is
-; deleted by name any more; "delwatchdog" above is unchanged (watchdog lifecycle is a separate open item).
+; deleted by name any more, including the legacy fixed-name "BingeMote Watchdog" task, which is
+; never read, changed or removed by this installer (its fate is an open product decision).
 Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delrule"
 Filename: "{sys}\cmd.exe"; Parameters: "/c exit 0"; Flags: runhidden waituntilterminated; RunOnceId: "delacl"
 

@@ -58,6 +58,16 @@ function Get-LegacyRuleText { return ((netsh advfirewall firewall show rule name
 function Get-LegacyHttpBlock { return [regex]::Match(((netsh http show urlacl) | Out-String), '(?s)Reserved URL\s*:\s*http://\+:8488/.*?(?=Reserved URL|$)').Value.Trim() }
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
 
+# --- Lifecycle helpers: watchdog task state and absence of journaled rules ---
+$script:WdName = 'BingeMote Watchdog (installed)'
+function Get-LegacyWatchdogXml { $o = (schtasks /Query /TN 'BingeMote Watchdog' /XML 2>&1 | Out-String).Trim(); if ($LASTEXITCODE -ne 0) { return '' } ; return $o }
+function Get-TaskSddl([string]$name) {
+    try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); return [string]($svc.GetFolder('\').GetTask($name).GetSecurityDescriptor(4)) } catch { return $null }
+}
+function Assert-BingeRulesAbsent([string]$when) {
+    foreach ($e in $script:BingeRules) { $rs = Get-RuleObject $e.Name; Assert ($rs.Count -eq 0) "${when}: firewall rule '$($e.Name)' is gone (found $($rs.Count))" }
+}
+
 function Redact-Secrets([string]$text) {
     # Never emit live auth material (pair token, VLC password) into CI logs; the
     # values are per-run, but retained/shared logs must not carry them at all.
@@ -128,6 +138,14 @@ Assert ($script:LegacyHttpBefore -ne '') "baseline http://+:8488/ reservation re
 Assert ($script:LegacyRuleBefore -match 'BingeMote') "baseline 'BingeMote' firewall rule(s) recorded before upgrade"
 Write-Host "-- legacy rule snapshot --"; Write-Host $script:LegacyRuleBefore
 Write-Host "-- legacy http reservation snapshot --"; Write-Host $script:LegacyHttpBefore
+# Legacy fixed-name watchdog task: whatever the baseline left, or a harness fixture if it left none. The candidate must neither read-modify nor delete it.
+$script:LegacyWdBefore = Get-LegacyWatchdogXml
+if ($script:LegacyWdBefore -eq '') {
+    schtasks /Create /TN 'BingeMote Watchdog' /TR 'cmd.exe /c exit 0' /SC MINUTE /MO 5 | Out-Host
+    $script:LegacyWdBefore = Get-LegacyWatchdogXml
+    Write-Host "legacy watchdog task: baseline left none, harness fixture created"
+}
+Assert ($script:LegacyWdBefore -ne '') "legacy 'BingeMote Watchdog' task recorded before upgrade"
 
 $setup = Get-ChildItem "helper/Output/BingeMote-PC-*.exe" | Select-Object -First 1
 if (-not $setup) { throw "installer exe missing in helper/Output" }
@@ -141,6 +159,29 @@ if ($LASTEXITCODE -ne 0) {
 Assert ((Get-LegacyRuleText) -ceq $script:LegacyRuleBefore) "upgrade left the legacy 'BingeMote' firewall rule(s) byte-identical (name-based readback)"
 Assert ((Get-LegacyHttpBlock) -ceq $script:LegacyHttpBefore) "upgrade left the legacy http://+:8488/ reservation byte-identical"
 Assert-BingeRulesExact 'after upgrade'
+Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "upgrade left the legacy 'BingeMote Watchdog' task definition identical"
+# Product watchdog (installer step --install-watchdog). On a hosted runner the install session may not be a signed-in user session, so either outcome is recorded and only the two valid ones pass.
+$wdLogPath = Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log'
+$wdLog = if (Test-Path $wdLogPath) { Get-Content $wdLogPath -Raw } else { '' }
+$wdSddl = Get-TaskSddl $script:WdName
+if ($wdSddl) {
+    Write-Host "watchdog product state: REGISTERED sddl=$wdSddl"
+    Assert ($wdLog.Contains('watchdog registered for the installing user')) "log says the watchdog was registered"
+    $wdAces = [regex]::Matches($wdSddl, '\(([^)]*)\)') | ForEach-Object { $_.Groups[1].Value }
+    Assert (@($wdAces | Where-Object { $_ -match '^A;;(FA|0x1f01ff);;;(SY|BA)$' }).Count -eq 2) "task DACL has exactly SYSTEM and Administrators full control"
+    Assert (@($wdAces | Where-Object { $_ -match '^A;;(FR|0x120089);;;S-1-5-21-' }).Count -eq 1 -and $wdAces.Count -eq 3) "task DACL has exactly one other ACE: read-only for the target user SID"
+    $script:WdState = 'REGISTERED'
+} else {
+    Write-Host "watchdog product state: NOT REGISTERED"
+    Assert ($wdLog -match 'watchdog not registered: ') "log gives the exact reason the watchdog was not registered"
+    $script:WdState = 'SKIPPED'
+    Write-Host ("watchdog skip reason line: " + (($wdLog -split "`n" | Where-Object { $_ -match 'watchdog not registered: ' } | Select-Object -Last 1)))
+}
+# Idempotence: a second elevated --install-watchdog changes nothing and creates no second task.
+$wd2 = Start-Process (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\BingeMote.exe') -ArgumentList '--install-watchdog' -Wait -PassThru
+Write-Host "second --install-watchdog exit: $($wd2.ExitCode)"
+if ($script:WdState -eq 'REGISTERED') { Assert ($wd2.ExitCode -eq 0 -and (Get-TaskSddl $script:WdName) -ceq $wdSddl) "second --install-watchdog exits 0 and leaves the task DACL unchanged" }
+else { Assert ($wd2.ExitCode -eq 5 -and -not (Get-TaskSddl $script:WdName)) "second --install-watchdog skips again (exit 5) and creates nothing" }
 Write-BroaderRuleInventory 'after upgrade'
 # Diagnostics only, on any post-upgrade setup assert failure: the product elevated
 # step's own account of its reservation decision (helper.log, captured BEFORE the
@@ -286,9 +327,14 @@ try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8490/') { throw "uninstaller left the 8490 listen permission behind" }
 try { $leftBindings = netsh http show sslcert 2>$null | Out-String } catch { $leftBindings = '' }
 if ($leftBindings -match ':8490') { throw "uninstaller left the 8490 TLS port bindings behind" }
-# Stated cost, asserted so it cannot change silently: the four new firewall rules are NOT removed by uninstall.
-Assert-BingeRulesExact 'after uninstall (rules intentionally retained)'
-Write-Host "ok: uninstaller removed the 8490 listen permission and TLS port bindings; legacy objects and new firewall rules left in place"
+# The four new rules were created by this build's own install run (journaled), so uninstall removes them; the legacy rule stays.
+Assert-BingeRulesAbsent 'after uninstall (journaled rules removed)'
+Assert ((Get-LegacyWatchdogXml) -ceq $script:LegacyWdBefore) "uninstall left the legacy 'BingeMote Watchdog' task definition identical (inherited delwatchdog skipped)"
+Write-Host ("uninstall log: delwatchdog skip line present = " + [bool]($ulog -match 'Skipping RunOnceId "delwatchdog"') + " (informational: depends on the baseline installer having carried that entry)")
+Assert (-not (Get-TaskSddl $script:WdName)) "uninstall removed the product watchdog task (or none was registered)"
+Write-Host "legacy watchdog task survived install, upgrade and uninstall untouched; the harness now removes ITS OWN fixture/baseline task so later phases are deterministic (the product never does)"
+schtasks /Delete /TN 'BingeMote Watchdog' /F | Out-Host
+Write-Host "ok: uninstaller removed the 8490 listen permission, TLS port bindings, journaled rules and watchdog; legacy objects left in place"
 # The installed-instance pairing above survives the uninstall (config.json is user data);
 # clear it so the standalone runtime tests below pair fresh and see Phone 1.
 Remove-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\config.json') -Force -ErrorAction SilentlyContinue
@@ -360,6 +406,25 @@ try {
     New-Item -ItemType Directory -Force -Path $stdDir | Out-Null
     icacls $stdDir /grant "${stdName}:(OI)(CI)M" | Out-Null
     Copy-Item (Resolve-Path $exe).Path (Join-Path $stdDir 'BingeMote.exe') -Force
+    # DACL fixture (NOT the product task): the same SDDL shape and registration flags the product uses, registered by this elevated harness for the disposable standard user's SID
+    # under a harness-only name. The product's own SDDL builder is pinned to this exact string by a unit test. The standard user then tries to change it (below).
+    $script:DaclVerdict = 'UNVERIFIED'
+    $stdSid = (Get-LocalUser -Name $stdName).SID.Value
+    $fixXml = @'
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Principals><Principal id="Author"><UserId>SIDPLACEHOLDER</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Triggers><TimeTrigger><StartBoundary>2099-01-01T00:00:00</StartBoundary></TimeTrigger></Triggers>
+  <Actions Context="Author"><Exec><Command>cmd.exe</Command><Arguments>/c exit 0</Arguments></Exec></Actions>
+</Task>
+'@
+    $fixXml = $fixXml.Replace('SIDPLACEHOLDER', $stdSid)
+    Set-Content -Path (Join-Path $stdDir 'fixture.xml') -Value $fixXml -Encoding Unicode
+    $fixSddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$stdSid)"
+    $svcA = New-Object -ComObject Schedule.Service; $svcA.Connect(); $fldA = $svcA.GetFolder('\')
+    $fldA.RegisterTask('bm-dacl-fixture', $fixXml, 2, $null, $null, 3, $fixSddl) | Out-Null
+    $fixBeforeSddl = [string]($fldA.GetTask('bm-dacl-fixture').GetSecurityDescriptor(4))
+    Write-Host "dacl fixture registered; sddl=$fixBeforeSddl"
     # admin control: the same hook in the elevated fixture context, so the standard-user result is compared with real state at this point
     Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
     $ctl = Start-Process (Resolve-Path $exe).Path -ArgumentList '--setup-status', $ctlFile -Wait -PassThru
@@ -375,6 +440,17 @@ W ('hasAdminSid|' + (@($id.Groups | Where-Object { $_.Value -eq 'S-1-5-32-544' }
 W ('whoamiGroups|' + ((whoami /groups /fo csv /nh) -join ';'))
 $p = Start-Process 'C:\bmstd\BingeMote.exe' -ArgumentList '--setup-status', 'C:\bmstd\status-std.txt' -PassThru
 if ($p.WaitForExit(60000)) { W ('hookExit|' + $p.ExitCode) } else { try { $p.Kill() } catch { } ; W 'hookTimeout|True' }
+W ('daclIdentity|' + $id.Name)
+$svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $fld = $svc.GetFolder('\')
+$t = $null
+try { $t = $fld.GetTask('bm-dacl-fixture'); W 'daclRead|ok' } catch { W 'daclRead|denied' }
+try { $x = [string]$t.GetSecurityDescriptor(4); W ('daclReadSd|' + [bool]$x) } catch { W 'daclReadSd|denied' }
+try { $t.Enabled = $false; W 'daclDisable|ALLOWED' } catch { W 'daclDisable|denied' }
+try { $fld.RegisterTask('bm-dacl-fixture', (Get-Content 'C:\bmstd\fixture.xml' -Raw), 4, $null, $null, 3, $null) | Out-Null; W 'daclUpdate|ALLOWED' } catch { W 'daclUpdate|denied' }
+try { $fld.RegisterTask('bm-dacl-fixture', (Get-Content 'C:\bmstd\fixture.xml' -Raw), 6, $null, $null, 3, $null) | Out-Null; W 'daclCreateOrUpdate|ALLOWED' } catch { W 'daclCreateOrUpdate|denied' }
+try { $fld.DeleteTask('bm-dacl-fixture', 0); W 'daclDelete|ALLOWED' } catch { W 'daclDelete|denied' }
+schtasks /Delete /TN 'bm-dacl-fixture' /F *> $null
+W ('daclSchtasksDelete|exit' + $LASTEXITCODE)
 W 'DONE'
 '@
     Set-Content -Path (Join-Path $stdDir 'child.ps1') -Value $child -Encoding UTF8
@@ -394,6 +470,14 @@ W 'DONE'
     $stdLines = if (Test-Path $statusFile) { @(Get-Content $statusFile) } else { @() }
     Write-Host '-- standard-user identity / child record --'; $childLines | ForEach-Object { Write-Host "child: $_" }
     Write-Host '-- standard-user status --'; $stdLines | ForEach-Object { Write-Host "std: $_" }
+    # DACL verdict: the standard user (the task's own principal) must be unable to disable, update, replace or delete; admin then proves the task is intact.
+    $fixAfter = $null; try { $ft = $fldA.GetTask('bm-dacl-fixture'); $fixAfter = @{ enabled = [bool]$ft.Enabled; sddl = [string]$ft.GetSecurityDescriptor(4) } } catch { }
+    $denyKeys = @('daclDisable|denied', 'daclUpdate|denied', 'daclCreateOrUpdate|denied', 'daclDelete|denied')
+    $allDenied = ((@($denyKeys | Where-Object { $childLines -notcontains $_ }).Count -eq 0) -and ($childLines -contains 'daclRead|ok'))
+    $schDelDenied = @($childLines | Where-Object { $_ -match '^daclSchtasksDelete\|exit[1-9]' }).Count -eq 1
+    $intact = ($null -ne $fixAfter) -and $fixAfter.enabled -and ($fixAfter.sddl -ceq $fixBeforeSddl)
+    if ($allDenied -and $schDelDenied -and $intact) { $script:DaclVerdict = 'DENIED-ALL' } else { $script:DaclVerdict = 'NOT-DENIED-OR-UNVERIFIED' }
+    Write-Host ("DACL-VERDICT: " + $script:DaclVerdict + " | readByUser=" + ($childLines -contains 'daclRead|ok') + " allDenied=$allDenied schtasksDeleteDenied=$schDelDenied taskIntact=$intact")
     $identityProven = ($childLines -contains 'isAdminRole|False') -and ($childLines -contains 'hasAdminSid|False') -and (@($childLines | Where-Object { $_ -like "identity|*\${stdName}" }).Count -eq 1)
     $ctlCurrent = ($ctlLines -contains 'setupIsCurrent|True') -and ($ctlLines -contains 'lastReadFailed|False') -and (@($ctlLines | Where-Object { $_ -like 'hookError|*' -or $_ -like 'rule|*|Unreadable' }).Count -eq 0)
     $stdBad = @($stdLines | Where-Object { $_ -like 'rule|*|Unreadable' -or $_ -eq 'lastReadFailed|True' })
@@ -417,6 +501,7 @@ finally {
     Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object { $_.LocalPath -like "*\${stdName}" } | Remove-CimInstance -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $stdDir -ErrorAction SilentlyContinue
     Remove-Item $ctlFile -Force -ErrorAction SilentlyContinue
+    try { $svcC = New-Object -ComObject Schedule.Service; $svcC.Connect(); $svcC.GetFolder('\').DeleteTask('bm-dacl-fixture', 0) } catch { }
     $acctLeft = [bool](Get-LocalUser -Name $stdName -ErrorAction SilentlyContinue)
     Write-Host ("cleanup: account removed=" + (-not $acctLeft) + ", directory removed=" + (-not (Test-Path $stdDir)))
 }
@@ -1119,7 +1204,7 @@ Start-Sleep -Seconds 2
 $uninstall = Start-Process $unins -ArgumentList '/VERYSILENT', '/NORESTART' -PassThru
 if (-not $uninstall.WaitForExit(60000)) { Stop-Process -Id $uninstall.Id -Force; throw 'Uninstall exceeded60seconds' }
 Start-Sleep -Seconds 3
-Assert-BingeRulesExact 'after shipping uninstall (rules intentionally retained)'
+Assert-BingeRulesAbsent 'after shipping uninstall (journaled rules removed)'
 try { $acl = netsh http show urlacl 2>$null | Out-String } catch { $acl = '' }
 if ($acl -match ':8490/') { throw "shipping uninstall left the 8490 listen permission behind" }
 Get-Process BingeMote -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -1127,4 +1212,5 @@ Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls
 }
 
 # Final gate: only a READABLE-CURRENT standard-user verdict is product proof; every other verdict fails the job after all other proof ran.
+if ($script:DaclVerdict -ne 'DENIED-ALL') { throw "TASK DACL DENY NOT PROVEN: $($script:DaclVerdict)" }
 if ($script:StdVerdict -ne 'READABLE-CURRENT') { throw "STANDARD-USER READ NOT PROVEN: $($script:StdVerdict) - $($script:StdDetail)" }
