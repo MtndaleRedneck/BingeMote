@@ -1,10 +1,13 @@
 # DRAFT - diagnostic only, review delta. No product code change; never a proof of
-# race absence. Invocation: workflow_dispatch (web UI) on an exact branch, same
-# route pattern as build.yml proofs. One bounded run, no retries; diagnostics
-# upload is if:always() so cancellation cannot swallow captures (647 lesson).
+# race absence. Invocation: push or workflow_dispatch, BOTH restricted to
+# refs/heads/tmp/iss-supersession-proof (job-level if below), same route pattern
+# as build.yml proofs. One bounded run, no retries; diagnostics upload is
+# if:always() so cancellation cannot swallow captures (647 lesson).
 name: Diag locked-uninstall prerequisites
 on:
   workflow_dispatch:
+  push:
+    branches: [tmp/iss-supersession-proof]
 permissions:
   contents: read
 
