@@ -439,7 +439,7 @@ if ($h1 -and (-not $h1.HasExited)) {
 
 # ---- R1-U shipped uninstall with the real helper still running ----
 $unins = Join-Path $dir 'unins000.exe'
-$hu = $null
+$hu = $null; $ru = $null
 Try-Cap 'R1-U helper' { $script:hutmp = Wait-Helper $dir 10 @() }
 $huw = $script:hutmp
 if ($controlValid -and $huw -and (Test-Path $unins)) {
@@ -453,6 +453,12 @@ if ($controlValid -and $huw -and (Test-Path $unins)) {
     do { $kids = @(Get-Under @() @($ru.Log)); if ($kids.Count -eq 0) { break }; Start-Sleep -Seconds 1 } while ((Get-Date) -lt $wEnd)
   }
   $hu.Refresh()
+  Need ($kids.Count -eq 0) "R1-U log-matched uninstaller process(es) still running after the 60s wait (count=$($kids.Count)); they are stopped by the scoped cleanup below. Zero matches is an observation only (command-line inheritance of the /LOG path is unverified; unmatched descendants and pending-reboot deletes are unknown)"
+  if ($kids.Count -gt 0) { Clean-Scoped 'R1-U.stop-matched' $dir @($ru.Log) @() 20 }
+  if (Test-Path $ru.Log) {
+    Write-Host "UNINSTLOG[R1-U] tail AFTER the wait (last 40 lines of $((Get-Content $ru.Log).Count)):"
+    Get-Content $ru.Log -Tail 40 | ForEach-Object { Write-Host "  $_" }
+  }
   Write-Host "UNINST[R1-U] endUtc=$(Utc) directExit=$($ru.Exit) timedOut=$($ru.TimedOut) uninstallerChildrenStillRunningAfterWait=$($kids.Count) helperExited=$($hu.HasExited) helperExitCode=$(if ($hu.HasExited) { $hu.ExitCode } else { 'n/a' }) exeExists=$(Test-Path $exe) exeHeld=$(Test-HeldOpen $exe) dirExists=$(Test-Path $dir)"
   Write-Host "UNINST[R1-U] target dir residue:"
   Get-ChildItem $dir -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) $($_.Length)" }
@@ -460,7 +466,7 @@ if ($controlValid -and $huw -and (Test-Path $unins)) {
 } else { Need $false "R1-U SKIPPED: no valid control, no live helper to uninstall under, or unins000.exe absent (nothing was started by the harness)" }
 
 # ---- final scoped cleanup AFTER all legs (helper and task intentionally retained until here) ----
-Post-Leg 'R1-final' $dir $null ''
+Post-Leg 'R1-final' $dir $null $(if ($ru) { $ru.Log } else { '' })
 
 "===== SUMMARY ====="
 Need ($script:capErr.Count -eq 0) "all state/window captures completed without error ($($script:capErr.Count) capture errors)"
