@@ -11,6 +11,59 @@ if (-not (Test-Path $exe)) { throw "helper exe missing at $exe" }
 # content-only change, NO workflow edits; dispatched via build.yml only=pc-e2e
 # on the existing Windows runner). The product legs below do not run here.
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+# Inno allocates the first free uninsNNN suffix, and a prior leg's incomplete
+# self-removal (observed run 46113378316: 'Removed all? No' after a locked
+# BingeMote.exe left unins000.* behind) shifts later installs to unins001+.
+# Resolve the uninstaller at call time from GROUNDED sources only, in order:
+#   1. the uninstall registry key the LAST install wrote (authoritative); a
+#      registration whose path fails validation is STALE - fail loud, never
+#      invoke it and never silently fall through to another exe;
+#   2. the current leg's own install log ('Dest filename: ...uninsNNN.exe',
+#      last match - Inno writes the uninstaller on every (over-)install).
+# A resolved path must live under $dir and match unins<digits>.exe, and must
+# exist, before invocation. No suffix enumeration/guessing: with multiple
+# stale uninstallers present, picking one by name is exactly the hazard.
+function Resolve-InstalledUninstaller($dir, $installLogPath) {
+    $dirPrefix = $dir.TrimEnd('\') + '\'
+    $validate = {
+        param($p)
+        if (-not $p) { return $null }
+        if (-not $p.StartsWith($dirPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+        if ([IO.Path]::GetFileName($p) -notmatch '^unins\d+\.exe$') { return $null }
+        if (-not (Test-Path -LiteralPath $p)) { return $null }
+        return $p
+    }
+    $badReg = @(); $validReg = @()
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1',
+                   'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1',
+                   'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1') {
+        $s = (Get-ItemProperty -Path $k -Name UninstallString -ErrorAction SilentlyContinue).UninstallString
+        if ($s) {
+            $p = $s.Trim()
+            if ($p.StartsWith('"')) { $p = $p.Substring(1, $p.IndexOf('"', 1) - 1) } else { $p = ($p -split '\s+')[0] }
+            $v = & $validate $p
+            if ($v) { $validReg += "$k -> $v" } else { $badReg += "$k -> $s" }
+        }
+    }
+    $distinctReg = @($validReg | ForEach-Object { ($_ -split ' -> ')[-1] } | Sort-Object -Unique)
+    if ($distinctReg.Count -gt 1) { throw "conflicting uninstall registrations ($($validReg -join '; ')) - not invoking anything; stale HKLM/HKCU shadowing is the multi-uninstaller hazard, ground it manually" }
+    if ($distinctReg.Count -eq 1) {
+        if ($badReg.Count -gt 0) { throw "valid registration ($($validReg[0])) coexists with stale registration ($($badReg -join '; ')) - not invoking; ground it manually" }
+        return $distinctReg[0]
+    }
+    if ($badReg.Count -gt 0) { throw "stale/invalid uninstall registration ($($badReg -join '; ')) - not invoking anything; this is the multi-uninstaller hazard, ground it manually" }
+    if ($installLogPath -and (Test-Path -LiteralPath $installLogPath)) {
+        $m = [regex]::Matches((Get-Content $installLogPath -Raw), 'Dest filename: (.+\\unins\d+\.exe)')
+        if ($m.Count -gt 0) {
+            $p = $m[$m.Count - 1].Groups[1].Value.Trim()
+            $v = & $validate $p
+            if ($v) { return $v }
+            throw "install-log-grounded uninstaller path failed validation: $p (log $installLogPath) - not invoking"
+        }
+    }
+    return $null
+}
+
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'preflight: proof requires an elevated runner (netsh urlacl mutations)' }
 netsh http show urlacl | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'preflight: netsh http show urlacl failed' }
@@ -48,8 +101,8 @@ try {
 } finally {
     # Persist EVERYTHING the proofs produced, green or red: proof/uninstall logs
     # plus BOTH candidate helper.log files (new and legacy data dirs).
-    $unins = Join-Path $env:LOCALAPPDATA 'Programs\BingeMote\unins000.exe'
-    if (Test-Path $unins) { & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-uninstall.log" | Out-Null }
+    try { $unins = Resolve-InstalledUninstaller (Join-Path $env:LOCALAPPDATA 'Programs\BingeMote') "$PWD\helper\e2e-diag\journal-leg-install.log" } catch { Write-Host "WARNING cleanup uninstaller resolution failed: $_"; $unins = $null }
+    if ($unins) { Write-Host "cleanup uninstall via grounded path: $unins"; & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$PWD\helper\e2e-diag\journal-leg-uninstall.log" | Out-Null } else { Write-Host 'WARNING cleanup uninstall: no grounded uninstaller resolved (registry + journal-leg-install.log) - residue may remain on the runner' }
     Copy-Item helper/supersession-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
     Copy-Item helper/journal-proof/*.log helper/e2e-diag/ -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $env:LOCALAPPDATA 'BingeMote\helper.log') helper/e2e-diag/helper.log -ErrorAction SilentlyContinue
@@ -84,7 +137,6 @@ function Invoke-Helper($path, $body, $token) {
     return @{ code = [int]$r.StatusCode; body = $r.Content }
 }
 function Assert($cond, $msg) { if (-not $cond) { throw "ASSERT FAILED: $msg" } ; Write-Host "ok: $msg" }
-
 function Redact-Secrets([string]$text) {
     # Never emit live auth material (pair token, VLC password) into CI logs; the
     # values are per-run, but retained/shared logs must not carry them at all.

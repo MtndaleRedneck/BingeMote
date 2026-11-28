@@ -146,9 +146,63 @@ function Install($pkg, $logName) {
         throw "install failed ($LASTEXITCODE): $pkg"
     }
 }
-function Uninstall($logName) {
-    $unins = Join-Path $AppDir 'unins000.exe'
-    if (-not (Test-Path $unins)) { throw "uninstaller not found at $unins" }
+
+# Inno allocates the first free uninsNNN suffix, and a prior leg's incomplete
+# self-removal (observed run 46113378316: 'Removed all? No' after a locked
+# BingeMote.exe left unins000.* behind) shifts later installs to unins001+.
+# Resolve the uninstaller at call time from GROUNDED sources only, in order:
+#   1. the uninstall registry key the LAST install wrote (authoritative); a
+#      registration whose path fails validation is STALE - fail loud, never
+#      invoke it and never silently fall through to another exe;
+#   2. the current leg's own install log ('Dest filename: ...uninsNNN.exe',
+#      last match - Inno writes the uninstaller on every (over-)install).
+# A resolved path must live under $dir and match unins<digits>.exe, and must
+# exist, before invocation. No suffix enumeration/guessing: with multiple
+# stale uninstallers present, picking one by name is exactly the hazard.
+function Resolve-InstalledUninstaller($dir, $installLogPath) {
+    $dirPrefix = $dir.TrimEnd('\') + '\'
+    $validate = {
+        param($p)
+        if (-not $p) { return $null }
+        if (-not $p.StartsWith($dirPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+        if ([IO.Path]::GetFileName($p) -notmatch '^unins\d+\.exe$') { return $null }
+        if (-not (Test-Path -LiteralPath $p)) { return $null }
+        return $p
+    }
+    $badReg = @(); $validReg = @()
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1',
+                   'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1',
+                   'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BingeMote_is1') {
+        $s = (Get-ItemProperty -Path $k -Name UninstallString -ErrorAction SilentlyContinue).UninstallString
+        if ($s) {
+            $p = $s.Trim()
+            if ($p.StartsWith('"')) { $p = $p.Substring(1, $p.IndexOf('"', 1) - 1) } else { $p = ($p -split '\s+')[0] }
+            $v = & $validate $p
+            if ($v) { $validReg += "$k -> $v" } else { $badReg += "$k -> $s" }
+        }
+    }
+    $distinctReg = @($validReg | ForEach-Object { ($_ -split ' -> ')[-1] } | Sort-Object -Unique)
+    if ($distinctReg.Count -gt 1) { throw "conflicting uninstall registrations ($($validReg -join '; ')) - not invoking anything; stale HKLM/HKCU shadowing is the multi-uninstaller hazard, ground it manually" }
+    if ($distinctReg.Count -eq 1) {
+        if ($badReg.Count -gt 0) { throw "valid registration ($($validReg[0])) coexists with stale registration ($($badReg -join '; ')) - not invoking; ground it manually" }
+        return $distinctReg[0]
+    }
+    if ($badReg.Count -gt 0) { throw "stale/invalid uninstall registration ($($badReg -join '; ')) - not invoking anything; this is the multi-uninstaller hazard, ground it manually" }
+    if ($installLogPath -and (Test-Path -LiteralPath $installLogPath)) {
+        $m = [regex]::Matches((Get-Content $installLogPath -Raw), 'Dest filename: (.+\\unins\d+\.exe)')
+        if ($m.Count -gt 0) {
+            $p = $m[$m.Count - 1].Groups[1].Value.Trim()
+            $v = & $validate $p
+            if ($v) { return $v }
+            throw "install-log-grounded uninstaller path failed validation: $p (log $installLogPath) - not invoking"
+        }
+    }
+    return $null
+}
+function Uninstall($logName, $installLogName) {
+    $unins = Resolve-InstalledUninstaller $AppDir (Join-Path $WorkDir $installLogName)
+    if (-not $unins) { throw "no grounded installed uninstaller under $AppDir (no usable registry registration; install log $installLogName missing or has no Dest filename uninsNNN.exe line) - cannot run this leg's uninstall (non-vacuous)" }
+    Write-Host "uninstall via grounded path: $unins (ground: registry, else $installLogName)"
     $log = Join-Path $WorkDir $logName
     & $unins /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="$log" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "uninstall failed ($LASTEXITCODE)" }
@@ -272,7 +326,7 @@ try {
     Add-Sentinel
     $hlBefore = Count-CleanupLines
     $t0 = Get-Date
-    $log = Uninstall 'fixed-uninstall.log'
+    $log = Uninstall 'fixed-uninstall.log' 'fixed-install-new.log'
     $t1 = Get-Date
     Assert-LogOrder $log $false
     Assert-CodeCleanupFresh $hlBefore $t0 $t1 $log
@@ -292,7 +346,7 @@ try {
     Stop-InstalledHelper $true   # same over-install hazard on the 1.9.1 -> 1.9.1 transition
     Install $OldInstaller 'old-install-2.log'
     Add-Sentinel
-    $log = Uninstall 'old-uninstall.log'
+    $log = Uninstall 'old-uninstall.log' 'old-install-2.log'
     Assert-LogOrder $log $true
     if (Test-Sentinel) { throw 'P2: sentinel SURVIVED the old-chain uninstall - the sentinel does not discriminate; P1 would be vacuous' }
     Write-Host 'ok P2: exactly one blind delete fired; sentinel deleted (discriminating control)'
@@ -309,7 +363,7 @@ try {
     Install $OldInstaller 'down-install-old.log'
     Assert-SameCompilerVersion 'down-install-new.log' 'down-install-old.log'
     Add-Sentinel
-    $log = Uninstall 'down-uninstall.log'
+    $log = Uninstall 'down-uninstall.log' 'down-install-old.log'
     Assert-LogOrder $log $true
     if (Test-Sentinel) { throw 'P7: sentinel survived after downgrade to the old build - expected the re-armed blind delete' }
     Write-Host 'ok P7: downgrade re-armed the blind delete (documented scope boundary)'
