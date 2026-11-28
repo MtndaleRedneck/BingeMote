@@ -151,7 +151,7 @@ internal static class FirewallSetup
         var answer = MessageBox.Show(
             "One Windows permission, then setup is done.\n\n" +
             "BingeMote needs to let your phone reach this PC over Wi-Fi. Windows will now ask for administrator permission once - it is used only to set up the firewall rules, the Windows listen permission and the secure pairing identity. Click Yes.\n\n" +
-            "On networks Windows calls Private, any device on the network can reach BingeMote. On networks Windows calls Public, only devices on this PC's own subnet can. Some Wi-Fi (guest or hotel networks) blocks device-to-device traffic no matter what, and BingeMote cannot change that.",
+            "BingeMote adds one rule for networks Windows calls Private (any device on that network) and one for networks Windows calls Public (only devices on this PC's own subnet). Other Windows firewall rules on this PC may allow more or less, and some Wi-Fi (guest or hotel networks) blocks device-to-device traffic no matter what; BingeMote cannot change that.",
             "BingeMote setup",
             MessageBoxButtons.OKCancel,
             MessageBoxIcon.Information);
