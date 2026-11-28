@@ -123,6 +123,37 @@ internal static class UrlAclMigrationPlanner
     };
 }
 
+/// <summary>What setup may do with the HTTPS listen permission, from the reservation's classified
+/// ownership. Unlike the old-http migration, no BingeMote version has ever written an Everyone (WD)
+/// HTTPS reservation - the only HTTPS grant this code writes is the interactive-users one - so
+/// Legacy is NOT a permitted delete class here: a Legacy or otherwise foreign reservation is never
+/// deleted; setup refuses loudly instead. Ours is kept as-is: it is already exactly the desired
+/// grant, and a delete+re-add would open a window in front of a running listener for no gain.</summary>
+internal static class HttpsReservationPlanner
+{
+    internal enum Action { Add, Keep, Refuse }
+    internal static Action Plan(FirewallSetup.AclOwnership owner) => owner switch
+    {
+        FirewallSetup.AclOwnership.None => Action.Add,
+        FirewallSetup.AclOwnership.Ours => Action.Keep,
+        _ => Action.Refuse,
+    };
+}
+
+/// <summary>Whether uninstall cleanup may delete the HTTPS listen permission. A pending or corrupt
+/// interrupted-setup journal holds ALL TLS transport state - the bindings are held by RemovalPlanner,
+/// the reservation is held here - so crash recovery still sees the whole picture.</summary>
+internal static class HttpsReservationCleanupPlanner
+{
+    internal enum Action { Delete, Keep }
+    internal static Action Plan(bool found, MarkerState marker, FirewallSetup.AclOwnership owner, MarkerState journal)
+    {
+        if (!found) return Action.Keep;
+        if (journal != MarkerState.Absent) return Action.Keep;
+        return marker == MarkerState.Present && owner == FirewallSetup.AclOwnership.Ours ? Action.Delete : Action.Keep;
+    }
+}
+
 /// <summary>Files written only by the elevated side: atomic replace, then a DACL of SYSTEM and Administrators full control, Users read-only.</summary>
 internal static class ProtectedFile
 {

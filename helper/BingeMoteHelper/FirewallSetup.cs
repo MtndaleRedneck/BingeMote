@@ -80,26 +80,40 @@ internal static class FirewallSetup
             // all programs) are listed for the helper log. BingeMote only adds its own
             // Private-only rule above.
             try { File.WriteAllText(VlcInventoryPath(), InventoryVlcRules()); } catch { }
-            // Let the helper (a normal, non-admin app) listen on its port.
-            Run("netsh", "http delete urlacl url=https://+:" + Program.HttpPort + "/");
-            // Grant the HTTP.sys URL reservation to interactively signed-in users
-            // (S-1-5-4) instead of Everyone. What this actually does: HTTP.sys will
-            // register this URL for any interactive user, so the helper (a normal,
-            // non-admin app) may listen. Non-interactive identities (services, other
-            // accounts' processes) are no longer granted THIS reservation by BingeMote -
-            // that is partial hardening, not exclusive ownership: another interactive user
-            // can still register the same URL, and anyone can still bind the raw TCP
-            // port when the helper is not listening (URLACL governs HTTP.sys only).
-            // INTERACTIVE rather than this (elevated) account's SID: a standard user
-            // elevating with admin credentials still runs the helper as themselves, and a
-            // per-account grant would lock their helper out.
-            var acl = Run("netsh", "http add urlacl url=https://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;S-1-5-4)");
-            if (acl != 0 || !UrlAclExists())
+            // Let the helper (a normal, non-admin app) listen on its port, planned from the
+            // reservation's classified ownership (HttpsReservationPlanner): absent -> add; already
+            // exactly ours -> keep (no delete window); anything else -> refuse loudly and leave it.
+            // Never delete+re-add over a reservation that is not provably ours.
+            var httpsOwn = ClassifyHttpsUrlAcl(InteractiveSid);
+            var httpsPlan = HttpsReservationPlanner.Plan(httpsOwn);
+            if (httpsPlan == HttpsReservationPlanner.Action.Refuse)
             {
-                Program.Log("firewall setup: the listen permission could not be added (netsh exit " + acl + ").");
-                Console.Error.WriteLine("partial=true tls=ready firewall=" + (RuleExists() ? "ready" : "failed") + " urlacl=failed");
-                Console.Error.WriteLine("The listen permission could not be added.");
+                Program.Log("firewall setup: an HTTPS reservation for this port exists that is not provably BingeMote's (class " + httpsOwn + "); left untouched.");
+                Console.Error.WriteLine("partial=true tls=ready firewall=" + (RuleExists() ? "ready" : "failed") + " urlacl=foreign");
+                Console.Error.WriteLine("The listen permission for this port is held by a reservation BingeMote did not create; it was left untouched. Setup cannot finish until it is examined.");
                 return 3;
+            }
+            if (httpsPlan == HttpsReservationPlanner.Action.Add)
+            {
+                // Grant the HTTP.sys URL reservation to interactively signed-in users
+                // (S-1-5-4) instead of Everyone. What this actually does: HTTP.sys will
+                // register this URL for any interactive user, so the helper (a normal,
+                // non-admin app) may listen. Non-interactive identities (services, other
+                // accounts' processes) are no longer granted THIS reservation by BingeMote -
+                // that is partial hardening, not exclusive ownership: another interactive user
+                // can still register the same URL, and anyone can still bind the raw TCP
+                // port when the helper is not listening (URLACL governs HTTP.sys only).
+                // INTERACTIVE rather than this (elevated) account's SID: a standard user
+                // elevating with admin credentials still runs the helper as themselves, and a
+                // per-account grant would lock their helper out.
+                var acl = Run("netsh", "http add urlacl url=https://+:" + Program.HttpPort + "/ sddl=D:(A;;GX;;;S-1-5-4)");
+                if (acl != 0 || !UrlAclExists())
+                {
+                    Program.Log("firewall setup: the listen permission could not be added (netsh exit " + acl + ").");
+                    Console.Error.WriteLine("partial=true tls=ready firewall=" + (RuleExists() ? "ready" : "failed") + " urlacl=failed");
+                    Console.Error.WriteLine("The listen permission could not be added.");
+                    return 3;
+                }
             }
             if (!RuleExists())
             {
@@ -253,6 +267,13 @@ internal static class FirewallSetup
     internal static AclOwnership ClassifyOldHttpUrlAcl(string? sid)
     {
         var (found, sddl) = QueryUrlAcl("http://+:" + Program.HttpPort + "/");
+        return found ? ClassifySddl(sddl, sid) : AclOwnership.None;
+    }
+
+    /// <summary>Ownership of the HTTPS reservation, for setup planning (HttpsReservationPlanner) and uninstall cleanup (HttpsReservationCleanupPlanner).</summary>
+    internal static AclOwnership ClassifyHttpsUrlAcl(string? sid)
+    {
+        var (found, sddl) = QueryUrlAcl("https://+:" + Program.HttpPort + "/");
         return found ? ClassifySddl(sddl, sid) : AclOwnership.None;
     }
 
@@ -422,25 +443,28 @@ internal static class FirewallSetup
     /// the exe still exists: the HTTPS listen permission and the owned TLS transport bindings go
     /// (the installer's remove-what-you-add contract, docs/details.md); the identity (certificate,
     /// key, marker) is left untouched, matching TlsSetup.Remove's existing transport/identity split.
-    /// Every removal is proven first: the reservation is deleted only when the identity marker is
-    /// present AND the reservation's SDDL is exactly the interactive-users grant setup writes;
-    /// absent, unreadable or unexpected state stays and is logged. Idempotent.</summary>
+    /// Every removal is proven first (HttpsReservationCleanupPlanner): the reservation is deleted
+    /// only when the identity marker is present AND the reservation's SDDL is exactly the
+    /// interactive-users grant setup writes AND no interrupted-setup journal is pending or corrupt
+    /// (the journal holds ALL TLS transport state, bindings and reservation alike, so crash
+    /// recovery still sees the whole picture); anything else stays and is logged. Idempotent.</summary>
     public static int RunUninstallCleanup()
     {
         var (ms, _) = TlsMarkerStore.Read();
-        var (found, sddl) = QueryUrlAcl("https://+:" + Program.HttpPort + "/");
-        if (!found)
+        var (js, _) = TlsJournalStore.Read();
+        var own = ClassifyHttpsUrlAcl(InteractiveSid);
+        if (own == AclOwnership.None)
         {
             Program.Log("uninstall cleanup: no HTTPS reservation present.");
         }
-        else if (ms == MarkerState.Present && ClassifySddl(sddl, InteractiveSid) == AclOwnership.Ours)
+        else if (HttpsReservationCleanupPlanner.Plan(true, ms, own, js) == HttpsReservationCleanupPlanner.Action.Delete)
         {
             if (Run("netsh", "http delete urlacl url=https://+:" + Program.HttpPort + "/") != 0)
                 Program.Log("uninstall cleanup: the owned HTTPS listen permission could not be deleted; left in place.");
         }
         else
         {
-            Program.Log("uninstall cleanup: HTTPS reservation left (marker " + ms + ", class " + ClassifySddl(sddl, InteractiveSid) + "): not provably ours.");
+            Program.Log("uninstall cleanup: HTTPS reservation left (marker " + ms + ", class " + own + ", journal " + js + "): not provably removable.");
         }
         return TlsSetup.Remove(Program.HttpPort);
     }
