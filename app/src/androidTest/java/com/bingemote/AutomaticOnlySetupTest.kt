@@ -229,22 +229,61 @@ class AutomaticOnlySetupTest {
         val typed = "192.0.2.20"
         var before: SetupView? = null
         var nudges = 0
-        while (nudges <= 8) {
+        // Bounds-aware reach (run 46148367239: the read showed the address label and button inside Ve but the pair-code label
+        // below the fold, and eight fixed 15% swipes never reached it). Each pass reads the tree, derives the distance from the
+        // real bounds and the one permitted direction, and records what it saw and did, so a failure message carries the
+        // trace (which swipe changed what). A swipe that would push the address label or button tile out of Ve is refused:
+        // that is reported as a layout fact (the two cannot share the viewport), never swiped anyway.
+        val trace = StringBuilder()
+        val dp = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        while (nudges <= 10) {
             before = readSetup()
+            trace.append("read#").append(nudges).append(": ")
+                .append(if (before == null) "no snapshot" else before.describe()).append(" problem=")
+                .append(if (before == null) "n/a" else before.preconditionProblem()?.substringBefore(": complete=")).append('\n')
             if (before != null && before.preconditionProblem() == null) break
-            if (before?.f == null)
-                device.swipe(device.displayWidth / 2, device.displayHeight * 45 / 100,
-                    device.displayWidth / 2, device.displayHeight * 70 / 100, 20)
-            else
-                device.swipe(device.displayWidth / 2, device.displayHeight * 70 / 100,
-                    device.displayWidth / 2, device.displayHeight * 55 / 100, 20)
+            if (before == null || before.ve == null || before.ve.isEmpty) {
+                device.waitForIdle(); Thread.sleep(300); nudges++; continue
+            }
+            val vr = before.ve
+            val margin = Math.round(48 * dp)
+            val f0 = before.f; val t0 = before.tile; val l0 = before.l.firstOrNull()
+            var dy = 0   // positive = scroll content UP (finger moves up, reveals what is below)
+            if (f0 == null && l0 != null) dy = -Math.round(vr.height() * 0.25f)       // label below visible, address above: go up
+            else if (f0 == null) dy = -Math.round(vr.height() * 0.25f)                  // address not visible: go up toward the top
+            else if (l0 == null) dy = Math.round(vr.height() * 0.2f)                    // label below the fold: go down
+            else if (l0.rect.bottom >= vr.bottom - 1) dy = l0.rect.bottom - vr.bottom + margin
+            else if (l0.rect.top <= vr.top + 1) dy = l0.rect.top - vr.top - margin
+            else if (t0 != null && t0.bottom > vr.bottom) dy = t0.bottom - vr.bottom + margin
+            else if (f0.rect.top <= vr.top + 1) dy = f0.rect.top - vr.top - margin
+            // Headroom: scrolling down by dy moves the address label up by dy; keep it strictly inside with a margin.
+            if (dy > 0 && f0 != null) {
+                val room = f0.rect.top - vr.top - margin
+                if (room <= 0) { trace.append("REFUSED: no headroom to scroll down (address label top=").append(f0.rect.top)
+                    .append(" Ve top=").append(vr.top).append(")\n"); break }
+                if (dy > room) dy = room
+            }
+            if (dy == 0) { trace.append("no direction derived from bounds\n"); break }
+            val x = device.displayWidth / 2
+            val y0 = if (dy > 0) vr.bottom - margin * 2 else vr.top + margin * 2
+            val y1 = y0 - dy
+            val steps = Math.max(40, Math.abs(dy) / 6)
+            trace.append("swipe#").append(nudges).append(": dy=").append(dy).append(" y ").append(y0).append("->").append(y1)
+                .append(" steps=").append(steps).append('\n')
+            device.swipe(x, y0, x, y1, steps)
             device.waitForIdle()
+            Thread.sleep(500)
             nudges++
         }
         val finalRead = readSetup()
         val preWhy = if (finalRead == null) "no accessibility snapshot" else finalRead.preconditionProblem()
         if (preWhy != null) {
-            fail("same-viewport precondition not established before typing (fail closed): $preWhy")
+            run {
+                try { device.dumpWindowHierarchy(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-viewport-trace.xml")) } catch (e: Exception) {}
+                try { java.io.File(ctx.getExternalFilesDir(null), "bm-setup-viewport-trace.txt").writeText(trace.toString()) } catch (e: Exception) {}
+                device.takeScreenshot(java.io.File(ctx.getExternalFilesDir(null), "bm-setup-viewport-fail.png"))
+            }
+            fail("same-viewport precondition not established before typing (fail closed): $preWhy | trace: ${trace.toString().take(3500)}")
         }
         val pre = finalRead!!
         // findObjects nodes can go stale between the query and the bounds read when a

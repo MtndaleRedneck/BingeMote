@@ -1275,6 +1275,10 @@ Write-Host "ok: shipping bytes bind, reject unauthenticated and wrong-code calls
 
 # --- Intentional partial outcome (exit 12), after everything above is uninstalled. The fixture is the harness's own NOT-journaled, disabled same-named VLC rule: setup must finish the main setup,
 # leave that rule untouched (no journal witness, so no update and no delete), and exit EXACTLY 12 with the exact named-rule reason and the protected notice. Not a blanket accept of 12.
+# When no shipping bytes are pinned the shipping uninstall above never ran, so the journaled rules created by this script's own Part 1 `--install-firewall` are still present.
+# Remove them through the product's own journal-proven cleanup (it deletes only what the lifecycle journal records this setup added; foreign rules stay), then assert absence for real.
+$unPre = Start-Process $exe -ArgumentList '--uninstall-tls' -Wait -PassThru
+Assert ($unPre.ExitCode -eq 0) "journal-proven cleanup of this script's own setup exits 0 before the partial-outcome fixture (got $($unPre.ExitCode))"
 Assert-BingeRulesAbsent 'before the partial-outcome fixture'
 Assert ((Get-RuleObject 'BingeMote VLC Private').Count -eq 0 -and (Get-RuleObject 'BingeMote VLC Public LocalSubnet').Count -eq 0) 'journaled VLC rules were removed by the shipping uninstall'
 $vlcExe2 = @("$env:ProgramFiles\VideoLAN\VLC\vlc.exe", "${env:ProgramFiles(x86)}\VideoLAN\VLC\vlc.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
