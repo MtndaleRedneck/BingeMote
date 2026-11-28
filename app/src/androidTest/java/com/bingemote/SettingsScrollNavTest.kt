@@ -22,9 +22,14 @@ class SettingsScrollNavTest {
     private val device = UiDevice.getInstance(inst)
 
     private fun onScreen(text: String): Boolean {
-        val o = device.findObject(By.text(text)) ?: return false
-        val b = o.visibleBounds
-        return b.top >= 0 && b.bottom <= device.displayHeight && b.height() > 0
+        repeat(3) {
+            try {
+                val o = device.findObject(By.text(text)) ?: return false
+                val b = o.visibleBounds
+                return b.top >= 0 && b.bottom <= device.displayHeight && b.height() > 0
+            } catch (e: androidx.test.uiautomator.StaleObjectException) { /* node recycled mid-read: re-find */ }
+        }
+        return false
     }
     private fun shot(name: String) =
         device.takeScreenshot(File(ctx.getExternalFilesDir(null), "bm-$name.png"))

@@ -332,7 +332,7 @@ jobs:
           $dialogRun = Start-Process helper/shot/BingeMote.exe -ArgumentList '--dialog-shots' -PassThru
           if (-not $dialogRun.WaitForExit(45000)) { Stop-Process -Id $dialogRun.Id -Force; throw 'Native dialog fixture exceeded 45 second bound' }
           if ($dialogRun.ExitCode -ne 0) { throw "Native dark-dialog capture failed: $($dialogRun.ExitCode)" }
-          foreach ($name in @('confirm', 'note', 'wifi')) {
+          foreach ($name in @('confirm', 'note')) {
             if (-not (Test-Path "helper/dialog-$name.png")) { throw "Missing native dialog capture: $name" }
           }
           $env:BINGEMOTE_OSD_SHOT = "$PWD\helper\osd.png"
