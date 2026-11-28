@@ -109,6 +109,29 @@ function Write-SetupDiagnostics([string]$why) {
     if (Test-Path $diagLog) { Write-Host "-- helper.log tail (after diagnostic re-run) --"; Get-Content $diagLog -Tail 15 | ForEach-Object { Redact-Secrets $_ } }
     Write-Host "-- netsh http show urlacl --"; netsh http show urlacl
     Write-Host "-- netsh http show sslcert --"; netsh http show sslcert
+    # Failure-only repro of the exact product add, gated to the absent-reservation case:
+    # captures netsh's own error text that the product's Run() discards. Runs AFTER the
+    # state dumps above so pre-repro state is on record. Cleanup deletes ONLY a
+    # reservation this repro just created itself (previously absent) whose readback is
+    # exactly the expected interactive-users grant - never an unconditional delete,
+    # never a foreign or pre-existing entry, and the original failure still propagates.
+    if ($why -eq 'https reservation missing') {
+        Write-Host "-- diagnostic netsh add urlacl repro (exact product command) --"
+        $reproOut = netsh http add urlacl url=https://+:8488/ 'sddl=D:(A;;GX;;;S-1-5-4)' 2>&1 | Out-String
+        $reproExit = $LASTEXITCODE
+        Write-Host "netsh add exit: $reproExit"
+        Write-Host $reproOut
+        if ($reproExit -eq 0) {
+            $after = (netsh http show urlacl) | Out-String
+            $afterBlock = [regex]::Match($after, '(?s)Reserved URL\s*:\s*https://\+:8488/.*?(?=Reserved URL|$)').Value
+            if ($afterBlock -and $afterBlock -match 'S-1-5-4|INTERACTIVE' -and $afterBlock -notmatch 'Everyone|S-1-1-0') {
+                Write-Host "repro created the previously-absent reservation with the exact expected grant; removing it to restore pre-repro state"
+                netsh http delete urlacl url=https://+:8488/ | Out-Host
+            } else {
+                Write-Host "repro exit 0 but readback is not the exact expected grant; leaving state untouched"
+            }
+        }
+    }
 }
 
 # Install-time secure setup (installer [Run] --install-firewall) must leave the upgraded
