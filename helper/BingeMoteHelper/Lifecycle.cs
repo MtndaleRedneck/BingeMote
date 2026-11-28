@@ -229,11 +229,14 @@ internal static class WatchdogSetup
             else { Program.Log("watchdog not registered: a task of this name exists and is not provably ours (" + live + "); left untouched."); return 5; }
             ((dynamic)folder).RegisterTask(TaskName, BuildXml(sid, exe), flags, null, null, LogonInteractiveToken, sddl);
             var after = Read(folder, out var afterSddl);
-            if (after != TaskRead.Present || !SddlEquivalent(afterSddl, sddl))
+            var expectedEntry = new WatchdogEntry(TaskName, sid, sddl, exe, true);
+            var identityOk = after == TaskRead.Present && IdentityMatches(folder, expectedEntry);   // the same predicate refresh and delete require
+            Program.Log("watchdog read-back: " + after + ", access list " + (after == TaskRead.Present && SddlEquivalent(afterSddl, sddl) ? "as expected" : "NOT as expected") + ", principal/action " + (identityOk ? "as expected" : "NOT as expected"));
+            if (after != TaskRead.Present || !SddlEquivalent(afterSddl, sddl) || !identityOk)
             {
                 // No blind cleanup of what we just created: journal the attempt as unverified so it is on record, never auto-removed, never refreshed.
                 // Keep the earlier created-witness fields as history, but mark the CURRENT state uncertain: Verified=false means neither setup nor uninstall will refresh or delete it on the strength of that history.
-                var note = "read-back after " + ((flags & TaskUpdate) != 0 ? "update" : "create") + " was " + (after == TaskRead.Present ? "not the expected access list" : after.ToString()) + " at " + DateTime.UtcNow.ToString("O");
+                var note = "read-back after " + ((flags & TaskUpdate) != 0 ? "update" : "create") + " was " + (after == TaskRead.Present ? (SddlEquivalent(afterSddl, sddl) ? "not the expected principal/action" : "not the expected access list") : after.ToString()) + " at " + DateTime.UtcNow.ToString("O");
                 var prior = js == MarkerState.Present ? j?.Watchdog : null;
                 var uncertainEntry = prior != null ? prior with { Verified = false, Note = note } : new WatchdogEntry(TaskName, sid, sddl, exe, false, note);
                 if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, uncertainEntry))
@@ -241,7 +244,7 @@ internal static class WatchdogSetup
                 Program.Log("watchdog registered but its read-back access list is " + (after == TaskRead.Present ? "not the expected one" : "unreadable (" + after + ")") + ". Journaled as UNVERIFIED: it is left in place, not removed or refreshed by setup or uninstall (orphan cost: a task that may run after uninstall until an administrator removes it).");
                 return 6;
             }
-            if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, new WatchdogEntry(TaskName, sid, sddl, exe, true)))
+            if (!LifecycleJournalStore.Merge(Array.Empty<RuleEntry>(), false, expectedEntry))
                 Program.Log("the watchdog task was registered and verified but could NOT be journaled; it will never be removed automatically (task " + TaskName + ", user " + sid + ").");
             Program.Log("watchdog registered for the installing user (limited token, admin-only write).");
             return 0;
